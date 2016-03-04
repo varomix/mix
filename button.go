@@ -1,26 +1,54 @@
 package mix
 
-import "fmt"
+import sf "github.com/manyminds/gosfml"
 
-// Button created
-type button struct {
-	X    int
-	Y    int
-	Text string
-}
+// MixButton created
+// type MixButton struct {
+// 	X    int
+// 	Y    int
+// 	Text string
+// }
 
-// NewBtn is created
-func NewBtn(x, y int, text string) *button {
-	b := new(button)
-	b.X = x
-	b.Y = y
-	b.Text = text
-	return b
+// Button create the button
+type Button struct {
+	rect *sf.RectangleShape
+	text *sf.Text
+	font *sf.Font
 }
 
 // NewButton create the button
-func (b *button) NewButton() {
-	fmt.Printf("Button X: %d, Y: %d and the message is: %s", b.X, b.Y, b.Text)
+func NewButton() *Button {
+	// Load font
+	font, _ := sf.NewFontFromFile("assets/fonts/LuckiestGuy.ttf")
+
+	// Title
+	text, _ := sf.NewText(font)
+	text.SetString("play")
+	text.SetCharacterSize(36)
+
+	rect, _ := sf.NewRectangleShape()
+	rect.SetSize(sf.Vector2f{128, 32})
+	rect.SetFillColor(sf.ColorRed())
+
+	shape := &Button{rect, text, font}
+	return shape
+}
+
+// SetText set the button text
+func (b *Button) SetText(txt string) {
+	b.text.SetString(txt)
+}
+
+// SetText set the button text
+func (b *Button) Move(x, y float32) {
+	b.rect.Move(sf.Vector2f{x, y})
+	b.text.Move(sf.Vector2f{x, y})
+}
+
+// Draw the button on the screen
+func (b *Button) Draw(target sf.RenderTarget, renderStates sf.RenderStates) {
+	b.rect.Draw(target, renderStates)
+	b.text.Draw(target, renderStates)
 
 }
 

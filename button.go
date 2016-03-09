@@ -6,6 +6,18 @@ import (
 	sf "github.com/manyminds/gosfml"
 )
 
+var (
+	rectNormalColor = sf.Color{30, 30, 30, 255}
+	rectOverColor = sf.Color{120, 120, 120, 255}
+	rectClickColor =  sf.Color{200, 200, 200, 255}
+
+	textNormalColor = sf.Color{180, 180, 180, 255}
+	textOverColor = sf.ColorBlack()
+	textClickColor =  sf.ColorBlack()
+
+
+)
+
 // Button create the button
 type Button struct {
 	rect *sf.RectangleShape
@@ -16,25 +28,28 @@ type Button struct {
 // NewButton create the button
 func NewButton() *Button {
 	// Load font
-	font, _ := sf.NewFontFromFile("assets/fonts/Homenaje.ttf")
+	font, _ := sf.NewFontFromFile("mix/uiassets/Homenaje.ttf")
 
 	// Title
 	text, _ := sf.NewText(font)
 	text.SetString("play")
 	text.SetCharacterSize(20)
-	text.SetColor(sf.Color{180, 180, 180, 255})
+	text.SetColor(textNormalColor)
 
-	// TODO put colors on a struct
 
 	rect, _ := sf.NewRectangleShape()
 	rect.SetSize(sf.Vector2f{128, 128})
-	rect.SetFillColor(sf.Color{30, 30, 30, 255})
+	rect.SetFillColor(rectNormalColor)
 	rect.SetOutlineThickness(-2)
 	rect.SetOutlineColor(sf.ColorBlack())
+
+	// Set Origins
 	rect.SetOrigin(sf.Vector2f{rect.GetSize().X / 2, rect.GetSize().Y / 2})
 
 	text.SetOrigin(sf.Vector2f{text.GetLocalBounds().Left + text.GetLocalBounds().Width/2, text.GetLocalBounds().Top + text.GetLocalBounds().Height/2})
 	text.SetPosition(sf.Vector2f{rect.GetLocalBounds().Width / 2, rect.GetGlobalBounds().Height / 2})
+
+
 
 	shape := &Button{rect, text, font}
 	return shape
@@ -43,6 +58,12 @@ func NewButton() *Button {
 // SetText set the button text
 func (b *Button) SetText(txt string) {
 	b.text.SetString(txt)
+	b.alignTextCenter()
+}
+
+// SetText set the button text
+func (b *Button) SetTextSize(size uint) {
+	b.text.SetCharacterSize(size)
 	b.alignTextCenter()
 }
 
@@ -56,7 +77,8 @@ func (b *Button) SetSize(width, height float32) {
 // SetText set the button text
 func (b *Button) Move(x, y float32) {
 	//b.alignTextCenter()
-	b.rect.Move(sf.Vector2f{x, y})
+	//b.rect.Move(sf.Vector2f{x, y})
+	b.rect.Move(sf.Vector2f{x + b.rect.GetLocalBounds().Width/2, y + b.rect.GetLocalBounds().Height/2})
 	b.text.Move(sf.Vector2f{x, y})
 
 }
@@ -87,23 +109,24 @@ func (b *Button) Events(event sf.Event) {
 	case sf.EventMouseMoved:
 		if body.Contains(float32(ev.X), float32(ev.Y)) {
 			fmt.Println("Mouse is over")
-			b.rect.SetFillColor(sf.Color{120, 120, 120, 255})
-			b.text.SetColor(sf.ColorBlack())
+			b.rect.SetFillColor(rectOverColor)
+			b.text.SetColor(textOverColor)
 		} else {
-			b.rect.SetFillColor(sf.Color{30, 30, 30, 255})
-			b.text.SetColor(sf.Color{180, 180, 180, 255})
+			b.rect.SetFillColor(rectNormalColor)
+			b.text.SetColor(textNormalColor)
 		}
 
 	}
 }
 
 func (b *Button) onPressed() {
-	b.rect.SetFillColor(sf.ColorWhite())
+	b.rect.SetFillColor(rectClickColor)
+	b.text.SetColor(textClickColor)
 }
 
 func (b *Button) onClick() {
-	b.rect.SetFillColor(sf.Color{120, 120, 120, 255})
-	b.text.SetColor(sf.ColorBlack())
+	b.rect.SetFillColor(rectOverColor)
+	b.text.SetColor(textOverColor)
 	fmt.Printf("The button was clicked, it's location is X: %v, Y: %v\n", b.rect.GetPosition().X, b.rect.GetPosition().Y)
 }
 

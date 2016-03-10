@@ -41,9 +41,9 @@ func NewButton() *Button {
 	rect.SetOutlineColor(sf.ColorBlack())
 
 	// Set Origins
-	rect.SetOrigin(sf.Vector2f{rect.GetSize().X / 2, rect.GetSize().Y / 2})
+	//rect.SetOrigin(sf.Vector2f{rect.GetSize().X / 2, rect.GetSize().Y / 2})
 	// put button at 0,0 when first created
-	rect.Move(sf.Vector2f{rect.GetSize().X / 2, rect.GetSize().Y / 2})
+	//rect.Move(sf.Vector2f{rect.GetSize().X / 2, rect.GetSize().Y / 2})
 
 	text.SetOrigin(sf.Vector2f{text.GetLocalBounds().Left + text.GetLocalBounds().Width/2, text.GetLocalBounds().Top + text.GetLocalBounds().Height/2})
 	text.SetPosition(sf.Vector2f{rect.GetLocalBounds().Width / 2, rect.GetGlobalBounds().Height / 2})
@@ -72,7 +72,7 @@ func (b *Button) SetSize(width, height float32) {
 }
 
 func (b *Button) GetPos() sf.Vector2f {
-	return b.rect.GetPosition()
+	return sf.Vector2f{b.rect.GetPosition().X, b.rect.GetGlobalBounds().Top}
 }
 
 // SetText set the button text
@@ -93,13 +93,13 @@ func (b *Button) Tween(dx, dy float32) {
 // SetText set the button text
 func (b *Button) alignTextCenter() {
 	b.text.SetOrigin(sf.Vector2f{b.text.GetLocalBounds().Left + b.text.GetLocalBounds().Width/2, b.text.GetLocalBounds().Top + b.text.GetLocalBounds().Height/2})
-	b.text.SetPosition(sf.Vector2f{b.rect.GetPosition().X, b.rect.GetPosition().Y})
+	b.text.SetPosition(sf.Vector2f{b.rect.GetPosition().X + b.rect.GetSize().X/2, b.rect.GetPosition().Y + b.rect.GetSize().Y/2})
 
 }
 
 // Events for the button
 func (b *Button) Events(event sf.Event) {
-	body := sf.FloatRect{b.rect.GetPosition().X - b.rect.GetLocalBounds().Width/2, b.rect.GetPosition().Y - b.rect.GetLocalBounds().Height/2, b.rect.GetSize().X, b.rect.GetSize().Y}
+	body := sf.FloatRect{b.rect.GetPosition().X, b.rect.GetPosition().Y, b.rect.GetSize().X, b.rect.GetSize().Y}
 
 	// check if the button is pressed and the mouse is on top of the button
 	switch ev := event.(type) {
@@ -134,7 +134,7 @@ func (b *Button) onPressed() {
 func (b *Button) onClick() {
 	b.rect.SetFillColor(rectOverColor)
 	b.text.SetColor(textOverColor)
-	fmt.Printf("The button was clicked, it's location is X: %v, Y: %v\n", b.rect.GetPosition().X-b.rect.GetSize().X/2, b.rect.GetPosition().Y-b.rect.GetSize().Y/2)
+	fmt.Printf("The button was clicked, it's location is X: %v, Y: %v\n", b.rect.GetPosition().X, b.rect.GetPosition().Y)
 }
 
 // Draw the button on the screen

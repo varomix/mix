@@ -1,12 +1,10 @@
 package mix
 
 import (
-
 	sf "github.com/manyminds/gosfml"
 )
 
-
-type Group struct{
+type Group struct {
 	grp *sf.Drawer
 }
 

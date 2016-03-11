@@ -18,9 +18,10 @@ var (
 
 // Button create the button
 type Button struct {
-	rect *sf.RectangleShape
-	text *sf.Text
-	font *sf.Font
+	rect  *sf.RectangleShape
+	text  *sf.Text
+	font  *sf.Font
+	click func()
 }
 
 // NewButton create the button
@@ -48,8 +49,14 @@ func NewButton() *Button {
 	text.SetOrigin(sf.Vector2f{text.GetLocalBounds().Left + text.GetLocalBounds().Width/2, text.GetLocalBounds().Top + text.GetLocalBounds().Height/2})
 	text.SetPosition(sf.Vector2f{rect.GetLocalBounds().Width / 2, rect.GetGlobalBounds().Height / 2})
 
-	shape := &Button{rect, text, font}
+	shape := &Button{rect, text, font, func() {}}
 	return shape
+}
+
+func (b *Button) Clicked(fn func()) {
+	// fmt.Println("clicked function")
+	b.click = fn
+	b.click()
 }
 
 // SetText set the button text
@@ -58,13 +65,13 @@ func (b *Button) SetText(txt string) {
 	b.alignTextCenter()
 }
 
-// SetText set the button text
+// SetTextSize set the button text size
 func (b *Button) SetTextSize(size uint) {
 	b.text.SetCharacterSize(size)
 	b.alignTextCenter()
 }
 
-// SetText set the button text
+// SetSize set the button Size
 func (b *Button) SetSize(width, height float32) {
 	b.rect.SetSize(sf.Vector2f{width, height})
 	b.rect.SetOrigin(sf.Vector2f{b.rect.GetSize().X / 2, b.rect.GetSize().Y / 2})
@@ -75,14 +82,12 @@ func (b *Button) GetPos() sf.Vector2f {
 	return sf.Vector2f{b.rect.GetPosition().X, b.rect.GetGlobalBounds().Top}
 }
 
-// SetText set the button text
 func (b *Button) Move(x, y float32) {
 	b.rect.Move(sf.Vector2f{x, y})
 	b.text.Move(sf.Vector2f{x, y})
 
 }
 
-// SetText set the button text
 func (b *Button) Tween(dx, dy float32) {
 	//if b.rect.GetPosition().X
 	b.rect.Move(sf.Vector2f{dx, dy})
@@ -90,7 +95,6 @@ func (b *Button) Tween(dx, dy float32) {
 
 }
 
-// SetText set the button text
 func (b *Button) alignTextCenter() {
 	b.text.SetOrigin(sf.Vector2f{b.text.GetLocalBounds().Left + b.text.GetLocalBounds().Width/2, b.text.GetLocalBounds().Top + b.text.GetLocalBounds().Height/2})
 	b.text.SetPosition(sf.Vector2f{b.rect.GetPosition().X + b.rect.GetSize().X/2, b.rect.GetPosition().Y + b.rect.GetSize().Y/2})
@@ -111,11 +115,12 @@ func (b *Button) Events(event sf.Event) {
 	case sf.EventMouseButtonReleased:
 		if ev.Button == 0 && body.Contains(float32(ev.X), float32(ev.Y)) {
 			b.onClick()
+			b.Clicked(b.click)
 		}
 
 	case sf.EventMouseMoved:
 		if body.Contains(float32(ev.X), float32(ev.Y)) {
-			fmt.Println("Mouse is over")
+			// fmt.Println("Mouse is over")
 			b.rect.SetFillColor(rectOverColor)
 			b.text.SetColor(textOverColor)
 		} else {
@@ -135,6 +140,8 @@ func (b *Button) onClick() {
 	b.rect.SetFillColor(rectOverColor)
 	b.text.SetColor(textOverColor)
 	fmt.Printf("The button was clicked, it's location is X: %v, Y: %v\n", b.rect.GetPosition().X, b.rect.GetPosition().Y)
+	// b.Move(128, 0)
+
 }
 
 // Draw the button on the screen
@@ -143,16 +150,3 @@ func (b *Button) Draw(target sf.RenderTarget, renderStates sf.RenderStates) {
 	b.text.Draw(target, renderStates)
 
 }
-
-/*
-// OnClick the button action to trigger
-func (b *Button) OnClick() {
-	fmt.Println("You clicked the button")
-}
-
-// DrawButton drawing the button
-func (b *Button) DrawButton() {
-	fmt.Println("drawing button")
-	fmt.Println("drawing button")
-}
-*/

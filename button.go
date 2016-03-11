@@ -18,10 +18,11 @@ var (
 
 // Button create the button
 type Button struct {
-	rect  *sf.RectangleShape
-	text  *sf.Text
-	font  *sf.Font
-	click func()
+	rect   *sf.RectangleShape
+	sprite *sf.Sprite
+	text   *sf.Text
+	font   *sf.Font
+	click  func()
 }
 
 // NewButton create the button
@@ -46,10 +47,12 @@ func NewButton() *Button {
 	// put button at 0,0 when first created
 	//rect.Move(sf.Vector2f{rect.GetSize().X / 2, rect.GetSize().Y / 2})
 
+	sprite, _ := sf.NewSprite(nil)
+
 	text.SetOrigin(sf.Vector2f{text.GetLocalBounds().Left + text.GetLocalBounds().Width/2, text.GetLocalBounds().Top + text.GetLocalBounds().Height/2})
 	text.SetPosition(sf.Vector2f{rect.GetLocalBounds().Width / 2, rect.GetGlobalBounds().Height / 2})
 
-	shape := &Button{rect, text, font, func() {}}
+	shape := &Button{rect, sprite, text, font, func() {}}
 	return shape
 }
 
@@ -76,6 +79,14 @@ func (b *Button) SetSize(width, height float32) {
 	b.rect.SetSize(sf.Vector2f{width, height})
 	b.rect.SetOrigin(sf.Vector2f{b.rect.GetSize().X / 2, b.rect.GetSize().Y / 2})
 	b.alignTextCenter()
+}
+
+// SetTexture for the button
+func (b *Button) SetTexture(path string) {
+	tex, _ := sf.NewTextureFromFile(path, nil)
+	spr, _ := sf.NewSprite(tex)
+	b.sprite = spr
+
 }
 
 func (b *Button) GetPos() sf.Vector2f {
@@ -123,6 +134,7 @@ func (b *Button) Events(event sf.Event) {
 			// fmt.Println("Mouse is over")
 			b.rect.SetFillColor(rectOverColor)
 			b.text.SetColor(textOverColor)
+			b.sprite.SetColor(rectOverColor)
 		} else {
 			b.rect.SetFillColor(rectNormalColor)
 			b.text.SetColor(textNormalColor)
@@ -147,6 +159,7 @@ func (b *Button) onClick() {
 // Draw the button on the screen
 func (b *Button) Draw(target sf.RenderTarget, renderStates sf.RenderStates) {
 	b.rect.Draw(target, renderStates)
+	b.sprite.Draw(target, renderStates)
 	b.text.Draw(target, renderStates)
 
 }

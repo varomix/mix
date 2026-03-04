@@ -114,7 +114,7 @@ hello.mix → [mix] → hello.ssa → [qbe] → hello.s → [cc] → hello (nati
 ### Running Tests
 
 ```bash
-make test    # 44/44 tests pass
+make test    # 45/45 tests pass
 ```
 
 ---
@@ -1767,7 +1767,7 @@ Source (.mix)
 
 ### Test Suite
 
-44 end-to-end tests covering all implemented features::
+45 end-to-end tests covering all implemented features::
 
 | # | Test | What It Verifies |
 |---|------|------------------|
@@ -1815,6 +1815,7 @@ Source (.mix)
 | 041 | error_handling | Result type: divide with fail, catch with else |
 | 042 | error_propagation | ? operator: error propagation through call chain |
 | 043 | build_builtins | OS builtins: shell, file_exists, env, getcwd, args |
+| 044 | match_expr | Match as expression with implicit return (str, int) |
 
 ### What's Not Yet Implemented (from spec)
 

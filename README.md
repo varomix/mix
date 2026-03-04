@@ -127,7 +127,7 @@ See the `examples/` directory for complete programs including shapes with method
 ## Testing
 
 ```bash
-make test    # 44 tests
+make test    # 45 tests
 ```
 
 ## Documentation

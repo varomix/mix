@@ -811,8 +811,22 @@ data = <span class="fn">file_read_all</span>(<span class="str">"out.txt"</span>)
         <span class="kw">fail</span> <span class="str">"division by zero"</span>
     <span class="kw">done</span> a / b
 
-r = <span class="fn">divide</span>(<span class="num">10.0</span>, <span class="num">0.0</span>) <span class="kw">else</span> <span class="num">-1.0</span>
-val = <span class="fn">parse</span>(x)<span class="op">?</span>   <span class="cm">// propagate</span></code></pre>
+r = <span class="fn">divide</span>(<span class="num">10.0</span>, <span class="num">0.0</span>) <span class="kw">else</span> <span class="num">-1.0</span></code></pre>
+</div>
+<div class="card">
+<h4 style="color:var(--accent3)">OS Builtins</h4>
+<pre style="border:none;margin:0;padding:12px"><code><span class="fn">shell</span>(<span class="str">"make clean"</span>)
+<span class="fn">print</span>(<span class="fn">file_exists</span>(<span class="str">"main.mix"</span>))
+cwd = <span class="fn">getcwd</span>()
+<span class="fn">mkdir</span>(<span class="str">"build/out"</span>)</code></pre>
+</div>
+<div class="card">
+<h4 style="color:var(--accent3)">Build System</h4>
+<pre style="border:none;margin:0;padding:12px"><code>app = <span class="ty">Project</span>(
+    name: <span class="str">"game"</span>,
+    entry: <span class="str">"src/game.mix"</span>
+)
+app.<span class="fn">build</span>()</code></pre>
 </div>
 </div>
 </section>
@@ -979,12 +993,9 @@ vim.api.nvim_create_autocmd(<span class="str">"FileType"</span>, {
     p = <span class="ty">Player</span>(name: <span class="str">"Alice"</span>, score: <span class="num">0</span>)
     p.<span class="fn">greet</span>()  <span class="cm">// Player: Alice, Score: 0</span></code><span class="label">mix</span></pre>
 
-<h3>Step 5: Lists &amp; Higher-Order Functions</h3>
-<p>Lists use <code>[...]</code> syntax. Lambdas use <code>=></code>. Comprehensions make new lists.</p>
-<pre><code><span class="fn">apply_all</span>(items: [<span class="ty">int</span>], f: <span class="ty">int</span>) -> [<span class="ty">int</span>]
-    [<span class="fn">f</span>(x) <span class="kw">for</span> x <span class="kw">in</span> items]
-
-<span class="fn">main</span>()
+<h3>Step 5: Lists &amp; Comprehensions</h3>
+<p>Lists use <code>[...]</code> syntax. Comprehensions make new lists from existing ones.</p>
+<pre><code><span class="fn">main</span>()
     nums = [<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>, <span class="num">5</span>]
     doubled = [x * <span class="num">2</span> <span class="kw">for</span> x <span class="kw">in</span> nums]
     <span class="fn">print</span>(doubled)           <span class="cm">// [2, 4, 6, 8, 10]</span>
@@ -1097,8 +1108,8 @@ vim.api.nvim_create_autocmd(<span class="str">"FileType"</span>, {
 <h2><span class="num">12</span>Implementation Report</h2>
 
 <div class="stats">
-    <div class="stat"><div class="val">43</div><div class="lbl">Tests Passing</div></div>
-    <div class="stat"><div class="val">10</div><div class="lbl">Phases Complete</div></div>
+    <div class="stat"><div class="val">44</div><div class="lbl">Tests Passing</div></div>
+    <div class="stat"><div class="val">11</div><div class="lbl">Phases Complete</div></div>
     <div class="stat"><div class="val">15</div><div class="lbl">Source Files</div></div>
     <div class="stat"><div class="val">arm64</div><div class="lbl">Native Binary</div></div>
 </div>
@@ -1142,8 +1153,12 @@ vim.api.nvim_create_autocmd(<span class="str">"FileType"</span>, {
     <div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div>
 </div>
 <div class="progress-section">
-    <div class="progress-label"><span>Full Spec (run blocks, streams, channels, package manager)</span><span>90%</span></div>
-    <div class="progress-bar"><div class="progress-fill" style="width:90%"></div></div>
+    <div class="progress-label"><span>Build System (OS builtins, Project shape, build.mix)</span><span>100%</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div>
+</div>
+<div class="progress-section">
+    <div class="progress-label"><span>Full Spec (run blocks, streams, channels)</span><span>15%</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:15%"></div></div>
 </div>
 
 <h3>Test Suite</h3>
@@ -1192,6 +1207,7 @@ vim.api.nvim_create_autocmd(<span class="str">"FileType"</span>, {
 <tr><td>040</td><td>list_ops</td><td>sort, contains, index_of, pop, reverse, join</td><td class="test-pass">PASS</td></tr>
 <tr><td>041</td><td>error_handling</td><td>Result type, fail + else fallback</td><td class="test-pass">PASS</td></tr>
 <tr><td>042</td><td>error_propagation</td><td>? operator, error propagation</td><td class="test-pass">PASS</td></tr>
+<tr><td>043</td><td>build_builtins</td><td>OS builtins: shell, file_exists, env, getcwd, args</td><td class="test-pass">PASS</td></tr>
 </table>
 
 <h3>Remaining from Spec</h3>
@@ -1201,7 +1217,7 @@ vim.api.nvim_create_autocmd(<span class="str">"FileType"</span>, {
 <tr><td>Streams &amp; channels (<code>stream</code>, <code>yield</code>, <code>channel</code>)</td><td style="color:var(--accent4)">Planned</td></tr>
 <tr><td>Move semantics (<code>-&gt;</code> operator)</td><td style="color:var(--accent4)">Planned</td></tr>
 <tr><td>Error variant pattern matching (<code>ok(v) =&gt;</code>, <code>err(e) =&gt;</code>)</td><td style="color:var(--accent4)">Planned</td></tr>
-<tr><td>Package manager</td><td style="color:var(--accent4)">Planned</td></tr>
+<tr><td>Package manager (build system via <code>build.mix</code> implemented)</td><td style="color:var(--accent2)">Partial</td></tr>
 <tr><td>Self-hosting</td><td style="color:var(--accent4)">Planned</td></tr>
 </table>
 </section>

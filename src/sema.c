@@ -35,6 +35,12 @@ static MixType *make_map_type(Arena *a, MixType *key, MixType *val) {
     return t;
 }
 
+static MixType *make_set_type(Arena *a, MixType *elem) {
+    MixType *t = make_type(a, TYPE_SET);
+    t->set.elem_type = elem;
+    return t;
+}
+
 static MixType *resolve_type_node(Sema *sema, AstNode *type_node) {
     if (!type_node) return make_type(sema->arena, TYPE_VOID);
 
@@ -93,6 +99,11 @@ static MixType *resolve_type_node(Sema *sema, AstNode *type_node) {
                 // List type: [T]
                 MixType *elem = resolve_type_node(sema, type_node->type_ptr.base_type);
                 return make_list_type(sema->arena, elem);
+            }
+            case TOK_SET: {
+                // Set type: set[T]
+                MixType *elem = resolve_type_node(sema, type_node->type_ptr.base_type);
+                return make_set_type(sema->arena, elem);
             }
             default:
                 mix_error(type_node->loc, "unknown type");
@@ -261,6 +272,15 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                 if (i2 == 0) { if (kt) key_type = kt; if (vt) val_type = vt; }
             }
             expr->resolved_type = make_map_type(sema->arena, key_type, val_type);
+            return expr->resolved_type;
+        }
+        case NODE_SET_LIT: {
+            MixType *elem_type = make_type(sema->arena, TYPE_STR); // default
+            for (int i2 = 0; i2 < expr->set_lit.element_count; i2++) {
+                MixType *et = resolve_expr(sema, expr->set_lit.elements[i2]);
+                if (i2 == 0 && et) elem_type = et;
+            }
+            expr->resolved_type = make_set_type(sema->arena, elem_type);
             return expr->resolved_type;
         }
         case NODE_INDEX_EXPR: {
@@ -452,6 +472,17 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     mix_error(expr->loc, "map has no field '%s'", fn);
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 }
+            } else if (obj_type && obj_type->kind == TYPE_SET) {
+                // Set built-in fields: len, values
+                const char *fn = expr->field_expr.field_name;
+                if (strcmp(fn, "len") == 0) {
+                    expr->resolved_type = make_type(sema->arena, TYPE_INT);
+                } else if (strcmp(fn, "values") == 0) {
+                    expr->resolved_type = make_list_type(sema->arena, obj_type->set.elem_type);
+                } else {
+                    mix_error(expr->loc, "set has no field '%s'", fn);
+                    expr->resolved_type = make_type(sema->arena, TYPE_VOID);
+                }
             } else if (obj_type && obj_type->kind == TYPE_STR) {
                 // String built-in fields: len
                 if (strcmp(expr->field_expr.field_name, "len") == 0) {
@@ -507,13 +538,16 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                 const char *m = expr->method_call.method_name;
                 if (strcmp(m, "upper") == 0 || strcmp(m, "lower") == 0 ||
                     strcmp(m, "trim") == 0 || strcmp(m, "replace") == 0 ||
-                    strcmp(m, "char_at") == 0) {
+                    strcmp(m, "char_at") == 0 || strcmp(m, "slice") == 0 ||
+                    strcmp(m, "repeat") == 0 || strcmp(m, "reverse") == 0) {
                     expr->resolved_type = make_type(sema->arena, TYPE_STR);
                 } else if (strcmp(m, "split") == 0) {
                     expr->resolved_type = make_list_type(sema->arena, make_type(sema->arena, TYPE_STR));
                 } else if (strcmp(m, "contains") == 0 || strcmp(m, "starts_with") == 0 ||
                            strcmp(m, "ends_with") == 0) {
                     expr->resolved_type = make_type(sema->arena, TYPE_BOOL);
+                } else if (strcmp(m, "index_of") == 0) {
+                    expr->resolved_type = make_type(sema->arena, TYPE_INT);
                 } else if (strcmp(m, "join") == 0) {
                     // Actually join is on lists, but we handle "str".join() as a possible pattern too
                     expr->resolved_type = make_type(sema->arena, TYPE_STR);
@@ -555,6 +589,22 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 } else {
                     mix_error(expr->loc, "map has no method '%s'", m);
+                    expr->resolved_type = make_type(sema->arena, TYPE_VOID);
+                }
+                return expr->resolved_type;
+            }
+            // Set built-in methods
+            if (obj_type && obj_type->kind == TYPE_SET) {
+                const char *m = expr->method_call.method_name;
+                if (strcmp(m, "has") == 0) {
+                    expr->resolved_type = make_type(sema->arena, TYPE_BOOL);
+                } else if (strcmp(m, "add") == 0 || strcmp(m, "remove") == 0) {
+                    expr->resolved_type = make_type(sema->arena, TYPE_VOID);
+                } else if (strcmp(m, "union") == 0 || strcmp(m, "intersect") == 0 ||
+                           strcmp(m, "diff") == 0) {
+                    expr->resolved_type = make_set_type(sema->arena, obj_type->set.elem_type);
+                } else {
+                    mix_error(expr->loc, "set has no method '%s'", m);
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 }
                 return expr->resolved_type;
@@ -676,6 +726,8 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
             } else if (iter_type && iter_type->kind == TYPE_MAP) {
                 // for key, value in map: var_name = value type
                 var_type = iter_type->map.val_type;
+            } else if (iter_type && iter_type->kind == TYPE_SET && iter_type->set.elem_type) {
+                var_type = iter_type->set.elem_type;
             } else if (iter_type && (type_is_integer(iter_type) || iter_type->kind == TYPE_INT)) {
                 var_type = make_type(sema->arena, TYPE_INT);
             }
@@ -1092,6 +1144,27 @@ void sema_analyze(Sema *sema, AstNode *program) {
         ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
         ft->func.param_types[0] = make_type(sema->arena, TYPE_INFER);
         symtab_insert(&sema->symtab, "to_string", ft, false);
+    }
+
+    // str_reverse(s: str) -> str
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_STR);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_STR);
+        symtab_insert(&sema->symtab, "str_reverse", ft, false);
+    }
+
+    // str_count(s: str, sub: str) -> int
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_INT);
+        ft->func.param_count = 2;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*) * 2);
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_STR);
+        ft->func.param_types[1] = make_type(sema->arena, TYPE_STR);
+        symtab_insert(&sema->symtab, "str_count", ft, false);
     }
 
     // Math built-ins (single arg: float -> float)

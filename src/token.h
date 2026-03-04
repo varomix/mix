@@ -50,6 +50,7 @@ typedef enum {
     TOK_REPEAT,
     TOK_AS,
     TOK_THEN,
+    TOK_SET,
 
     // Type keywords
     TOK_INT,

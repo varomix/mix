@@ -1,0 +1,13 @@
+true
+false
+Hello world
+
+edcba
+
+2
+3
+0
+00042
+hello
+hi...
+hello

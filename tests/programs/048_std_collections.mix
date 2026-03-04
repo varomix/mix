@@ -1,0 +1,28 @@
+use std.collections
+
+main()
+    // Stack
+    s! = Stack(items: [])
+    print(s.is_empty())
+    s.push!(10)
+    s.push!(20)
+    s.push!(30)
+    print(s.size())
+    print(s.peek())
+    print(s.pop!())
+    print(s.pop!())
+    print(s.size())
+    print(s.is_empty())
+
+    // Queue
+    q! = Queue(items: [])
+    print(q.is_empty())
+    q.enqueue!(1)
+    q.enqueue!(2)
+    q.enqueue!(3)
+    print(q.size())
+    print(q.peek())
+    print(q.dequeue!())
+    print(q.dequeue!())
+    print(q.size())
+    print(q.is_empty())

@@ -1,0 +1,25 @@
+// MIX Standard Library: string utilities
+
+pub is_empty(s: str) -> bool
+    s.len == 0
+
+pub capitalize(s: str) -> str
+    if s.len == 0
+        done ""
+    s.char_at(0).upper() + s.slice(1, s.len)
+
+pub reverse(s: str) -> str
+    str_reverse(s)
+
+pub count(s: str, sub: str) -> int
+    str_count(s, sub)
+
+pub pad_left(s: str, width: int, ch: str) -> str
+    if s.len >= width
+        done s
+    ch.repeat(width - s.len) + s
+
+pub pad_right(s: str, width: int, ch: str) -> str
+    if s.len >= width
+        done s
+    s + ch.repeat(width - s.len)

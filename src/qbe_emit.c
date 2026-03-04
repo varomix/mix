@@ -312,6 +312,15 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             }
             return map_t;
         }
+        case NODE_SET_LIT: {
+            int set_t = next_temp(emit);
+            fprintf(emit->out, "\t%%t%d =l call $mix_set_new()\n", set_t);
+            for (int i = 0; i < expr->set_lit.element_count; i++) {
+                int elem = emit_expr(emit, expr->set_lit.elements[i]);
+                fprintf(emit->out, "\tcall $mix_set_add(l %%t%d, l %%t%d)\n", set_t, elem);
+            }
+            return set_t;
+        }
         case NODE_INDEX_EXPR: {
             int obj = emit_expr(emit, expr->index_expr.object);
             int idx = emit_expr(emit, expr->index_expr.index);
@@ -623,6 +632,8 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_print_list_int(l %%t%d)\n", t, arg_temps[0]);
                 } else if (atype && atype->kind == TYPE_MAP) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_print_map(l %%t%d)\n", t, arg_temps[0]);
+                } else if (atype && atype->kind == TYPE_SET) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_print_set(l %%t%d)\n", t, arg_temps[0]);
                 } else {
                     // For small integer types (w), extend to l before printing
                     int arg_t = arg_temps[0];
@@ -763,6 +774,20 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_to_string_int(l %%t%d)\n",
                             t, arg_temps[0]);
                 }
+                return t;
+            }
+
+            // str_reverse(s: str) -> str
+            if (strcmp(expr->call.name, "str_reverse") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_str_reverse(l %%t%d)\n",
+                        t, arg_temps[0]);
+                return t;
+            }
+
+            // str_count(s: str, sub: str) -> int
+            if (strcmp(expr->call.name, "str_count") == 0 && expr->call.arg_count == 2) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_str_count(l %%t%d, l %%t%d)\n",
+                        t, arg_temps[0], arg_temps[1]);
                 return t;
             }
 
@@ -922,6 +947,18 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 } else if (strcmp(m, "char_at") == 0 && expr->method_call.arg_count == 1) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_str_char_at(l %%t%d, l %%t%d)\n",
                             t, obj_temp, arg_temps2[0]);
+                } else if (strcmp(m, "slice") == 0 && expr->method_call.arg_count == 2) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_str_slice(l %%t%d, l %%t%d, l %%t%d)\n",
+                            t, obj_temp, arg_temps2[0], arg_temps2[1]);
+                } else if (strcmp(m, "repeat") == 0 && expr->method_call.arg_count == 1) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_str_repeat(l %%t%d, l %%t%d)\n",
+                            t, obj_temp, arg_temps2[0]);
+                } else if (strcmp(m, "reverse") == 0 && expr->method_call.arg_count == 0) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_str_reverse(l %%t%d)\n",
+                            t, obj_temp);
+                } else if (strcmp(m, "index_of") == 0 && expr->method_call.arg_count == 1) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_str_index_of(l %%t%d, l %%t%d)\n",
+                            t, obj_temp, arg_temps2[0]);
                 }
                 return t;
             }
@@ -936,6 +973,32 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 } else if (strcmp(m, "remove") == 0 && expr->method_call.arg_count == 1) {
                     fprintf(emit->out, "\tcall $mix_map_remove(l %%t%d, l %%t%d)\n",
                             obj_temp, arg_temps2[0]);
+                }
+                return t;
+            }
+
+            // Set built-in methods
+            if (obj_type && obj_type->kind == TYPE_SET) {
+                const char *m = expr->method_call.method_name;
+                int t = next_temp(emit);
+                if (strcmp(m, "has") == 0 && expr->method_call.arg_count == 1) {
+                    fprintf(emit->out, "\t%%t%d =w call $mix_set_has(l %%t%d, l %%t%d)\n",
+                            t, obj_temp, arg_temps2[0]);
+                } else if (strcmp(m, "add") == 0 && expr->method_call.arg_count == 1) {
+                    fprintf(emit->out, "\tcall $mix_set_add(l %%t%d, l %%t%d)\n",
+                            obj_temp, arg_temps2[0]);
+                } else if (strcmp(m, "remove") == 0 && expr->method_call.arg_count == 1) {
+                    fprintf(emit->out, "\tcall $mix_set_remove(l %%t%d, l %%t%d)\n",
+                            obj_temp, arg_temps2[0]);
+                } else if (strcmp(m, "union") == 0 && expr->method_call.arg_count == 1) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_set_union(l %%t%d, l %%t%d)\n",
+                            t, obj_temp, arg_temps2[0]);
+                } else if (strcmp(m, "intersect") == 0 && expr->method_call.arg_count == 1) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_set_intersect(l %%t%d, l %%t%d)\n",
+                            t, obj_temp, arg_temps2[0]);
+                } else if (strcmp(m, "diff") == 0 && expr->method_call.arg_count == 1) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_set_diff(l %%t%d, l %%t%d)\n",
+                            t, obj_temp, arg_temps2[0]);
                 }
                 return t;
             }
@@ -1062,6 +1125,18 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_map_keys(l %%t%d)\n", t, obj);
                 } else if (strcmp(fn, "values") == 0) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_map_values(l %%t%d)\n", t, obj);
+                }
+                return t;
+            }
+
+            // Set built-in fields
+            if (obj_type && obj_type->kind == TYPE_SET) {
+                const char *fn = expr->field_expr.field_name;
+                int t = next_temp(emit);
+                if (strcmp(fn, "len") == 0) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_set_len(l %%t%d)\n", t, obj);
+                } else if (strcmp(fn, "values") == 0) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_set_values(l %%t%d)\n", t, obj);
                 }
                 return t;
             }
@@ -1301,6 +1376,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 (iter->binary.op == TOK_DOTDOT || iter->binary.op == TOK_DOTDOT_EQ);
             bool is_list = iter_type && iter_type->kind == TYPE_LIST;
             bool is_map = iter_type && iter_type->kind == TYPE_MAP;
+            bool is_set = iter_type && iter_type->kind == TYPE_SET;
 
             if (is_map) {
                 // for key, value in map → get keys, iterate keys, get value for each
@@ -1373,6 +1449,50 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\tstorel 0, %%v.%s\n", idx_name);
 
                 // Loop variable
+                fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", stmt->for_stmt.var_name);
+                fprintf(emit->out, "\tstorel 0, %%v.%s\n", stmt->for_stmt.var_name);
+
+                int l_cond = next_label(emit);
+                int l_body = next_label(emit);
+                int l_end2 = next_label(emit);
+
+                fprintf(emit->out, "@L%d\n", l_cond);
+                int ci = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", ci, idx_name);
+                int cmp = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =w csltl %%t%d, %%t%d\n", cmp, ci, len_t);
+                fprintf(emit->out, "\tjnz %%t%d, @L%d, @L%d\n", cmp, l_body, l_end2);
+
+                fprintf(emit->out, "@L%d\n", l_body);
+                int ci2 = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", ci2, idx_name);
+                int elem = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =l call $mix_list_get(l %%t%d, l %%t%d)\n", elem, list_ptr, ci2);
+                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", elem, stmt->for_stmt.var_name);
+
+                emit_block(emit, stmt->for_stmt.body);
+
+                int ci3 = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", ci3, idx_name);
+                int ni = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =l add %%t%d, 1\n", ni, ci3);
+                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", ni, idx_name);
+                fprintf(emit->out, "\tjmp @L%d\n", l_cond);
+                fprintf(emit->out, "@L%d\n", l_end2);
+            } else if (is_set) {
+                // for item in set → convert to list via mix_set_values, then list iterate
+                int set_ptr = emit_expr(emit, iter);
+                int list_ptr = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =l call $mix_set_values(l %%t%d)\n", list_ptr, set_ptr);
+                int len_t = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =l call $mix_list_len(l %%t%d)\n", len_t, list_ptr);
+
+                int idx_id = next_label(emit);
+                char idx_name[64];
+                snprintf(idx_name, sizeof(idx_name), "_sidx_%d", idx_id);
+                fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", idx_name);
+                fprintf(emit->out, "\tstorel 0, %%v.%s\n", idx_name);
+
                 fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", stmt->for_stmt.var_name);
                 fprintf(emit->out, "\tstorel 0, %%v.%s\n", stmt->for_stmt.var_name);
 

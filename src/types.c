@@ -29,6 +29,7 @@ const char *type_kind_name(TypeKind kind) {
         case TYPE_SHARED:  return "shared";
         case TYPE_TASK:    return "task";
         case TYPE_RESULT:  return "result";
+        case TYPE_SET:     return "set";
     }
     return "unknown";
 }

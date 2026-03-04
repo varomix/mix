@@ -19,6 +19,7 @@ typedef enum {
     TYPE_SHARED,
     TYPE_TASK,
     TYPE_RESULT,
+    TYPE_SET,
 } TypeKind;
 
 typedef struct ShapeFieldInfo {
@@ -64,6 +65,7 @@ struct MixType {
         struct { struct MixType *inner; } shared;
         struct { struct MixType *result_type; } task;
         struct { struct MixType *ok_type; } result;
+        struct { struct MixType *elem_type; } set;
     };
 };
 

@@ -1,0 +1,30 @@
+// MIX Standard Library: math
+// Constants and utility functions
+
+pub PI() -> float
+    3.14159265358979323846
+
+pub E() -> float
+    2.71828182845904523536
+
+pub TAU() -> float
+    6.28318530717958647692
+
+pub deg_to_rad(deg: float) -> float
+    deg * 3.14159265358979323846 / 180.0
+
+pub rad_to_deg(rad: float) -> float
+    rad * 180.0 / 3.14159265358979323846
+
+pub hypot(x: float, y: float) -> float
+    sqrt(x * x + y * y)
+
+pub sign(x: float) -> float
+    if x > 0.0
+        done 1.0
+    if x < 0.0
+        done -1.0
+    0.0
+
+pub fmod(x: float, y: float) -> float
+    x - floor(x / y) * y

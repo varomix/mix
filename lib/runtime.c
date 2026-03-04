@@ -514,6 +514,69 @@ char *mix_str_join(const void *list_ptr, const char *sep) {
     return result;
 }
 
+char *mix_str_reverse(const char *s) {
+    int64_t len = strlen(s);
+    char *result = malloc(len + 1);
+    if (!result) mix_panic("out of memory");
+    for (int64_t i = 0; i < len; i++) {
+        result[i] = s[len - 1 - i];
+    }
+    result[len] = '\0';
+    return result;
+}
+
+int64_t mix_str_count(const char *s, const char *sub) {
+    int64_t count = 0;
+    int64_t sublen = strlen(sub);
+    if (sublen == 0) return 0;
+    const char *p = s;
+    while ((p = strstr(p, sub)) != NULL) {
+        count++;
+        p += sublen;
+    }
+    return count;
+}
+
+char *mix_str_slice(const char *s, int64_t start, int64_t end) {
+    int64_t len = strlen(s);
+    if (start < 0) start = 0;
+    if (end > len) end = len;
+    if (start >= end) {
+        char *r = malloc(1);
+        r[0] = '\0';
+        return r;
+    }
+    int64_t slen = end - start;
+    char *r = malloc(slen + 1);
+    if (!r) mix_panic("out of memory");
+    memcpy(r, s + start, slen);
+    r[slen] = '\0';
+    return r;
+}
+
+char *mix_str_repeat(const char *s, int64_t n) {
+    if (n <= 0) {
+        char *r = malloc(1);
+        r[0] = '\0';
+        return r;
+    }
+    int64_t slen = strlen(s);
+    int64_t total = slen * n;
+    char *r = malloc(total + 1);
+    if (!r) mix_panic("out of memory");
+    for (int64_t i = 0; i < n; i++) {
+        memcpy(r + i * slen, s, slen);
+    }
+    r[total] = '\0';
+    return r;
+}
+
+int64_t mix_str_index_of(const char *s, const char *sub) {
+    const char *found = strstr(s, sub);
+    if (!found) return -1;
+    return (int64_t)(found - s);
+}
+
 char *mix_to_string_int(int64_t val) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%" PRId64, val);
@@ -761,6 +824,85 @@ void mix_print_map(const void *map_ptr) {
         if (map->entries[i].occupied) {
             if (!first) printf(", ");
             printf("\"%s\": %" PRId64, map->entries[i].key, map->entries[i].value);
+            first = 0;
+        }
+    }
+    printf("}\n");
+}
+
+// ---- Sets (backed by MixMap: keys = elements, values = ignored) ----
+
+void *mix_set_new(void) {
+    return mix_map_new();
+}
+
+int64_t mix_set_len(const void *set_ptr) {
+    return mix_map_len(set_ptr);
+}
+
+void mix_set_add(void *set_ptr, const char *elem) {
+    mix_map_set(set_ptr, elem, 1);
+}
+
+void mix_set_remove(void *set_ptr, const char *elem) {
+    mix_map_remove(set_ptr, elem);
+}
+
+int32_t mix_set_has(const void *set_ptr, const char *elem) {
+    return mix_map_has(set_ptr, elem);
+}
+
+void *mix_set_values(const void *set_ptr) {
+    return mix_map_keys(set_ptr);
+}
+
+void *mix_set_union(const void *a_ptr, const void *b_ptr) {
+    const MixMap *a = a_ptr;
+    const MixMap *b = b_ptr;
+    void *result = mix_set_new();
+    for (int64_t i = 0; i < a->cap; i++) {
+        if (a->entries[i].occupied) {
+            mix_map_set(result, a->entries[i].key, 1);
+        }
+    }
+    for (int64_t i = 0; i < b->cap; i++) {
+        if (b->entries[i].occupied) {
+            mix_map_set(result, b->entries[i].key, 1);
+        }
+    }
+    return result;
+}
+
+void *mix_set_intersect(const void *a_ptr, const void *b_ptr) {
+    const MixMap *a = a_ptr;
+    void *result = mix_set_new();
+    for (int64_t i = 0; i < a->cap; i++) {
+        if (a->entries[i].occupied && mix_map_has(b_ptr, a->entries[i].key)) {
+            mix_map_set(result, a->entries[i].key, 1);
+        }
+    }
+    return result;
+}
+
+void *mix_set_diff(const void *a_ptr, const void *b_ptr) {
+    const MixMap *a = a_ptr;
+    void *result = mix_set_new();
+    for (int64_t i = 0; i < a->cap; i++) {
+        if (a->entries[i].occupied && !mix_map_has(b_ptr, a->entries[i].key)) {
+            mix_map_set(result, a->entries[i].key, 1);
+        }
+    }
+    return result;
+}
+
+void mix_print_set(const void *set_ptr) {
+    const MixMap *map = set_ptr;
+    printf("set{");
+    int first = 1;
+    for (int64_t i = 0; i < map->cap; i++) {
+        if (map->entries[i].occupied) {
+            if (!first) printf(", ");
+            printf("\"%s\"", map->entries[i].key);
             first = 0;
         }
     }

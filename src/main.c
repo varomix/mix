@@ -137,7 +137,37 @@ static void derive_output_name(const char *input_file, char *out, size_t out_siz
 }
 
 // Resolve module path: "math" -> "./math.mix", "engine.physics" -> "./engine/physics.mix"
-static char *resolve_module_path(Arena *arena, const char *base_dir, const char *module_path) {
+// For "std.*" modules, search relative to the compiler binary first.
+static char *resolve_module_path(Arena *arena, const char *base_dir,
+                                  const char *module_path, const char *exe_dir) {
+    // Check for stdlib import: starts with "std."
+    if (strncmp(module_path, "std.", 4) == 0) {
+        const char *rest = module_path + 4; // skip "std."
+        char std_path[512];
+
+        // Build relative path from rest (convert dots to slashes)
+        char rel[256];
+        int ri = 0;
+        for (const char *p = rest; *p && ri < (int)sizeof(rel) - 1; p++) {
+            rel[ri++] = (*p == '.') ? '/' : *p;
+        }
+        rel[ri] = '\0';
+
+        if (exe_dir && exe_dir[0]) {
+            // Try: <exe_dir>/../lib/mix/std/<rest>.mix (installed layout)
+            snprintf(std_path, sizeof(std_path), "%s/../lib/mix/std/%s.mix", exe_dir, rel);
+            FILE *f = fopen(std_path, "r");
+            if (f) { fclose(f); return arena_strdup(arena, std_path); }
+
+            // Try: <exe_dir>/../lib/std/<rest>.mix (dev layout: build/ -> lib/)
+            snprintf(std_path, sizeof(std_path), "%s/../lib/std/%s.mix", exe_dir, rel);
+            f = fopen(std_path, "r");
+            if (f) { fclose(f); return arena_strdup(arena, std_path); }
+        }
+
+        // Fallthrough: try as a regular relative path
+    }
+
     char path[512];
     snprintf(path, sizeof(path), "%s/", base_dir);
     int off = (int)strlen(path);
@@ -393,11 +423,36 @@ int main(int argc, char **argv) {
     Sema sema = sema_create(&arena);
     sema.debug_mode = debug_mode;
 
+    // Get directory of the mix executable (needed for stdlib path and runtime search)
+    char exe_dir[1024] = "";
+    {
+        char exe_path[1024];
+        #ifdef __APPLE__
+        uint32_t exe_size = sizeof(exe_path);
+        if (_NSGetExecutablePath(exe_path, &exe_size) == 0) {
+            char *resolved = realpath(exe_path, NULL);
+            if (resolved) {
+                char *d = dirname(resolved);
+                strncpy(exe_dir, d, sizeof(exe_dir) - 1);
+                free(resolved);
+            }
+        }
+        #elif defined(__linux__)
+        ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+        if (len > 0) {
+            exe_path[len] = '\0';
+            char *d = dirname(exe_path);
+            strncpy(exe_dir, d, sizeof(exe_dir) - 1);
+        }
+        #endif
+    }
+
     // Process use declarations — compile each module
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
         if (decl->kind == NODE_USE_DECL) {
-            char *mod_path = resolve_module_path(&arena, base_dir, decl->use_decl.module_path);
+            char *mod_path = resolve_module_path(&arena, base_dir,
+                                                  decl->use_decl.module_path, exe_dir);
             if (verbose) fprintf(stderr, "mix: compiling module '%s' -> %s\n",
                                  decl->use_decl.module_path, mod_path);
 
@@ -460,30 +515,7 @@ int main(int argc, char **argv) {
     }
 
     // Find runtime — search relative to CWD, then relative to the mix binary
-    char exe_dir[1024] = "";
-    {
-        // Get directory of the mix executable
-        char exe_path[1024];
-        #ifdef __APPLE__
-        uint32_t exe_size = sizeof(exe_path);
-        if (_NSGetExecutablePath(exe_path, &exe_size) == 0) {
-            char *resolved = realpath(exe_path, NULL);
-            if (resolved) {
-                char *d = dirname(resolved);
-                strncpy(exe_dir, d, sizeof(exe_dir) - 1);
-                free(resolved);
-            }
-        }
-        #elif defined(__linux__)
-        ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-        if (len > 0) {
-            exe_path[len] = '\0';
-            char *d = dirname(exe_path);
-            strncpy(exe_dir, d, sizeof(exe_dir) - 1);
-        }
-        #endif
-    }
-
+    // (exe_dir already computed above for stdlib resolution)
     char runtime_beside_exe[1100] = "";
     if (exe_dir[0]) {
         snprintf(runtime_beside_exe, sizeof(runtime_beside_exe),

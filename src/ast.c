@@ -189,6 +189,11 @@ void ast_print(AstNode *node, int indent) {
         case NODE_MAP_LIT:
             printf("MapLit (%d entries)\n", node->map_lit.entry_count);
             break;
+        case NODE_SET_LIT:
+            printf("SetLit (%d elements)\n", node->set_lit.element_count);
+            for (int i = 0; i < node->set_lit.element_count; i++)
+                ast_print(node->set_lit.elements[i], indent + 1);
+            break;
         case NODE_INDEX_EXPR:
             printf("IndexExpr\n");
             ast_print(node->index_expr.object, indent + 1);

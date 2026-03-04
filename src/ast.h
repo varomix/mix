@@ -51,6 +51,7 @@ typedef enum {
     NODE_SLICE_EXPR,        // list[start..end]
     NODE_LIST_COMP,         // [expr for x in iter if cond]
     NODE_ELSE_EXPR,         // expr else default
+    NODE_SET_LIT,           // set{1, 2, 3}
 
     // Shape-related
     NODE_SHAPE_DECL,
@@ -319,6 +320,12 @@ struct AstNode {
             AstNode *value;
             AstNode *fallback;
         } else_expr;
+
+        // NODE_SET_LIT — set{expr, expr, ...}
+        struct {
+            AstNode **elements;
+            int element_count;
+        } set_lit;
 
         // NODE_TYPE_ALIAS — type Name = Type
         struct {

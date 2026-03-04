@@ -106,6 +106,20 @@ static AstNode *parse_type(Parser *p) {
         return node;
     }
 
+    // Set type: set[T]
+    if (check(p, TOK_SET) && p->pos + 1 < p->token_count &&
+        p->tokens[p->pos + 1].kind == TOK_LBRACKET) {
+        advance_tok(p); // skip 'set'
+        expect(p, TOK_LBRACKET);
+        AstNode *elem_type = parse_type(p);
+        expect(p, TOK_RBRACKET);
+        AstNode *node = ast_new(p->arena, NODE_TYPE_NAME, loc);
+        node->type_name.type_kind = TOK_SET;
+        node->type_name.name = "set";
+        node->type_ptr.base_type = elem_type;
+        return node;
+    }
+
     // Named type or keyword type
     Token *t = current(p);
     AstNode *node = ast_new(p->arena, NODE_TYPE_NAME, loc);
@@ -335,6 +349,31 @@ static AstNode *parse_primary(Parser *p) {
             AstNode *node = ast_new(p->arena, NODE_LIST_LIT, loc);
             node->list_lit.elements = elements;
             node->list_lit.element_count = elem_count;
+            return node;
+        }
+        case TOK_SET: {
+            // Set literal: set{expr, expr, ...}
+            advance_tok(p); // skip 'set'
+            expect(p, TOK_LBRACE);
+            AstNode *node = ast_new(p->arena, NODE_SET_LIT, loc);
+            AstNode **elements = NULL;
+            int elem_count = 0, elem_cap = 0;
+
+            if (!check(p, TOK_RBRACE)) {
+                do {
+                    AstNode *elem = parse_expr(p);
+                    if (elem_count >= elem_cap) {
+                        elem_cap = elem_cap ? elem_cap * 2 : 8;
+                        AstNode **ne = arena_alloc(p->arena, sizeof(AstNode*) * elem_cap);
+                        if (elements) memcpy(ne, elements, sizeof(AstNode*) * elem_count);
+                        elements = ne;
+                    }
+                    elements[elem_count++] = elem;
+                } while (match_tok(p, TOK_COMMA));
+            }
+            expect(p, TOK_RBRACE);
+            node->set_lit.elements = elements;
+            node->set_lit.element_count = elem_count;
             return node;
         }
         case TOK_LBRACE: {
@@ -625,7 +664,8 @@ static AstNode *parse_expr_prec(Parser *p, Precedence min_prec) {
         SrcLoc dot_loc = tok_loc(p);
         advance_tok(p); // skip .
         Token *field = current(p);
-        if (field->kind != TOK_IDENT && field->kind != TOK_IDENT_MUT) {
+        if (field->kind != TOK_IDENT && field->kind != TOK_IDENT_MUT &&
+            field->kind != TOK_REPEAT && field->kind != TOK_SET) {
             mix_error(dot_loc, "expected field or method name after '.'");
             break;
         }
@@ -1283,8 +1323,8 @@ static AstNode *parse_shape_decl(Parser *p) {
             continue;
         }
 
-        // Method: ident( → parse as fn_decl
-        if (check(p, TOK_IDENT) && peek_at(p, 1)->kind == TOK_LPAREN) {
+        // Method: ident( or ident!( → parse as fn_decl
+        if ((check(p, TOK_IDENT) || check(p, TOK_IDENT_MUT)) && peek_at(p, 1)->kind == TOK_LPAREN) {
             AstNode *method = parse_fn_decl(p);
             if (method_count >= method_cap) {
                 method_cap = method_cap ? method_cap * 2 : 8;

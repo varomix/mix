@@ -47,6 +47,7 @@ const char *token_kind_name(TokenKind kind) {
         case TOK_REPEAT:     return "REPEAT";
         case TOK_AS:         return "AS";
         case TOK_THEN:       return "THEN";
+        case TOK_SET:        return "SET";
         case TOK_INT:        return "INT";
         case TOK_FLOAT:      return "FLOAT";
         case TOK_BOOL:       return "BOOL";
@@ -187,7 +188,7 @@ static Keyword keywords[] = {
     {"and", TOK_AND}, {"or", TOK_OR}, {"not", TOK_NOT},
     {"go", TOK_GO}, {"run", TOK_RUN}, {"wait", TOK_WAIT},
     {"stream", TOK_STREAM}, {"yield", TOK_YIELD}, {"shared", TOK_SHARED},
-    {"repeat", TOK_REPEAT}, {"as", TOK_AS}, {"then", TOK_THEN},
+    {"repeat", TOK_REPEAT}, {"as", TOK_AS}, {"then", TOK_THEN}, {"set", TOK_SET},
     {"true", TOK_TRUE}, {"false", TOK_FALSE}, {"none", TOK_NONE},
     // Type keywords
     {"int", TOK_INT}, {"float", TOK_FLOAT}, {"bool", TOK_BOOL},

@@ -53,4 +53,15 @@ run: $(BIN)
 test: $(BIN)
 	bash tests/run_tests.sh
 
-.PHONY: all clean run test
+PREFIX ?= /usr/local
+install: $(BIN) $(LSP_BIN)
+	mkdir -p $(PREFIX)/bin
+	mkdir -p $(PREFIX)/lib/mix/std
+	cp $(BIN) $(PREFIX)/bin/
+	cp $(LSP_BIN) $(PREFIX)/bin/
+	cp lib/runtime.c $(PREFIX)/lib/mix/
+	@if [ -d lib/std ] && [ "$$(ls -A lib/std/*.mix 2>/dev/null)" ]; then \
+		cp lib/std/*.mix $(PREFIX)/lib/mix/std/; \
+	fi
+
+.PHONY: all clean run test install

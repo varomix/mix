@@ -1,0 +1,18 @@
+use std.math
+
+main()
+    // Constants
+    print(PI())
+    print(E())
+    print(TAU())
+
+    // Conversions
+    print(deg_to_rad(180.0))
+    print(rad_to_deg(PI()))
+
+    // Utility functions
+    print(hypot(3.0, 4.0))
+    print(sign(-5.0))
+    print(sign(0.0))
+    print(sign(3.0))
+    print(fmod(10.0, 3.0))

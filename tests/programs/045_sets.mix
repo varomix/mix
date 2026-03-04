@@ -1,0 +1,50 @@
+// Test set type
+main()
+    // Set literal and len
+    s! = set{"apple", "banana", "cherry"}
+    print(s.len)
+
+    // has
+    print(s.has("banana"))
+    print(s.has("grape"))
+
+    // add
+    s.add!("grape")
+    print(s.len)
+    print(s.has("grape"))
+
+    // remove
+    s.remove!("banana")
+    print(s.len)
+    print(s.has("banana"))
+
+    // for-in iteration (count items)
+    count! = 0
+    for item in s
+        count! += 1
+    print(count)
+
+    // empty set
+    e = set{}
+    print(e.len)
+
+    // union
+    a = set{"x", "y"}
+    b = set{"y", "z"}
+    u = a.union(b)
+    print(u.len)
+    print(u.has("x"))
+    print(u.has("y"))
+    print(u.has("z"))
+
+    // intersect
+    ix = a.intersect(b)
+    print(ix.len)
+    print(ix.has("y"))
+    print(ix.has("x"))
+
+    // diff
+    d = a.diff(b)
+    print(d.len)
+    print(d.has("x"))
+    print(d.has("y"))

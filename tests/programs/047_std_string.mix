@@ -1,0 +1,27 @@
+use std.string
+
+main()
+    // is_empty
+    print(is_empty(""))
+    print(is_empty("hello"))
+
+    // capitalize
+    print(capitalize("hello world"))
+    print(capitalize(""))
+
+    // reverse
+    print(reverse("abcde"))
+    print(reverse(""))
+
+    // count
+    print(count("hello world hello", "hello"))
+    print(count("aaa", "a"))
+    print(count("abc", "xyz"))
+
+    // pad_left
+    print(pad_left("42", 5, "0"))
+    print(pad_left("hello", 3, "x"))
+
+    // pad_right
+    print(pad_right("hi", 5, "."))
+    print(pad_right("hello", 3, "x"))

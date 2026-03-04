@@ -37,6 +37,8 @@ typedef struct {
     // Debug info (DWARF via QBE dbgloc)
     bool emit_debug_info;
     int dbg_line;
+    // Match expression result temp (for implicit return)
+    int last_match_temp;
 } QbeEmitter;
 
 QbeEmitter qbe_emitter_create(FILE *out, Arena *arena, SymTab *symtab, bool debug);

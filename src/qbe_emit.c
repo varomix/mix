@@ -9,6 +9,7 @@ QbeEmitter qbe_emitter_create(FILE *out, Arena *arena, SymTab *symtab, bool debu
     emit.arena = arena;
     emit.symtab = symtab;
     emit.emit_debug_info = debug;
+    emit.last_match_temp = -1;
     return emit;
 }
 
@@ -1454,6 +1455,17 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             bool is_tagged = subj_type && subj_type->kind == TYPE_SHAPE && subj_type->shape.is_tagged_union;
             int l_end3 = next_label(emit);
 
+            // Only thread results when match has a resolved type (used as expression)
+            MixType *match_type = stmt->resolved_type;
+            bool has_result = match_type && match_type->kind != TYPE_VOID;
+            int match_result = -1;
+            if (has_result) {
+                match_result = next_temp(emit);
+                const char *rty = qbe_type(match_type);
+                fprintf(emit->out, "\t%%t%d =%s copy 0\n", match_result, rty);
+            }
+            emit->last_match_temp = match_result;
+
             // For tagged unions, load the tag first
             int tag_val = -1;
             if (is_tagged) {
@@ -1468,12 +1480,17 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                     if (arm->body) {
                         if (arm->body->kind == NODE_BLOCK)
                             emit_block(emit, arm->body);
-                        else emit_expr(emit, arm->body);
+                        else {
+                            int val = emit_expr(emit, arm->body);
+                            if (has_result) {
+                                const char *rty = qbe_type(match_type);
+                                fprintf(emit->out, "\t%%t%d =%s copy %%t%d\n", match_result, rty, val);
+                            }
+                        }
                     }
                     fprintf(emit->out, "\tjmp @L%d\n", l_end3);
                 } else if (is_tagged && arm->pattern && arm->pattern->kind == NODE_CALL_EXPR) {
                     // Tagged union match: Circle(r) => ...
-                    // Pattern is parsed as a call expr: name=variant, args=bindings
                     const char *var_name = arm->pattern->call.name;
                     ShapeVariant *sv = type_find_variant(subj_type, var_name);
 
@@ -1508,7 +1525,13 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                         if (arm->body) {
                             if (arm->body->kind == NODE_BLOCK)
                                 emit_block(emit, arm->body);
-                            else emit_expr(emit, arm->body);
+                            else {
+                                int val = emit_expr(emit, arm->body);
+                                if (has_result) {
+                                    const char *rty = qbe_type(match_type);
+                                    fprintf(emit->out, "\t%%t%d =%s copy %%t%d\n", match_result, rty, val);
+                                }
+                            }
                         }
                     }
                     fprintf(emit->out, "\tjmp @L%d\n", l_end3);
@@ -1529,7 +1552,13 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                     if (arm->body) {
                         if (arm->body->kind == NODE_BLOCK)
                             emit_block(emit, arm->body);
-                        else emit_expr(emit, arm->body);
+                        else {
+                            int val = emit_expr(emit, arm->body);
+                            if (has_result) {
+                                const char *rty = qbe_type(match_type);
+                                fprintf(emit->out, "\t%%t%d =%s copy %%t%d\n", match_result, rty, val);
+                            }
+                        }
                     }
                     fprintf(emit->out, "\tjmp @L%d\n", l_end3);
                     fprintf(emit->out, "@L%d\n", l_next);
@@ -1772,6 +1801,28 @@ static void emit_fn_decl(QbeEmitter *emit, AstNode *fn) {
                 }
                 fprintf(emit->out, "}\n\n");
                 return;
+            } else if (!is_main && fn->fn_decl.return_type && last->kind == NODE_MATCH_STMT) {
+                // Match as implicit return — emit match, then return its result temp
+                emit->last_match_temp = -1;
+                emit_stmt(emit, last);
+                if (emit->last_match_temp >= 0) {
+                    for (int i = emit->defer_count - 1; i >= 0; i--)
+                        emit_stmt(emit, emit->deferred[i]);
+                    int val = emit->last_match_temp;
+                    if (ret_type_resolved && ret_type_resolved->kind == TYPE_OPTIONAL) {
+                        int wrapped = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =l call $mix_optional_some(l %%t%d)\n", wrapped, val);
+                        fprintf(emit->out, "\tret %%t%d\n", wrapped);
+                    } else if (emit->current_return_type && emit->current_return_type->kind == TYPE_RESULT) {
+                        int wrapped = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =l call $mix_result_ok(l %%t%d)\n", wrapped, val);
+                        fprintf(emit->out, "\tret %%t%d\n", wrapped);
+                    } else {
+                        fprintf(emit->out, "\tret %%t%d\n", val);
+                    }
+                    fprintf(emit->out, "}\n\n");
+                    return;
+                }
             } else {
                 emit_stmt(emit, last);
             }

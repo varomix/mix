@@ -735,6 +735,14 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                     }
                 }
             }
+            // Set resolved_type from first arm body (for match-as-expression)
+            for (int i2 = 0; i2 < stmt->match_stmt.arm_count; i2++) {
+                AstNode *body = stmt->match_stmt.arms[i2].body;
+                if (body && body->kind != NODE_BLOCK && body->resolved_type) {
+                    stmt->resolved_type = body->resolved_type;
+                    break;
+                }
+            }
             break;
         }
         case NODE_DONE_STMT:
@@ -787,6 +795,12 @@ static bool body_contains_fail(AstNode *node) {
     }
     if (node->kind == NODE_FOR_STMT) {
         if (body_contains_fail(node->for_stmt.body)) return true;
+    }
+    if (node->kind == NODE_MATCH_STMT) {
+        for (int i = 0; i < node->match_stmt.arm_count; i++) {
+            if (node->match_stmt.arms[i].body &&
+                body_contains_fail(node->match_stmt.arms[i].body)) return true;
+        }
     }
     // Check expressions in statements
     if (node->kind == NODE_VAR_DECL && node->var_decl.init_expr) {

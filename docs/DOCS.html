@@ -996,11 +996,10 @@ vim.api.nvim_create_autocmd(<span class="str">"FileType"</span>, {
 <p>Pattern matching with <code>match</code>. Optionals with <code>T?</code> and <code>else</code> for safe unwrapping.</p>
 <pre><code><span class="fn">describe</span>(n: <span class="ty">int</span>) -> <span class="ty">str</span>
     <span class="kw">match</span> n
-        <span class="num">1</span> => <span class="kw">done</span> <span class="str">"one"</span>
-        <span class="num">2</span> => <span class="kw">done</span> <span class="str">"two"</span>
-        <span class="num">3</span> => <span class="kw">done</span> <span class="str">"three"</span>
-        _ => <span class="kw">done</span> <span class="str">"many"</span>
-    <span class="str">"unknown"</span>
+        <span class="num">1</span> => <span class="str">"one"</span>
+        <span class="num">2</span> => <span class="str">"two"</span>
+        <span class="num">3</span> => <span class="str">"three"</span>
+        _ => <span class="str">"many"</span>
 
 <span class="fn">find_first_even</span>(items: [<span class="ty">int</span>]) -> <span class="ty">int?</span>
     <span class="kw">for</span> item <span class="kw">in</span> items

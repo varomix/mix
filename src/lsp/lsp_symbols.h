@@ -1,0 +1,35 @@
+#ifndef LSP_SYMBOLS_H
+#define LSP_SYMBOLS_H
+
+#include "../ast.h"
+#include "../types.h"
+
+typedef struct SymbolEntry {
+    char *name;
+    SrcLoc def_loc;
+    MixType *type;
+    NodeKind decl_kind;
+    char *container;        // shape name for methods/fields, or NULL
+    struct SymbolEntry *next;
+} SymbolEntry;
+
+typedef struct {
+    SymbolEntry **buckets;
+    int bucket_count;
+    // Flat list for iteration (completions)
+    SymbolEntry **all;
+    int all_count;
+    int all_cap;
+} SymbolIndex;
+
+void symbol_index_init(SymbolIndex *idx);
+void symbol_index_clear(SymbolIndex *idx);
+void symbol_index_destroy(SymbolIndex *idx);
+
+// Build the index by walking the AST
+void symbol_index_build(SymbolIndex *idx, AstNode *program);
+
+// Look up a symbol by name (returns first match)
+SymbolEntry *symbol_index_lookup(SymbolIndex *idx, const char *name);
+
+#endif // LSP_SYMBOLS_H

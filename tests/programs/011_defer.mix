@@ -1,0 +1,9 @@
+// defer runs cleanup in reverse order
+extern "libc"
+    puts(s: *byte) -> int32 ~
+
+main()
+    puts("start")
+    defer puts("cleanup 1")
+    defer puts("cleanup 2")
+    puts("work")

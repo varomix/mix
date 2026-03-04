@@ -1,0 +1,10 @@
+fibonacci(n: int) -> int
+    if n <= 1
+        done n
+    fibonacci(n - 1) + fibonacci(n - 2)
+
+main()
+    i! = 0
+    while i < 10
+        print(fibonacci(i))
+        i! += 1

@@ -1,0 +1,9 @@
+// Benchmark 1: Sum of squares 1..N (CPU-bound integer math)
+main()
+    n = 10000000
+    sum! = 0
+    i! = 1
+    while i <= n
+        sum! += i * i
+        i! += 1
+    print(sum)

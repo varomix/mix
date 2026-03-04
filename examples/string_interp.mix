@@ -1,0 +1,26 @@
+// String interpolation showcase
+main()
+    name = "MIX"
+    version = 1
+    pi = 3.14159
+
+    // Basic interpolation
+    print("Welcome to {name}!")
+
+    // Expressions in interpolation
+    print("2 + 3 = {2 + 3}")
+
+    // Multiple values
+    print("{name} v{version} — pi is approximately {pi}")
+
+    // String methods in context
+    greeting = "hello world"
+    print("Upper: {greeting.upper()}")
+    print("Length: {greeting.len}")
+
+    needle = "world"
+    print("Contains world: {greeting.contains(needle)}")
+
+    // Concat + interpolation
+    full = "Hello" + " " + name
+    print(full)

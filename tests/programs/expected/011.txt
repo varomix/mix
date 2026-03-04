@@ -1,0 +1,4 @@
+start
+work
+cleanup 2
+cleanup 1

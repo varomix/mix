@@ -1,0 +1,20 @@
+main() ~
+    // Test shell
+    ret = shell("echo hello > /dev/null")
+    print(ret)
+
+    // Test file_exists
+    print(file_exists("tests/programs/043_build_builtins.mix"))
+    print(file_exists("nonexistent.xyz"))
+
+    // Test env
+    home = env("HOME")
+    print(home.len > 0)
+
+    // Test getcwd
+    cwd = getcwd()
+    print(cwd.len > 0)
+
+    // Test args
+    a = args()
+    print(a.len > 0)

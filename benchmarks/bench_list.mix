@@ -1,0 +1,13 @@
+// Benchmark 3: List operations (runtime/heap)
+// Create list of 1M elements, iterate, sum
+main()
+    nums! = [0]
+    i! = 1
+    while i < 1000000
+        nums.push!(i)
+        i! += 1
+
+    total! = 0
+    for x in nums
+        total! += x
+    print(total)

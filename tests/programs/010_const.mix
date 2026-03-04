@@ -1,0 +1,8 @@
+// compile-time constants
+@const MAX_SIZE = 100
+@const PI = 3.14159
+
+main()
+    print(MAX_SIZE)
+    print(PI)
+    print(MAX_SIZE + 50)

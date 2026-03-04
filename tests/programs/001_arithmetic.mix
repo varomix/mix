@@ -1,0 +1,8 @@
+// basic arithmetic
+main()
+    x = 10 + 20
+    print(x)
+    print(100 - 37)
+    print(6 * 7)
+    print(100 / 4)
+    print(17 % 5)

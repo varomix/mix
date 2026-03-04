@@ -1,0 +1,21 @@
+// string methods
+main()
+    name = "Hello World"
+    print(name.len)
+    print(name.upper())
+    print(name.lower())
+
+    padded = "  hello  "
+    print(padded.trim())
+
+    csv = "a,b,c,d"
+    parts = csv.split(",")
+    for p in parts
+        print(p)
+
+    print(name.contains("World"))
+    print(name.contains("xyz"))
+    print(name.starts_with("Hello"))
+    print(name.starts_with("World"))
+
+    print(name.replace("World", "MIX"))

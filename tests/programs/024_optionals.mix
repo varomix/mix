@@ -1,0 +1,20 @@
+// optionals — T?, none, else default
+
+find(nums: int, target: int) -> int?
+    for i in 0..5
+        if i == target
+            done i
+    none
+
+main()
+    // found — returns some
+    val = find(0, 3) else -1
+    print(val)
+
+    // not found — returns none, uses fallback
+    val2 = find(0, 99) else -1
+    print(val2)
+
+    // direct none
+    x = none else 42
+    print(x)

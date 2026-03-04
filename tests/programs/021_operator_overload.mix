@@ -1,0 +1,46 @@
+// operator overloading on shapes
+shape Vec2
+    x, y: float
+
+    +(other: Vec2) -> Vec2
+        Vec2(x: x + other.x, y: y + other.y)
+
+    -(other: Vec2) -> Vec2
+        Vec2(x: x - other.x, y: y - other.y)
+
+    *(scalar: float) -> Vec2
+        Vec2(x: x * scalar, y: y * scalar)
+
+    ==(other: Vec2) -> bool
+        x == other.x and y == other.y
+
+main()
+    a = Vec2(x: 1.0, y: 2.0)
+    b = Vec2(x: 3.0, y: 4.0)
+
+    // + operator
+    c = a + b
+    print(c.x)
+    print(c.y)
+
+    // - operator
+    d = b - a
+    print(d.x)
+    print(d.y)
+
+    // * operator
+    e = a * 3.0
+    print(e.x)
+    print(e.y)
+
+    // == operator
+    f = Vec2(x: 1.0, y: 2.0)
+    if a == f
+        print("equal")
+    else
+        print("not equal")
+
+    if a == b
+        print("equal")
+    else
+        print("not equal")

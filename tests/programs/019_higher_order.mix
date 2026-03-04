@@ -1,0 +1,12 @@
+// higher-order functions — passing lambdas as arguments
+apply(f: int, x: int) -> int
+    f(x)
+
+main()
+    // pass lambda to a function
+    print(apply(x => x * 2, 21))
+    print(apply(x => x + 10, 5))
+
+    // multi-param lambda
+    combine = (a, b) => a * 10 + b
+    print(combine(3, 7))

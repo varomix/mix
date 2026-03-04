@@ -1,0 +1,1218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mix — The Systems Language</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&display=swap" rel="stylesheet">
+<style>
+:root {
+    --bg: #08090d;
+    --bg2: #0f1117;
+    --bg-card: #151820;
+    --bg-code: #1a1e2a;
+    --border: #262d3d;
+    --text: #e4e8f1;
+    --text-dim: #7d849a;
+    --accent: #6cb4ff;
+    --accent2: #5efa9e;
+    --accent3: #c49cff;
+    --accent4: #ffb86c;
+    --red: #ff6b6b;
+    --grad1: linear-gradient(135deg, #6cb4ff 0%, #c49cff 50%, #ff6b9d 100%);
+    --grad2: linear-gradient(135deg, #5efa9e 0%, #6cb4ff 100%);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.75;
+    font-size: 16px;
+    overflow-x: hidden;
+}
+::selection { background: #6cb4ff44; }
+
+/* ---- HERO ---- */
+.hero {
+    position: relative;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 80px 24px;
+    overflow: hidden;
+}
+.hero::before {
+    content: '';
+    position: absolute;
+    top: -200px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 900px;
+    height: 900px;
+    background: radial-gradient(circle, #6cb4ff12 0%, #c49cff08 40%, transparent 70%);
+    pointer-events: none;
+}
+.hero::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 200px;
+    background: linear-gradient(to top, var(--bg), transparent);
+    pointer-events: none;
+}
+.grid-bg {
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 60px 60px;
+    opacity: 0.15;
+    mask-image: radial-gradient(ellipse 60% 50% at 50% 50%, black, transparent);
+}
+.logo {
+    font-family: 'Funnel Display', sans-serif;
+    font-size: 120px;
+    font-weight: 800;
+    letter-spacing: -4px;
+    background: var(--grad1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 16px;
+    position: relative;
+    z-index: 1;
+    animation: fadeUp 1s ease-out;
+}
+.tagline {
+    font-size: 24px;
+    color: var(--text-dim);
+    font-style: italic;
+    margin-bottom: 36px;
+    animation: fadeUp 1s ease-out 0.15s both;
+}
+.hero-sub {
+    font-size: 18px;
+    color: var(--text);
+    max-width: 600px;
+    margin-bottom: 40px;
+    animation: fadeUp 1s ease-out 0.3s both;
+}
+.hero-badges {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+    animation: fadeUp 1s ease-out 0.45s both;
+    z-index: 1;
+}
+.badge {
+    padding: 8px 18px;
+    border-radius: 100px;
+    font-size: 13px;
+    font-weight: 700;
+    border: 1px solid;
+    backdrop-filter: blur(8px);
+}
+.badge.g { color: var(--accent2); border-color: #5efa9e33; background: #5efa9e0a; }
+.badge.b { color: var(--accent); border-color: #6cb4ff33; background: #6cb4ff0a; }
+.badge.p { color: var(--accent3); border-color: #c49cff33; background: #c49cff0a; }
+.badge.o { color: var(--accent4); border-color: #ffb86c33; background: #ffb86c0a; }
+.badge.r { color: var(--red); border-color: #ff6b6b33; background: #ff6b6b0a; }
+
+.scroll-hint {
+    position: absolute;
+    bottom: 40px;
+    z-index: 2;
+    animation: bounce 2s infinite;
+    color: var(--text-dim);
+    font-size: 13px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+.scroll-hint span { display: block; font-size: 24px; margin-top: 4px; }
+
+@keyframes fadeUp {
+    from { opacity: 0; transform: translateY(30px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(8px); }
+}
+
+/* ---- CONTAINER ---- */
+.container { max-width: 900px; margin: 0 auto; padding: 0 24px; }
+
+/* ---- SECTIONS ---- */
+section {
+    padding: 80px 0;
+    border-bottom: 1px solid var(--border);
+}
+section:last-of-type { border-bottom: none; }
+
+h2 {
+    font-size: 40px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    margin-bottom: 12px;
+}
+h2 .num {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--accent);
+    display: block;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+h3 {
+    font-size: 22px;
+    font-weight: 700;
+    margin: 36px 0 12px;
+    color: var(--text);
+}
+h4 {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 24px 0 8px;
+    color: var(--accent4);
+}
+p { margin-bottom: 16px; color: var(--text); }
+.dim { color: var(--text-dim); }
+
+/* ---- CODE ---- */
+code {
+    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace;
+    background: var(--bg-code);
+    padding: 2px 8px;
+    border-radius: 5px;
+    font-size: 14px;
+    border: 1px solid var(--border);
+}
+pre {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    overflow-x: auto;
+    margin: 12px 0 24px;
+    position: relative;
+}
+pre code {
+    background: none;
+    padding: 0;
+    border: none;
+    font-size: 14px;
+    line-height: 1.7;
+}
+pre .label {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    font-family: sans-serif;
+}
+.kw { color: var(--accent3); }
+.fn { color: var(--accent); }
+.str { color: var(--accent2); }
+.num { color: var(--accent4); }
+.cm { color: #555e75; font-style: italic; }
+.op { color: var(--red); }
+.ty { color: #e3b341; }
+
+/* ---- TABLES ---- */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 24px;
+    font-size: 14px;
+}
+th {
+    text-align: left;
+    padding: 12px 16px;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+td { padding: 10px 16px; border: 1px solid var(--border); }
+tr:hover td { background: var(--bg-card); }
+
+/* ---- CARDS ---- */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+    margin: 24px 0;
+}
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    transition: border-color 0.2s, transform 0.2s;
+}
+.card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.card h4 { margin-top: 0; color: var(--accent2); font-size: 15px; }
+.card p { font-size: 13px; color: var(--text-dim); margin: 0; }
+.card .icon {
+    font-size: 28px;
+    margin-bottom: 8px;
+    display: block;
+}
+
+/* ---- PIPELINE ---- */
+.pipeline {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    margin: 32px 0;
+    flex-wrap: wrap;
+}
+.pipe-stage {
+    background: var(--bg-card);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 14px;
+    font-family: monospace;
+}
+.pipe-arrow {
+    color: var(--text-dim);
+    font-size: 20px;
+    margin: 0 6px;
+}
+
+/* ---- STATS BAR ---- */
+.stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin: 40px 0;
+}
+.stat {
+    text-align: center;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 16px;
+}
+.stat .val {
+    font-size: 36px;
+    font-weight: 800;
+    background: var(--grad2);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.stat .lbl {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 4px;
+}
+
+/* ---- PROGRESS BAR ---- */
+.progress-section { margin: 24px 0; }
+.progress-bar {
+    background: var(--bg-code);
+    border-radius: 8px;
+    height: 8px;
+    overflow: hidden;
+    margin: 8px 0 16px;
+}
+.progress-fill {
+    height: 100%;
+    border-radius: 8px;
+    background: var(--grad2);
+}
+.progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--text-dim);
+}
+
+/* ---- TEST TABLE ---- */
+.test-pass { color: var(--accent2); font-weight: 700; }
+
+/* ---- FOOTER ---- */
+footer {
+    text-align: center;
+    padding: 60px 24px;
+    color: var(--text-dim);
+    font-size: 14px;
+    border-top: 1px solid var(--border);
+}
+footer em { color: var(--text); }
+
+/* ---- NAV BAR ---- */
+.topnav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    background: #08090dee;
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    height: 52px;
+    font-size: 14px;
+}
+.topnav .brand {
+    font-family: 'Funnel Display', sans-serif;
+    font-weight: 800;
+    font-size: 20px;
+    background: var(--grad1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-right: 32px;
+}
+.topnav a {
+    color: var(--text-dim);
+    text-decoration: none;
+    margin: 0 12px;
+    transition: color 0.2s;
+}
+.topnav a:hover { color: var(--accent); }
+
+/* ---- RESPONSIVE ---- */
+@media (max-width: 700px) {
+    .logo { font-size: 64px; letter-spacing: -3px; }
+    .tagline { font-size: 18px; }
+    h2 { font-size: 28px; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .card-grid { grid-template-columns: 1fr; }
+    .pipeline { flex-direction: column; gap: 8px; }
+    .pipe-arrow { transform: rotate(90deg); }
+    .topnav a { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="topnav">
+    <span class="brand">mix</span>
+    <a href="#start">Get Started</a>
+    <a href="#lang">Language</a>
+    <a href="#shapes-sec">Shapes</a>
+    <a href="#collections">Collections</a>
+    <a href="#concurrency-sec">Concurrency</a>
+    <a href="#interop">C Interop</a>
+    <a href="#tooling-sec">Tooling</a>
+    <a href="#tutorial">Tutorial</a>
+    <a href="#report">Report</a>
+</div>
+
+<!-- ========== HERO ========== -->
+<div class="hero">
+    <div class="grid-bg"></div>
+    <div class="logo">mix</div>
+    <p class="tagline">"Fast to run, fast to write, fast to read."</p>
+    <p class="hero-sub">A systems language with the footprint of C and the clarity of Python. Compiles to native arm64 via QBE. Built for graphics, games, and real-time systems.</p>
+    <div class="hero-badges">
+        <span class="badge g">43/43 tests passing</span>
+        <span class="badge b">QBE backend</span>
+        <span class="badge p">arm64 native</span>
+        <span class="badge o">SDL3 verified</span>
+        <span class="badge r">pthreads concurrency</span>
+    </div>
+    <div class="scroll-hint">scroll <span>&darr;</span></div>
+</div>
+
+<div class="container">
+
+<!-- ========== QUICK LOOK ========== -->
+<section>
+<h2><span class="num">Overview</span>What MIX Looks Like</h2>
+
+<pre><code><span class="cm">// No semicolons. No braces. No fn keyword.</span>
+<span class="cm">// Just clean, obvious code.</span>
+
+<span class="kw">shape</span> <span class="ty">Vec2</span>
+    x, y: <span class="ty">float</span>
+
+    <span class="fn">length_sq</span>() -> <span class="ty">float</span>
+        x * x + y * y
+
+    <span class="op">+</span>(other: <span class="ty">Vec2</span>) -> <span class="ty">Vec2</span>
+        <span class="ty">Vec2</span>(x: x + other.x, y: y + other.y)
+
+<span class="fn">main</span>()
+    a = <span class="ty">Vec2</span>(x: <span class="num">3.0</span>, y: <span class="num">4.0</span>)
+    b = <span class="ty">Vec2</span>(<span class="num">1.0</span>, <span class="num">0.0</span>)           <span class="cm">// positional too</span>
+    c = a + b
+
+    <span class="fn">print</span>(<span class="str">"sum = ({c.x}, {c.y})"</span>)
+    <span class="fn">print</span>(<span class="str">"length^2 = {a.length_sq}"</span>) <span class="cm">// computed field</span></code><span class="label">mix</span></pre>
+
+<div class="card-grid">
+    <div class="card"><span class="icon">&#9889;</span><h4>Native Speed</h4><p>Compiles to arm64 machine code. No VM, no interpreter, no GC pauses.</p></div>
+    <div class="card"><span class="icon">&#128064;</span><h4>Obvious Syntax</h4><p>If a beginner can't guess it, it's out. ~30 keywords, the whole language fits in your head.</p></div>
+    <div class="card"><span class="icon">&#128279;</span><h4>C Interop</h4><p>Call SDL3, OpenGL, Vulkan, or any C library directly. No binding generators.</p></div>
+    <div class="card"><span class="icon">&#128230;</span><h4>Modules</h4><p>File = module. Folder = namespace. No headers, no build files.</p></div>
+    <div class="card"><span class="icon">&#9881;</span><h4>QBE Backend</h4><p>12K-line compiler backend. Builds in seconds, produces good code.</p></div>
+    <div class="card"><span class="icon">&#127926;</span><h4>Game Ready</h4><p>SDL3 + Raylib verified. Shapes for game math. defer for cleanup. go/wait for parallelism.</p></div>
+</div>
+</section>
+
+<!-- ========== GETTING STARTED ========== -->
+<section id="start">
+<h2><span class="num">01</span>Getting Started</h2>
+
+<h3>Install Prerequisites</h3>
+<pre><code><span class="cm"># Build QBE from source</span>
+git clone git://c9x.me/qbe.git
+cd qbe && make && sudo cp qbe /usr/local/bin/
+
+<span class="cm"># macOS command line tools</span>
+xcode-select --install</code></pre>
+
+<h3>Build the Compiler</h3>
+<pre><code>cd mix_lang
+make              <span class="cm"># produces build/mix</span>
+make test         <span class="cm"># runs 43 test programs</span></code></pre>
+
+<h3>Compile &amp; Run</h3>
+<pre><code>./build/mix hello.mix -o hello && ./hello</code></pre>
+
+<h3>Pipeline</h3>
+<div class="pipeline">
+    <span class="pipe-stage">.mix</span>
+    <span class="pipe-arrow">&rarr;</span>
+    <span class="pipe-stage">mix</span>
+    <span class="pipe-arrow">&rarr;</span>
+    <span class="pipe-stage">.ssa</span>
+    <span class="pipe-arrow">&rarr;</span>
+    <span class="pipe-stage">QBE</span>
+    <span class="pipe-arrow">&rarr;</span>
+    <span class="pipe-stage">.s</span>
+    <span class="pipe-arrow">&rarr;</span>
+    <span class="pipe-stage">cc</span>
+    <span class="pipe-arrow">&rarr;</span>
+    <span class="pipe-stage">binary</span>
+</div>
+</section>
+
+<!-- ========== LANGUAGE ========== -->
+<section id="lang">
+<h2><span class="num">02</span>Language Reference</h2>
+
+<h3>Variables</h3>
+<pre><code>x = <span class="num">42</span>              <span class="cm">// immutable</span>
+x<span class="op">!</span> = <span class="num">42</span>             <span class="cm">// mutable</span>
+x: <span class="ty">float</span> = <span class="num">3.14</span>    <span class="cm">// explicit type</span>
+x<span class="op">!</span> += <span class="num">1</span>             <span class="cm">// compound assignment</span></code><span class="label">mix</span></pre>
+
+<h3>Functions</h3>
+<pre><code><span class="fn">add</span>(a: <span class="ty">int</span>, b: <span class="ty">int</span>) -> <span class="ty">int</span>
+    a + b            <span class="cm">// last expression = return value</span>
+
+<span class="fn">greet</span>(name: <span class="ty">str</span>) ~   <span class="cm">// ~ marks side effects</span>
+    <span class="fn">print</span>(<span class="str">"Hello {name}!"</span>)
+
+<span class="fn">fibonacci</span>(n: <span class="ty">int</span>) -> <span class="ty">int</span>
+    <span class="kw">if</span> n &lt;= <span class="num">1</span>
+        <span class="kw">done</span> n       <span class="cm">// early exit</span>
+    <span class="fn">fibonacci</span>(n - <span class="num">1</span>) + <span class="fn">fibonacci</span>(n - <span class="num">2</span>)</code><span class="label">mix</span></pre>
+
+<h3>Control Flow</h3>
+<pre><code><span class="kw">if</span> x > <span class="num">0</span>
+    <span class="fn">print</span>(<span class="str">"positive"</span>)
+<span class="kw">else</span>
+    <span class="fn">print</span>(<span class="str">"negative"</span>)
+
+<span class="kw">for</span> i <span class="kw">in</span> <span class="num">0</span><span class="op">..</span><span class="num">10</span>
+    <span class="fn">print</span>(i)
+
+<span class="kw">match</span> code
+    <span class="num">200</span> => <span class="fn">print</span>(<span class="str">"ok"</span>)
+    <span class="num">404</span> => <span class="fn">print</span>(<span class="str">"not found"</span>)
+    _   => <span class="fn">print</span>(<span class="str">"unknown"</span>)</code><span class="label">mix</span></pre>
+
+<h3>Types</h3>
+<table>
+<tr><th>Type</th><th>Description</th><th>Size</th></tr>
+<tr><td><code>int</code></td><td>Native word integer (64-bit on arm64)</td><td>8 bytes</td></tr>
+<tr><td><code>float</code></td><td>64-bit floating point</td><td>8 bytes</td></tr>
+<tr><td><code>bool</code></td><td><code>true</code> / <code>false</code></td><td>4 bytes</td></tr>
+<tr><td><code>byte</code></td><td>Single byte</td><td>1 byte</td></tr>
+<tr><td><code>str</code></td><td>UTF-8 string (pointer)</td><td>8 bytes</td></tr>
+<tr><td><code>int32</code> <code>uint8</code> etc.</td><td>Sized variants for hardware/protocols</td><td>varies</td></tr>
+<tr><td><code>*T</code></td><td>Pointer to T</td><td>8 bytes</td></tr>
+<tr><td><code>T?</code></td><td>Optional (value or none)</td><td>16 bytes</td></tr>
+</table>
+</section>
+
+<!-- ========== SHAPES ========== -->
+<section id="shapes-sec">
+<h2><span class="num">03</span>Shapes, Methods &amp; Generics</h2>
+
+<pre><code><span class="kw">shape</span> <span class="ty">Circle</span>
+    radius: <span class="ty">float</span>
+
+    <span class="fn">area</span>() -> <span class="ty">float</span>
+        <span class="num">3.14159</span> * radius * radius
+
+    <span class="fn">circumference</span>() -> <span class="ty">float</span>
+        <span class="num">2.0</span> * <span class="num">3.14159</span> * radius
+
+c = <span class="ty">Circle</span>(radius: <span class="num">5.0</span>)
+<span class="fn">print</span>(c.<span class="fn">area</span>)             <span class="cm">// 78.5397 (computed field)</span>
+<span class="fn">print</span>(c.<span class="fn">circumference</span>())  <span class="cm">// 31.4159</span></code><span class="label">mix</span></pre>
+<p class="dim">Methods access fields directly by name. No <code>self.</code> prefix needed. Zero-param methods can be called without <code>()</code>.</p>
+
+<h3>Operator Overloading</h3>
+<pre><code><span class="kw">shape</span> <span class="ty">Vec2</span>
+    x, y: <span class="ty">float</span>
+
+    <span class="op">+</span>(other: <span class="ty">Vec2</span>) -> <span class="ty">Vec2</span>
+        <span class="ty">Vec2</span>(x: x + other.x, y: y + other.y)
+
+    <span class="op">==</span>(other: <span class="ty">Vec2</span>) -> <span class="ty">bool</span>
+        x == other.x <span class="kw">and</span> y == other.y
+
+a = <span class="ty">Vec2</span>(<span class="num">1.0</span>, <span class="num">2.0</span>) + <span class="ty">Vec2</span>(<span class="num">3.0</span>, <span class="num">4.0</span>)  <span class="cm">// Vec2(4.0, 6.0)</span></code><span class="label">mix</span></pre>
+<p class="dim">Supported operators: <code>+ - * / % == != &lt; &gt; &lt;= &gt;=</code></p>
+
+<h3>Tagged Unions</h3>
+<pre><code><span class="kw">shape</span> <span class="ty">Shape</span>
+    <span class="ty">Circle</span>(radius: <span class="ty">float</span>)
+    <span class="ty">Rect</span>(w: <span class="ty">float</span>, h: <span class="ty">float</span>)
+
+s = <span class="ty">Circle</span>(radius: <span class="num">5.0</span>)
+<span class="kw">match</span> s
+    <span class="ty">Circle</span>(r) => <span class="fn">print</span>(r)
+    <span class="ty">Rect</span>(w, h) => <span class="fn">print</span>(w * h)</code><span class="label">mix</span></pre>
+
+<h3>Generics</h3>
+<pre><code><span class="kw">@T</span>
+<span class="fn">identity</span>(x: <span class="ty">T</span>) -> <span class="ty">T</span>
+    x
+
+<span class="kw">@T</span> <span class="kw">has</span> ==
+<span class="fn">contains</span>(items: [<span class="ty">T</span>], target: <span class="ty">T</span>) -> <span class="ty">bool</span>
+    <span class="kw">for</span> item <span class="kw">in</span> items
+        <span class="kw">if</span> item == target
+            <span class="kw">done</span> <span class="num">true</span>
+    <span class="num">false</span></code><span class="label">mix</span></pre>
+</section>
+
+<!-- ========== COLLECTIONS ========== -->
+<section id="collections">
+<h2><span class="num">04</span>Collections &amp; Strings</h2>
+
+<h3>Lists</h3>
+<pre><code>nums = [<span class="num">10</span>, <span class="num">20</span>, <span class="num">30</span>, <span class="num">40</span>, <span class="num">50</span>]
+<span class="fn">print</span>(nums.len)          <span class="cm">// 5</span>
+<span class="fn">print</span>(nums[<span class="num">0</span>])           <span class="cm">// 10</span>
+nums.<span class="fn">push!</span>(<span class="num">60</span>)           <span class="cm">// append</span>
+nums.<span class="fn">sort!</span>()              <span class="cm">// sort in place</span>
+nums.<span class="fn">reverse!</span>()           <span class="cm">// reverse in place</span>
+last = nums.<span class="fn">pop!</span>()       <span class="cm">// remove + return last</span>
+<span class="fn">print</span>(nums.<span class="fn">contains</span>(<span class="num">30</span>)) <span class="cm">// true</span>
+<span class="fn">print</span>(nums.<span class="fn">index_of</span>(<span class="num">30</span>)) <span class="cm">// index or -1</span>
+
+<span class="cm">// Slicing</span>
+a = nums[<span class="num">1</span><span class="op">..</span><span class="num">3</span>]           <span class="cm">// [20, 30]</span>
+b = nums[<span class="op">..</span><span class="num">2</span>]            <span class="cm">// [10, 20]</span>
+
+<span class="cm">// Comprehensions</span>
+squares = [x * x <span class="kw">for</span> x <span class="kw">in</span> nums]
+evens = [x <span class="kw">for</span> x <span class="kw">in</span> nums <span class="kw">if</span> x % <span class="num">2</span> == <span class="num">0</span>]
+
+<span class="cm">// Join string list</span>
+words = [<span class="str">"a"</span>, <span class="str">"b"</span>, <span class="str">"c"</span>]
+<span class="fn">print</span>(words.<span class="fn">join</span>(<span class="str">", "</span>))  <span class="cm">// a, b, c</span></code><span class="label">mix</span></pre>
+
+<h3>Maps</h3>
+<pre><code>ages = {<span class="str">"alice"</span>: <span class="num">30</span>, <span class="str">"bob"</span>: <span class="num">25</span>}
+<span class="fn">print</span>(ages[<span class="str">"alice"</span>])     <span class="cm">// 30</span>
+<span class="fn">print</span>(ages.<span class="fn">has</span>(<span class="str">"bob"</span>))   <span class="cm">// true</span>
+ages<span class="op">!</span>[<span class="str">"charlie"</span>] = <span class="num">35</span>    <span class="cm">// add entry</span>
+
+<span class="kw">for</span> key, value <span class="kw">in</span> ages
+    <span class="fn">print</span>(<span class="str">"{key}: {value}"</span>)</code><span class="label">mix</span></pre>
+
+<h3>String Methods</h3>
+<pre><code>s = <span class="str">"  Hello, World!  "</span>
+<span class="fn">print</span>(s.<span class="fn">trim</span>())           <span class="cm">// "Hello, World!"</span>
+<span class="fn">print</span>(s.<span class="fn">upper</span>())          <span class="cm">// "  HELLO, WORLD!  "</span>
+<span class="fn">print</span>(s.<span class="fn">contains</span>(<span class="str">"World"</span>)) <span class="cm">// true</span>
+<span class="fn">print</span>(s.<span class="fn">ends_with</span>(<span class="str">"!  "</span>)) <span class="cm">// true</span>
+<span class="fn">print</span>(s.<span class="fn">char_at</span>(<span class="num">2</span>))       <span class="cm">// "H"</span>
+
+parts = <span class="str">"a,b,c"</span>.<span class="fn">split</span>(<span class="str">","</span>) <span class="cm">// ["a", "b", "c"]</span>
+
+<span class="cm">// Concatenation</span>
+greeting = <span class="str">"Hello"</span> + <span class="str">" "</span> + <span class="str">"World"</span>
+
+<span class="cm">// Convert to string</span>
+s = <span class="fn">to_string</span>(<span class="num">42</span>)         <span class="cm">// "42"</span></code><span class="label">mix</span></pre>
+<p class="dim">String methods: <code>.len</code>, <code>.upper()</code>, <code>.lower()</code>, <code>.trim()</code>, <code>.split()</code>, <code>.contains()</code>, <code>.starts_with()</code>, <code>.ends_with()</code>, <code>.replace()</code>, <code>.char_at()</code>. Concatenation: <code>str + str</code>. Conversion: <code>to_string()</code>.</p>
+
+<h3>Optionals</h3>
+<pre><code><span class="fn">find</span>(items: [<span class="ty">int</span>], target: <span class="ty">int</span>) -> <span class="ty">int?</span>
+    <span class="kw">for</span> item <span class="kw">in</span> items
+        <span class="kw">if</span> item == target
+            <span class="kw">done</span> item
+    <span class="kw">none</span>
+
+result = <span class="fn">find</span>(items, <span class="num">42</span>) <span class="kw">else</span> <span class="num">-1</span>  <span class="cm">// unwrap with fallback</span></code><span class="label">mix</span></pre>
+</section>
+
+<!-- ========== CONCURRENCY ========== -->
+<section id="concurrency-sec">
+<h2><span class="num">05</span>Concurrency</h2>
+<p>MIX provides minimal concurrency primitives built on pthreads. No <code>-lpthread</code> needed on macOS.</p>
+
+<h3>shared &mdash; Thread-Safe Values</h3>
+<pre><code>counter<span class="op">!</span> = <span class="kw">shared</span> <span class="ty">int</span>(<span class="num">0</span>)
+
+counter.<span class="fn">update!</span>(v => v + <span class="num">1</span>)
+counter.<span class="fn">update!</span>(v => v + <span class="num">1</span>)
+counter.<span class="fn">update!</span>(v => v + <span class="num">1</span>)
+
+<span class="fn">print</span>(counter.<span class="fn">read</span>())    <span class="cm">// 3</span></code><span class="label">mix</span></pre>
+<p class="dim"><code>shared int(val)</code> wraps a value with a mutex. <code>.read()</code> and <code>.update!(fn)</code> lock automatically.</p>
+
+<h3>go / wait &mdash; Task Spawning</h3>
+<pre><code><span class="fn">compute</span>(x: <span class="ty">int</span>) -> <span class="ty">int</span>
+    x * x + <span class="num">1</span>
+
+<span class="fn">main</span>()
+    t1 = <span class="kw">go</span> <span class="fn">compute</span>(<span class="num">5</span>)
+    t2 = <span class="kw">go</span> <span class="fn">compute</span>(<span class="num">10</span>)
+    t3 = <span class="kw">go</span> <span class="fn">compute</span>(<span class="num">3</span>)
+
+    <span class="fn">print</span>(<span class="kw">wait</span> t1)        <span class="cm">// 26</span>
+    <span class="fn">print</span>(<span class="kw">wait</span> t2)        <span class="cm">// 101</span>
+    <span class="fn">print</span>(<span class="kw">wait</span> t3)        <span class="cm">// 10</span></code><span class="label">mix</span></pre>
+<p class="dim"><code>go fn(args)</code> spawns a new pthread. <code>wait handle</code> joins and returns the result. Functions with 0-8 args supported.</p>
+</section>
+
+<!-- ========== MODULES ========== -->
+<section id="modules-sec">
+<h2><span class="num">06</span>Modules</h2>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+<div>
+<h4 style="color:var(--accent)">math/vec.mix</h4>
+<pre><code><span class="kw">pub</span> <span class="kw">shape</span> <span class="ty">Vec2</span>
+    x, y: <span class="ty">float</span>
+
+    <span class="fn">length_sq</span>() -> <span class="ty">float</span>
+        x * x + y * y
+
+<span class="kw">pub</span> <span class="fn">vec2_add</span>(a: <span class="ty">Vec2</span>, b: <span class="ty">Vec2</span>) -> <span class="ty">Vec2</span>
+    <span class="ty">Vec2</span>(x: a.x + b.x, y: a.y + b.y)</code></pre>
+</div>
+<div>
+<h4 style="color:var(--accent)">main.mix</h4>
+<pre><code><span class="kw">use</span> math.vec
+
+<span class="fn">main</span>()
+    a = <span class="ty">Vec2</span>(x: <span class="num">1.0</span>, y: <span class="num">2.0</span>)
+    b = <span class="ty">Vec2</span>(x: <span class="num">3.0</span>, y: <span class="num">4.0</span>)
+    c = <span class="fn">vec2_add</span>(a, b)
+    <span class="fn">print</span>(c.x)  <span class="cm">// 4</span>
+    <span class="fn">print</span>(c.y)  <span class="cm">// 6</span></code></pre>
+</div>
+</div>
+<p class="dim"><code>pub</code> marks exports. <code>use math.vec</code> resolves to <code>math/vec.mix</code>. Each module compiles separately, linked together.</p>
+</section>
+
+<!-- ========== C INTEROP ========== -->
+<section id="interop">
+<h2><span class="num">07</span>C Interop</h2>
+<pre><code><span class="kw">extern</span> <span class="str">"libc"</span>
+    <span class="fn">puts</span>(s: <span class="ty">*byte</span>) -> <span class="ty">int32</span> ~
+
+<span class="kw">extern</span> <span class="str">"SDL3"</span>
+    <span class="fn">SDL_Init</span>(flags: <span class="ty">uint32</span>) -> <span class="ty">int32</span> ~
+    <span class="fn">SDL_CreateWindow</span>(title: <span class="ty">*byte</span>, w: <span class="ty">int32</span>, h: <span class="ty">int32</span>, flags: <span class="ty">uint64</span>) -> <span class="ty">*byte</span> ~</code><span class="label">mix</span></pre>
+<p>Declare the functions you need, call them like MIX functions. Link with <code>-lSDL3</code>.</p>
+
+<table>
+<tr><th>MIX</th><th>C</th><th>MIX</th><th>C</th></tr>
+<tr><td><code>int</code></td><td><code>int64_t</code></td><td><code>float</code></td><td><code>double</code></td></tr>
+<tr><td><code>int32</code></td><td><code>int</code></td><td><code>float32</code></td><td><code>float</code></td></tr>
+<tr><td><code>uint8</code></td><td><code>uint8_t</code></td><td><code>*byte</code></td><td><code>void*</code></td></tr>
+</table>
+</section>
+
+<!-- ========== MORE FEATURES ========== -->
+<section>
+<h2><span class="num">08</span>More Features</h2>
+
+<div class="card-grid">
+<div class="card">
+<h4 style="color:var(--accent3)">Lambdas</h4>
+<pre style="border:none;margin:0;padding:12px"><code>double = x <span class="op">=></span> x * <span class="num">2</span>
+combine = (a, b) <span class="op">=></span> a + b</code></pre>
+</div>
+<div class="card">
+<h4 style="color:var(--accent3)">String Interpolation</h4>
+<pre style="border:none;margin:0;padding:12px"><code><span class="fn">print</span>(<span class="str">"Hello {name}!"</span>)
+<span class="fn">print</span>(<span class="str">"{x} + {y} = {x+y}"</span>)</code></pre>
+</div>
+<div class="card">
+<h4 style="color:var(--accent3)">Defer</h4>
+<pre style="border:none;margin:0;padding:12px"><code><span class="fn">SDL_Init</span>(VIDEO)
+<span class="kw">defer</span> <span class="fn">SDL_Quit</span>()</code></pre>
+</div>
+<div class="card">
+<h4 style="color:var(--accent3)">Unsafe + Zones</h4>
+<pre style="border:none;margin:0;padding:12px"><code><span class="kw">unsafe</span>
+    *ptr = <span class="num">42</span>
+<span class="kw">zone</span>
+    data = <span class="fn">alloc</span>(<span class="num">1024</span>)</code></pre>
+</div>
+<div class="card">
+<h4 style="color:var(--accent3)">Conditional Compilation</h4>
+<pre style="border:none;margin:0;padding:12px"><code><span class="kw">@os</span> == <span class="str">"macos"</span>
+    <span class="fn">native_fn</span>() -> <span class="ty">str</span>
+        <span class="str">"/usr/local"</span></code></pre>
+</div>
+<div class="card">
+<h4 style="color:var(--accent3)">File I/O</h4>
+<pre style="border:none;margin:0;padding:12px"><code><span class="fn">file_write_all</span>(<span class="str">"out.txt"</span>, <span class="str">"hello"</span>)
+data = <span class="fn">file_read_all</span>(<span class="str">"out.txt"</span>)</code></pre>
+</div>
+<div class="card">
+<h4 style="color:var(--accent3)">Math</h4>
+<pre style="border:none;margin:0;padding:12px"><code><span class="fn">print</span>(<span class="fn">sqrt</span>(<span class="num">4.0</span>))   <span class="cm">// 2</span>
+<span class="fn">print</span>(<span class="fn">pow</span>(<span class="num">2.0</span>, <span class="num">10.0</span>)) <span class="cm">// 1024</span></code></pre>
+</div>
+<div class="card">
+<h4 style="color:var(--accent3)">Error Handling</h4>
+<pre style="border:none;margin:0;padding:12px"><code><span class="fn">divide</span>(a: <span class="ty">float</span>, b: <span class="ty">float</span>) -> <span class="ty">float</span> ~
+    <span class="kw">if</span> b == <span class="num">0.0</span>
+        <span class="kw">fail</span> <span class="str">"division by zero"</span>
+    <span class="kw">done</span> a / b
+
+r = <span class="fn">divide</span>(<span class="num">10.0</span>, <span class="num">0.0</span>) <span class="kw">else</span> <span class="num">-1.0</span>
+val = <span class="fn">parse</span>(x)<span class="op">?</span>   <span class="cm">// propagate</span></code></pre>
+</div>
+</div>
+</section>
+
+<!-- ========== TOOLING ========== -->
+<section id="tooling-sec">
+<h2><span class="num">09</span>Tooling</h2>
+
+<h3>C Header Bindings (<code>--bind</code>)</h3>
+<p>Auto-generate MIX extern blocks from C headers. No more manual typing for SDL3, Raylib, or any C library.</p>
+
+<pre><code><span class="cm"># Single header</span>
+./build/mix --bind /opt/homebrew/include/SDL3/SDL.h -o sdl3.mix --lib SDL3
+
+<span class="cm"># Entire directory of headers</span>
+./build/mix --bind /opt/homebrew/include/SDL3/ -o sdl3.mix --lib SDL3</code></pre>
+
+<p>Given a C header like:</p>
+<pre><code><span class="ty">int</span> <span class="fn">SDL_Init</span>(<span class="ty">uint32_t</span> flags);
+<span class="ty">void</span> <span class="fn">SDL_Quit</span>(<span class="ty">void</span>);
+<span class="ty">char</span> *<span class="fn">SDL_GetError</span>(<span class="ty">void</span>);
+<span class="kw">#define</span> SDL_INIT_VIDEO <span class="num">0x00000020</span></code><span class="label">c</span></pre>
+
+<p>The binding generator produces:</p>
+<pre><code><span class="kw">extern</span> <span class="str">"SDL3"</span>
+    <span class="fn">SDL_Init</span>(flags: <span class="ty">uint32</span>) -> <span class="ty">int32</span> ~
+    <span class="fn">SDL_Quit</span>() ~
+    <span class="fn">SDL_GetError</span>() -> <span class="ty">*byte</span> ~
+
+<span class="kw">@const</span> SDL_INIT_VIDEO = <span class="num">32</span></code><span class="label">mix</span></pre>
+
+<div class="card-grid">
+<div class="card">
+<h4 style="color:var(--accent2)">Type Mapping</h4>
+<p><code>int</code>&rarr;<code>int32</code>, <code>double</code>&rarr;<code>float</code>, <code>uint8_t</code>&rarr;<code>uint8</code>, all pointers&rarr;<code>*byte</code>, <code>void</code>&rarr;no return</p>
+</div>
+<div class="card">
+<h4 style="color:var(--accent2)">Preprocessor</h4>
+<p>Runs <code>cc -E</code> to expand macros and includes. Extracts <code>#define</code> integer/float constants.</p>
+</div>
+<div class="card">
+<h4 style="color:var(--accent2)">Directory Mode</h4>
+<p>Process an entire folder of <code>.h</code> files. Deduplicates functions across headers.</p>
+</div>
+</div>
+
+<h3>Debug Info (<code>--debug</code>)</h3>
+<p>Compile with DWARF line numbers for source-level debugging with lldb or gdb:</p>
+<pre><code>./build/mix program.mix -o program --debug</code></pre>
+<p class="dim">Emits QBE <code>dbgfile</code>/<code>dbgloc</code> directives &rarr; <code>.file</code>/<code>.loc</code> assembly directives &rarr; DWARF line table in the binary.</p>
+</section>
+
+<!-- ========== EDITOR SUPPORT & LSP ========== -->
+<section id="lsp-sec">
+<h2><span class="num">09b</span>Editor Support &amp; LSP</h2>
+
+<p>MIX ships with a Language Server Protocol (LSP) implementation that gives you a rich editing experience in any LSP-capable editor.</p>
+
+<div class="card-grid">
+    <div class="card"><span class="icon">&#128308;</span><h4>Live Diagnostics</h4><p>Syntax and type errors appear as red squiggly underlines as you type. No need to compile first.</p></div>
+    <div class="card"><span class="icon">&#128269;</span><h4>Hover Info</h4><p>Mouse over any variable, function, or expression to see its inferred type.</p></div>
+    <div class="card"><span class="icon">&#128279;</span><h4>Go-to-Definition</h4><p>Cmd+Click or F12 to jump to where any symbol is defined.</p></div>
+    <div class="card"><span class="icon">&#9999;</span><h4>Autocomplete</h4><p>Context-aware completions for symbols, keywords, shape fields, methods, and even inside string interpolation.</p></div>
+</div>
+
+<h3>Building the LSP</h3>
+<p>The LSP server <code>mix-lsp</code> is built automatically alongside the compiler:</p>
+<pre><code>make              <span class="cm"># builds both build/mix and build/mix-lsp</span></code></pre>
+
+<h3>VS Code Setup</h3>
+<p>The <code>editors/vscode-mix/</code> directory contains a complete VS Code extension with syntax highlighting and LSP support.</p>
+
+<pre><code><span class="cm"># 1. Install extension dependencies</span>
+cd editors/vscode-mix
+npm install && npx tsc -p ./
+
+<span class="cm"># 2. Symlink into VS Code extensions (one-time)</span>
+ln -sf "$(pwd)" ~/.vscode/extensions/mix-lang
+
+<span class="cm"># 3. Reload VS Code (Cmd+Shift+P &rarr; "Developer: Reload Window")</span></code></pre>
+
+<p>The extension auto-discovers <code>mix-lsp</code> relative to its location. You can also set the path manually in VS Code settings:</p>
+<pre><code><span class="cm">// settings.json</span>
+{
+    <span class="str">"mix.lsp.path"</span>: <span class="str">"/path/to/mix_lang/build/mix-lsp"</span>
+}</code></pre>
+
+<h3>Neovim Setup</h3>
+<p>Add to your <code>init.lua</code> (requires Neovim 0.8+ with built-in LSP):</p>
+
+<pre><code><span class="cm">-- Source the MIX LSP config</span>
+dofile(<span class="str">"/path/to/mix_lang/editors/nvim/mix.lua"</span>)
+
+<span class="cm">-- Or if mix-lsp is on your PATH, just add:</span>
+vim.filetype.add({ extension = { mix = <span class="str">"mix"</span> } })
+vim.api.nvim_create_autocmd(<span class="str">"FileType"</span>, {
+    pattern = <span class="str">"mix"</span>,
+    callback = <span class="kw">function</span>()
+        vim.lsp.start({ name = <span class="str">"mix-lsp"</span>, cmd = { <span class="str">"mix-lsp"</span> } })
+    <span class="kw">end</span>,
+})</code><span class="label">lua</span></pre>
+
+<h3>LSP Features</h3>
+<table>
+<tr><th>Feature</th><th>Description</th><th>Trigger</th></tr>
+<tr><td>Diagnostics</td><td>Errors and warnings shown as you type</td><td>Automatic</td></tr>
+<tr><td>Hover</td><td>Type information for variables, functions, expressions</td><td>Mouse hover</td></tr>
+<tr><td>Go-to-Definition</td><td>Jump to function, variable, shape, or constant definition</td><td>Cmd+Click / F12</td></tr>
+<tr><td>Completion</td><td>Symbols, keywords, type names</td><td>Ctrl+Space / auto</td></tr>
+<tr><td>Dot Completion</td><td>Shape fields &amp; methods, list/str/map built-in methods</td><td>Type <code>.</code></td></tr>
+<tr><td>Interp Completion</td><td>Variables and methods inside <code>"{expr}"</code></td><td>Type inside <code>{}</code></td></tr>
+</table>
+
+<h3>Architecture</h3>
+<p class="dim">The LSP server is written in C, reusing the compiler's lexer, parser, and semantic analyzer. Each open document gets its own arena, and the full lex&rarr;parse&rarr;sema pipeline re-runs on every keystroke (fast enough for typical MIX files). Communication uses JSON-RPC over stdin/stdout with a hand-rolled JSON parser — zero external dependencies.</p>
+</section>
+
+<!-- ========== TUTORIAL ========== -->
+<section id="tutorial">
+<h2><span class="num">10</span>Tutorial: Build a Number Guessing Game</h2>
+<p>Let's build a complete program step by step — a number guessing game that demonstrates variables, functions, control flow, shapes, and string interpolation.</p>
+
+<h3>Step 1: Hello World</h3>
+<p>Every MIX program starts with <code>main()</code>. The body is indented 4 spaces. No semicolons, no braces.</p>
+<pre><code><span class="fn">main</span>()
+    <span class="fn">print</span>(<span class="str">"Welcome to the Number Game!"</span>)</code><span class="label">mix</span></pre>
+<pre><code>./build/mix game.mix -o game && ./game
+<span class="cm"># Welcome to the Number Game!</span></code></pre>
+
+<h3>Step 2: Functions</h3>
+<p>Functions are defined by name + params. The last expression is the return value &mdash; no <code>return</code> keyword.</p>
+<pre><code><span class="fn">square</span>(x: <span class="ty">int</span>) -> <span class="ty">int</span>
+    x * x
+
+<span class="fn">clamp</span>(val: <span class="ty">int</span>, lo: <span class="ty">int</span>, hi: <span class="ty">int</span>) -> <span class="ty">int</span>
+    <span class="kw">if</span> val &lt; lo
+        <span class="kw">done</span> lo          <span class="cm">// early exit</span>
+    <span class="kw">if</span> val > hi
+        <span class="kw">done</span> hi
+    val                  <span class="cm">// last expression = return value</span>
+
+<span class="fn">main</span>()
+    <span class="fn">print</span>(<span class="fn">square</span>(<span class="num">7</span>))      <span class="cm">// 49</span>
+    <span class="fn">print</span>(<span class="fn">clamp</span>(<span class="num">15</span>, <span class="num">0</span>, <span class="num">10</span>)) <span class="cm">// 10</span></code><span class="label">mix</span></pre>
+
+<h3>Step 3: Mutable Variables &amp; Loops</h3>
+<p>Variables are immutable by default. Add <code>!</code> to make them mutable.</p>
+<pre><code><span class="fn">main</span>()
+    total<span class="op">!</span> = <span class="num">0</span>              <span class="cm">// mutable</span>
+    <span class="kw">for</span> i <span class="kw">in</span> <span class="num">1</span><span class="op">..</span><span class="num">11</span>          <span class="cm">// 1 to 10</span>
+        total<span class="op">!</span> += i
+    <span class="fn">print</span>(<span class="str">"Sum 1-10 = {total}"</span>)  <span class="cm">// Sum 1-10 = 55</span></code><span class="label">mix</span></pre>
+
+<h3>Step 4: Shapes (Structs)</h3>
+<p>Shapes are MIX's structs. Methods access fields directly &mdash; no <code>self.</code> prefix.</p>
+<pre><code><span class="kw">shape</span> <span class="ty">Player</span>
+    name: <span class="ty">str</span>
+    score: <span class="ty">int</span>
+
+    <span class="fn">greet</span>() ~
+        <span class="fn">print</span>(<span class="str">"Player: {name}, Score: {score}"</span>)
+
+<span class="fn">main</span>()
+    p = <span class="ty">Player</span>(name: <span class="str">"Alice"</span>, score: <span class="num">0</span>)
+    p.<span class="fn">greet</span>()  <span class="cm">// Player: Alice, Score: 0</span></code><span class="label">mix</span></pre>
+
+<h3>Step 5: Lists &amp; Higher-Order Functions</h3>
+<p>Lists use <code>[...]</code> syntax. Lambdas use <code>=></code>. Comprehensions make new lists.</p>
+<pre><code><span class="fn">apply_all</span>(items: [<span class="ty">int</span>], f: <span class="ty">int</span>) -> [<span class="ty">int</span>]
+    [<span class="fn">f</span>(x) <span class="kw">for</span> x <span class="kw">in</span> items]
+
+<span class="fn">main</span>()
+    nums = [<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>, <span class="num">5</span>]
+    doubled = [x * <span class="num">2</span> <span class="kw">for</span> x <span class="kw">in</span> nums]
+    <span class="fn">print</span>(doubled)           <span class="cm">// [2, 4, 6, 8, 10]</span>
+
+    big = [x <span class="kw">for</span> x <span class="kw">in</span> nums <span class="kw">if</span> x > <span class="num">3</span>]
+    <span class="fn">print</span>(big)               <span class="cm">// [4, 5]</span></code><span class="label">mix</span></pre>
+
+<h3>Step 6: Match &amp; Optionals</h3>
+<p>Pattern matching with <code>match</code>. Optionals with <code>T?</code> and <code>else</code> for safe unwrapping.</p>
+<pre><code><span class="fn">describe</span>(n: <span class="ty">int</span>) -> <span class="ty">str</span>
+    <span class="kw">match</span> n
+        <span class="num">1</span> => <span class="kw">done</span> <span class="str">"one"</span>
+        <span class="num">2</span> => <span class="kw">done</span> <span class="str">"two"</span>
+        <span class="num">3</span> => <span class="kw">done</span> <span class="str">"three"</span>
+        _ => <span class="kw">done</span> <span class="str">"many"</span>
+    <span class="str">"unknown"</span>
+
+<span class="fn">find_first_even</span>(items: [<span class="ty">int</span>]) -> <span class="ty">int?</span>
+    <span class="kw">for</span> item <span class="kw">in</span> items
+        <span class="kw">if</span> item % <span class="num">2</span> == <span class="num">0</span>
+            <span class="kw">done</span> item
+    <span class="kw">none</span>
+
+<span class="fn">main</span>()
+    <span class="fn">print</span>(<span class="fn">describe</span>(<span class="num">2</span>))              <span class="cm">// two</span>
+    nums = [<span class="num">1</span>, <span class="num">3</span>, <span class="num">5</span>, <span class="num">4</span>, <span class="num">7</span>]
+    result = <span class="fn">find_first_even</span>(nums) <span class="kw">else</span> <span class="num">-1</span>
+    <span class="fn">print</span>(result)                   <span class="cm">// 4</span></code><span class="label">mix</span></pre>
+
+<h3>Step 7: Concurrency</h3>
+<p>Spawn work on threads with <code>go</code>, collect results with <code>wait</code>.</p>
+<pre><code><span class="fn">heavy_compute</span>(n: <span class="ty">int</span>) -> <span class="ty">int</span>
+    total<span class="op">!</span> = <span class="num">0</span>
+    <span class="kw">for</span> i <span class="kw">in</span> <span class="num">0</span><span class="op">..</span>n
+        total<span class="op">!</span> += i * i
+    total
+
+<span class="fn">main</span>()
+    <span class="cm">// Run three computations in parallel</span>
+    t1 = <span class="kw">go</span> <span class="fn">heavy_compute</span>(<span class="num">1000</span>)
+    t2 = <span class="kw">go</span> <span class="fn">heavy_compute</span>(<span class="num">2000</span>)
+    t3 = <span class="kw">go</span> <span class="fn">heavy_compute</span>(<span class="num">3000</span>)
+
+    r1 = <span class="kw">wait</span> t1
+    r2 = <span class="kw">wait</span> t2
+    r3 = <span class="kw">wait</span> t3
+    <span class="fn">print</span>(<span class="str">"Results: {r1}, {r2}, {r3}"</span>)</code><span class="label">mix</span></pre>
+
+<h3>Step 8: C Interop</h3>
+<p>Call any C function directly. Generate bindings automatically with <code>--bind</code>.</p>
+<pre><code><span class="cm">// Step 1: Generate bindings from C headers</span>
+<span class="cm">// $ ./build/mix --bind /opt/homebrew/include/SDL3/SDL.h -o sdl3.mix --lib SDL3</span>
+
+<span class="cm">// Step 2: Use the generated bindings in your program</span>
+<span class="kw">extern</span> <span class="str">"SDL3"</span>
+    <span class="fn">SDL_Init</span>(flags: <span class="ty">uint32</span>) -> <span class="ty">int32</span> ~
+    <span class="fn">SDL_Quit</span>() ~
+
+<span class="kw">@const</span> SDL_INIT_VIDEO = <span class="num">32</span>
+
+<span class="fn">main</span>()
+    <span class="fn">SDL_Init</span>(SDL_INIT_VIDEO)
+    <span class="fn">print</span>(<span class="str">"SDL initialized!"</span>)
+    <span class="kw">defer</span> <span class="fn">SDL_Quit</span>()      <span class="cm">// cleanup runs automatically</span></code><span class="label">mix</span></pre>
+<p class="dim">Compile with: <code>./build/mix game.mix -o game -lSDL3</code></p>
+</section>
+
+<!-- ========== SDL3 ========== -->
+<section id="sdl3">
+<h2><span class="num">11</span>SDL3 Example</h2>
+<p>A native SDL3 window &mdash; cornflower blue &mdash; in 40 lines of MIX:</p>
+<pre><code><span class="kw">extern</span> <span class="str">"SDL3"</span>
+    <span class="fn">SDL_Init</span>(flags: <span class="ty">uint32</span>) -> <span class="ty">int32</span> ~
+    <span class="fn">SDL_Quit</span>() ~
+    <span class="fn">SDL_CreateWindow</span>(title: <span class="ty">*byte</span>, w: <span class="ty">int32</span>, h: <span class="ty">int32</span>, flags: <span class="ty">uint64</span>) -> <span class="ty">*byte</span> ~
+    <span class="fn">SDL_DestroyWindow</span>(win: <span class="ty">*byte</span>) ~
+    <span class="fn">SDL_CreateRenderer</span>(win: <span class="ty">*byte</span>, name: <span class="ty">*byte</span>) -> <span class="ty">*byte</span> ~
+    <span class="fn">SDL_SetRenderDrawColor</span>(rnd: <span class="ty">*byte</span>, r: <span class="ty">uint8</span>, g: <span class="ty">uint8</span>, b: <span class="ty">uint8</span>, a: <span class="ty">uint8</span>) -> <span class="ty">int32</span> ~
+    <span class="fn">SDL_RenderClear</span>(rnd: <span class="ty">*byte</span>) -> <span class="ty">int32</span> ~
+    <span class="fn">SDL_RenderPresent</span>(rnd: <span class="ty">*byte</span>) -> <span class="ty">int32</span> ~
+    <span class="fn">SDL_PollEvent</span>(event: <span class="ty">*byte</span>) -> <span class="ty">int32</span> ~
+    <span class="fn">SDL_Delay</span>(ms: <span class="ty">uint32</span>) ~
+
+<span class="kw">@const</span> SDL_INIT_VIDEO = <span class="num">0x00000020</span>
+<span class="kw">@const</span> SDL_EVENT_QUIT = <span class="num">0x100</span>
+
+<span class="fn">main</span>()
+    <span class="fn">SDL_Init</span>(SDL_INIT_VIDEO)
+    win = <span class="fn">SDL_CreateWindow</span>(<span class="str">"MIX + SDL3"</span>, <span class="num">800</span>, <span class="num">600</span>, <span class="num">0</span>)
+    rnd = <span class="fn">SDL_CreateRenderer</span>(win, <span class="num">0</span>)
+    event = <span class="fn">mix_bytes</span>(<span class="num">128</span>)
+    running<span class="op">!</span> = <span class="num">1</span>
+
+    <span class="kw">while</span> running > <span class="num">0</span>
+        <span class="kw">while</span> <span class="fn">SDL_PollEvent</span>(event) > <span class="num">0</span>
+            etype = <span class="fn">mix_peek_u32</span>(event)
+            <span class="kw">if</span> etype == SDL_EVENT_QUIT
+                running<span class="op">!</span> = <span class="num">0</span>
+
+        <span class="fn">SDL_SetRenderDrawColor</span>(rnd, <span class="num">100</span>, <span class="num">149</span>, <span class="num">237</span>, <span class="num">255</span>)
+        <span class="fn">SDL_RenderClear</span>(rnd)
+        <span class="fn">SDL_RenderPresent</span>(rnd)
+        <span class="fn">SDL_Delay</span>(<span class="num">16</span>)</code><span class="label">mix</span></pre>
+
+<pre><code>./build/mix examples/sdl3_window.mix -o sdl3 -L/opt/homebrew/lib -lSDL3
+./sdl3</code></pre>
+</section>
+
+<!-- ========== REPORT ========== -->
+<section id="report">
+<h2><span class="num">12</span>Implementation Report</h2>
+
+<div class="stats">
+    <div class="stat"><div class="val">43</div><div class="lbl">Tests Passing</div></div>
+    <div class="stat"><div class="val">10</div><div class="lbl">Phases Complete</div></div>
+    <div class="stat"><div class="val">15</div><div class="lbl">Source Files</div></div>
+    <div class="stat"><div class="val">arm64</div><div class="lbl">Native Binary</div></div>
+</div>
+
+<h3>Compiler Architecture</h3>
+<div class="pipeline" style="margin: 24px 0 32px;">
+    <span class="pipe-stage">Lexer</span>
+    <span class="pipe-arrow">&rarr;</span>
+    <span class="pipe-stage">Parser</span>
+    <span class="pipe-arrow">&rarr;</span>
+    <span class="pipe-stage">Sema</span>
+    <span class="pipe-arrow">&rarr;</span>
+    <span class="pipe-stage">QBE Emit</span>
+    <span class="pipe-arrow">&rarr;</span>
+    <span class="pipe-stage">Binary</span>
+</div>
+
+<h3>Spec Implementation Progress</h3>
+<div class="progress-section">
+    <div class="progress-label"><span>Core Language (vars, functions, control flow)</span><span>100%</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div>
+</div>
+<div class="progress-section">
+    <div class="progress-label"><span>Data Structures (shapes, methods, generics)</span><span>100%</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div>
+</div>
+<div class="progress-section">
+    <div class="progress-label"><span>Collections &amp; Memory (lists, maps, zones, optionals)</span><span>100%</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div>
+</div>
+<div class="progress-section">
+    <div class="progress-label"><span>Concurrency (shared, go/wait)</span><span>100%</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div>
+</div>
+<div class="progress-section">
+    <div class="progress-label"><span>Tooling (C bindings, debug info)</span><span>100%</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div>
+</div>
+<div class="progress-section">
+    <div class="progress-label"><span>Ecosystem (File I/O, math, string/list ops, error handling)</span><span>100%</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div>
+</div>
+<div class="progress-section">
+    <div class="progress-label"><span>Full Spec (run blocks, streams, channels, package manager)</span><span>90%</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:90%"></div></div>
+</div>
+
+<h3>Test Suite</h3>
+<table>
+<tr><th>#</th><th>Test</th><th>Verifies</th><th>Status</th></tr>
+<tr><td>000</td><td>return_zero</td><td>Implicit main return</td><td class="test-pass">PASS</td></tr>
+<tr><td>001</td><td>arithmetic</td><td>+ - * / % operators</td><td class="test-pass">PASS</td></tr>
+<tr><td>002</td><td>hello</td><td>String output</td><td class="test-pass">PASS</td></tr>
+<tr><td>003</td><td>if_else</td><td>Branching chains</td><td class="test-pass">PASS</td></tr>
+<tr><td>004</td><td>functions</td><td>User functions</td><td class="test-pass">PASS</td></tr>
+<tr><td>005</td><td>while</td><td>Loops + mutability</td><td class="test-pass">PASS</td></tr>
+<tr><td>006</td><td>extern</td><td>C interop (puts)</td><td class="test-pass">PASS</td></tr>
+<tr><td>007</td><td>fibonacci</td><td>Recursion + done</td><td class="test-pass">PASS</td></tr>
+<tr><td>008</td><td>shapes</td><td>Shape construction</td><td class="test-pass">PASS</td></tr>
+<tr><td>009</td><td>shape_funcs</td><td>Shape params/returns</td><td class="test-pass">PASS</td></tr>
+<tr><td>010</td><td>const</td><td>@const inlining</td><td class="test-pass">PASS</td></tr>
+<tr><td>011</td><td>defer</td><td>Reverse-order cleanup</td><td class="test-pass">PASS</td></tr>
+<tr><td>012</td><td>for_range</td><td>for i in 0..n</td><td class="test-pass">PASS</td></tr>
+<tr><td>013</td><td>match</td><td>Pattern + wildcard</td><td class="test-pass">PASS</td></tr>
+<tr><td>014</td><td>string_interp</td><td>"{expr}" in strings</td><td class="test-pass">PASS</td></tr>
+<tr><td>015</td><td>methods</td><td>Shape methods</td><td class="test-pass">PASS</td></tr>
+<tr><td>016</td><td>modules</td><td>use/pub multi-file</td><td class="test-pass">PASS</td></tr>
+<tr><td>017</td><td>module_shapes</td><td>Imported shapes</td><td class="test-pass">PASS</td></tr>
+<tr><td>018</td><td>lambdas</td><td>Lambda variables</td><td class="test-pass">PASS</td></tr>
+<tr><td>019</td><td>higher_order</td><td>Lambdas as args</td><td class="test-pass">PASS</td></tr>
+<tr><td>020</td><td>lists</td><td>List literals, indexing, push</td><td class="test-pass">PASS</td></tr>
+<tr><td>021</td><td>operator_overload</td><td>+, -, *, == on shapes</td><td class="test-pass">PASS</td></tr>
+<tr><td>022</td><td>unsafe</td><td>Pointer deref + arithmetic</td><td class="test-pass">PASS</td></tr>
+<tr><td>023</td><td>zones</td><td>Scoped memory cleanup</td><td class="test-pass">PASS</td></tr>
+<tr><td>024</td><td>optionals</td><td>T?, none, else unwrap</td><td class="test-pass">PASS</td></tr>
+<tr><td>025</td><td>tagged_unions</td><td>Variant shapes, match</td><td class="test-pass">PASS</td></tr>
+<tr><td>026</td><td>fail</td><td>Panic with message</td><td class="test-pass">PASS</td></tr>
+<tr><td>027</td><td>generics</td><td>@T generic functions</td><td class="test-pass">PASS</td></tr>
+<tr><td>028</td><td>computed_fields</td><td>No-parens method access</td><td class="test-pass">PASS</td></tr>
+<tr><td>029</td><td>positional_shapes</td><td>Shape without labels</td><td class="test-pass">PASS</td></tr>
+<tr><td>030</td><td>string_methods</td><td>.upper(), .split(), etc.</td><td class="test-pass">PASS</td></tr>
+<tr><td>031</td><td>maps</td><td>Map literals, .has(), iteration</td><td class="test-pass">PASS</td></tr>
+<tr><td>032</td><td>slices_comp</td><td>Slicing + comprehensions</td><td class="test-pass">PASS</td></tr>
+<tr><td>033</td><td>cond_compile</td><td>@os, @arch conditionals</td><td class="test-pass">PASS</td></tr>
+<tr><td>034</td><td>has_constraints</td><td>@T has == constraints</td><td class="test-pass">PASS</td></tr>
+<tr><td>035</td><td>shared</td><td>Mutex-wrapped values</td><td class="test-pass">PASS</td></tr>
+<tr><td>036</td><td>go_wait</td><td>pthread task spawn/join</td><td class="test-pass">PASS</td></tr>
+<tr><td>037</td><td>file_io</td><td>file_write_all, file_read_all</td><td class="test-pass">PASS</td></tr>
+<tr><td>038</td><td>math</td><td>sqrt, pow, floor, ceil, min, max</td><td class="test-pass">PASS</td></tr>
+<tr><td>039</td><td>string_ops</td><td>str + str, ends_with, char_at, to_string</td><td class="test-pass">PASS</td></tr>
+<tr><td>040</td><td>list_ops</td><td>sort, contains, index_of, pop, reverse, join</td><td class="test-pass">PASS</td></tr>
+<tr><td>041</td><td>error_handling</td><td>Result type, fail + else fallback</td><td class="test-pass">PASS</td></tr>
+<tr><td>042</td><td>error_propagation</td><td>? operator, error propagation</td><td class="test-pass">PASS</td></tr>
+</table>
+
+<h3>Remaining from Spec</h3>
+<table>
+<tr><th>Feature</th><th>Status</th></tr>
+<tr><td><code>run</code> blocks (structured concurrency)</td><td style="color:var(--accent4)">Planned</td></tr>
+<tr><td>Streams &amp; channels (<code>stream</code>, <code>yield</code>, <code>channel</code>)</td><td style="color:var(--accent4)">Planned</td></tr>
+<tr><td>Move semantics (<code>-&gt;</code> operator)</td><td style="color:var(--accent4)">Planned</td></tr>
+<tr><td>Error variant pattern matching (<code>ok(v) =&gt;</code>, <code>err(e) =&gt;</code>)</td><td style="color:var(--accent4)">Planned</td></tr>
+<tr><td>Package manager</td><td style="color:var(--accent4)">Planned</td></tr>
+<tr><td>Self-hosting</td><td style="color:var(--accent4)">Planned</td></tr>
+</table>
+</section>
+
+</div>
+
+<footer>
+    <p><strong style="font-family:'Funnel Display',sans-serif;font-size:20px;background:var(--grad1);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">mix</strong></p>
+    <p><em>Small enough to fit in your head, fast enough to replace C.</em></p>
+</footer>
+
+</body>
+</html>

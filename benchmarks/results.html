@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MIX Language — Performance Benchmarks</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #181b24;
+    --surface2: #1e2230;
+    --border: #2a2e3d;
+    --text: #e1e4ed;
+    --text-dim: #8b8fa3;
+    --mix-color: #6c5ce7;
+    --mix-glow: #6c5ce740;
+    --c-color: #00b894;
+    --c-glow: #00b89440;
+    --accent: #a29bfe;
+    --win: #00cec9;
+    --lose: #fd79a8;
+    --tie: #ffeaa7;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 2rem;
+  }
+
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 3rem;
+  }
+
+  header h1 {
+    font-size: 2.2rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin-bottom: 0.5rem;
+  }
+
+  header h1 span.mix { color: var(--mix-color); }
+  header h1 span.vs { color: var(--text-dim); font-weight: 400; font-size: 1.4rem; }
+  header h1 span.c-lang { color: var(--c-color); }
+
+  header p {
+    color: var(--text-dim);
+    font-size: 0.95rem;
+    line-height: 1.6;
+  }
+
+  .legend {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    margin: 1.5rem 0 2.5rem;
+    font-size: 0.85rem;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+  }
+
+  .legend-dot.mix { background: var(--mix-color); box-shadow: 0 0 8px var(--mix-glow); }
+  .legend-dot.c { background: var(--c-color); box-shadow: 0 0 8px var(--c-glow); }
+
+  .benchmarks {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .bench-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem 2rem;
+    transition: border-color 0.2s;
+  }
+
+  .bench-card:hover {
+    border-color: var(--accent);
+  }
+
+  .bench-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+
+  .bench-name {
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+
+  .bench-desc {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  .bench-ratio {
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    letter-spacing: 0.02em;
+  }
+
+  .bench-ratio.win { background: #00cec920; color: var(--win); }
+  .bench-ratio.lose { background: #fd79a820; color: var(--lose); }
+  .bench-ratio.tie { background: #ffeaa720; color: var(--tie); }
+
+  .bars {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .bar-label {
+    width: 36px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .bar-label.mix { color: var(--mix-color); }
+  .bar-label.c { color: var(--c-color); }
+
+  .bar-track {
+    flex: 1;
+    height: 28px;
+    background: var(--surface2);
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 6px;
+    transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+    position: relative;
+  }
+
+  .bar-fill.mix {
+    background: linear-gradient(90deg, var(--mix-color), #a29bfe);
+    box-shadow: 0 0 12px var(--mix-glow);
+  }
+
+  .bar-fill.c {
+    background: linear-gradient(90deg, var(--c-color), #55efc4);
+    box-shadow: 0 0 12px var(--c-glow);
+  }
+
+  .bar-value {
+    font-size: 0.78rem;
+    font-weight: 600;
+    width: 60px;
+    text-align: left;
+    flex-shrink: 0;
+    color: var(--text-dim);
+  }
+
+  .summary {
+    margin-top: 2.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+  }
+
+  .summary h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--accent);
+  }
+
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+  }
+
+  .stat-card {
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .stat-label {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-top: 0.25rem;
+  }
+
+  .optimizations {
+    margin-top: 2.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+  }
+
+  .optimizations h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--accent);
+  }
+
+  .opt-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .opt-list li {
+    font-size: 0.88rem;
+    line-height: 1.5;
+    padding-left: 1.25rem;
+    position: relative;
+    color: var(--text-dim);
+  }
+
+  .opt-list li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 8px;
+    width: 6px;
+    height: 6px;
+    background: var(--mix-color);
+    border-radius: 50%;
+  }
+
+  .opt-list li strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  footer {
+    text-align: center;
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.8rem;
+    color: var(--text-dim);
+  }
+
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1><span class="mix">MIX</span> <span class="vs">vs</span> <span class="c-lang">C</span></h1>
+    <p>Performance benchmarks comparing MIX language output to C compiled with <code>-O2</code>.<br>
+    MIX compiles through QBE (SSA backend with mem2reg). Median of 5 runs on Apple Silicon.</p>
+  </header>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot mix"></div> MIX</div>
+    <div class="legend-item"><div class="legend-dot c"></div> C (-O2)</div>
+  </div>
+
+  <div class="benchmarks" id="benchmarks"></div>
+
+  <div class="summary">
+    <h2>Summary</h2>
+    <div class="summary-grid" id="summary-grid"></div>
+  </div>
+
+  <div class="optimizations">
+    <h2>Optimizations Applied</h2>
+    <ul class="opt-list">
+      <li><strong>-O2 on runtime.c</strong> &mdash; The cc link step now compiles the MIX runtime (list, map, string, shared, task functions) with <code>-O2</code>, bringing runtime-heavy benchmarks to near-C speed.</li>
+      <li><strong>Compile-time constant folding</strong> &mdash; Binary operations on literal ints/floats (<code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>%</code>) are evaluated at compile time, emitting a single <code>copy</code> instead of two loads + an operation.</li>
+      <li><strong>Direct literal assignment</strong> &mdash; Immutable variables initialized with literals skip the intermediate temp register and emit the value directly.</li>
+      <li><strong>Self-pointer elision</strong> &mdash; Method field access uses <code>%v.self</code> directly in load/add instructions instead of copying to a fresh temp.</li>
+      <li><strong>Const memoization</strong> &mdash; <code>@const</code> values are emitted once per function and the temp is reused on subsequent references.</li>
+    </ul>
+  </div>
+
+  <footer>
+    MIX Language &mdash; compiled with <a href="#">mix</a> via QBE backend
+  </footer>
+</div>
+
+<script>
+const data = [
+  {
+    name: "Sum of Squares",
+    desc: "1..10M loop, i*i accumulation (CPU-bound integer math)",
+    mix: 0.016,
+    c: 0.013
+  },
+  {
+    name: "Fibonacci(40)",
+    desc: "Recursive function calls, stack frame overhead",
+    mix: 0.240,
+    c: 0.197
+  },
+  {
+    name: "List Operations",
+    desc: "Push 1M elements, iterate and sum (heap/runtime)",
+    mix: 0.016,
+    c: 0.014
+  },
+  {
+    name: "String Replace",
+    desc: "100K iterations of find-and-replace (runtime string ops)",
+    mix: 0.017,
+    c: 0.021
+  }
+];
+
+const container = document.getElementById('benchmarks');
+const maxTime = Math.max(...data.flatMap(d => [d.mix, d.c]));
+
+data.forEach(d => {
+  const ratio = d.mix / d.c;
+  let ratioClass, ratioText;
+  if (ratio <= 1.05) {
+    ratioClass = 'win';
+    ratioText = ratio < 0.98 ? `MIX ${(1/ratio).toFixed(1)}x faster` : 'Tied';
+  } else if (ratio <= 1.5) {
+    ratioClass = 'tie';
+    ratioText = `C ${ratio.toFixed(2)}x faster`;
+  } else {
+    ratioClass = 'lose';
+    ratioText = `C ${ratio.toFixed(1)}x faster`;
+  }
+
+  if (ratio <= 0.98) ratioClass = 'win';
+
+  const mixPct = (d.mix / maxTime * 100).toFixed(1);
+  const cPct = (d.c / maxTime * 100).toFixed(1);
+
+  const card = document.createElement('div');
+  card.className = 'bench-card';
+  card.innerHTML = `
+    <div class="bench-header">
+      <div>
+        <div class="bench-name">${d.name}</div>
+        <div class="bench-desc">${d.desc}</div>
+      </div>
+      <div class="bench-ratio ${ratioClass}">${ratioText}</div>
+    </div>
+    <div class="bars">
+      <div class="bar-row">
+        <div class="bar-label mix">MIX</div>
+        <div class="bar-track">
+          <div class="bar-fill mix" style="width: 0%" data-width="${mixPct}"></div>
+        </div>
+        <div class="bar-value">${(d.mix * 1000).toFixed(0)} ms</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label c">C</div>
+        <div class="bar-track">
+          <div class="bar-fill c" style="width: 0%" data-width="${cPct}"></div>
+        </div>
+        <div class="bar-value">${(d.c * 1000).toFixed(0)} ms</div>
+      </div>
+    </div>
+  `;
+  container.appendChild(card);
+});
+
+// Animate bars in
+requestAnimationFrame(() => {
+  setTimeout(() => {
+    document.querySelectorAll('.bar-fill').forEach(bar => {
+      bar.style.width = bar.dataset.width + '%';
+    });
+  }, 100);
+});
+
+// Summary stats
+const avgRatio = data.reduce((s, d) => s + d.mix / d.c, 0) / data.length;
+const bestBench = data.reduce((best, d) => (d.mix / d.c < best.mix / best.c) ? d : best);
+const worstBench = data.reduce((worst, d) => (d.mix / d.c > worst.mix / worst.c) ? d : worst);
+
+const summaryGrid = document.getElementById('summary-grid');
+const stats = [
+  { value: avgRatio.toFixed(2) + 'x', label: 'Average MIX/C Ratio' },
+  { value: (bestBench.mix / bestBench.c).toFixed(2) + 'x', label: `Best (${bestBench.name})` },
+  { value: (worstBench.mix / worstBench.c).toFixed(2) + 'x', label: `Worst (${worstBench.name})` },
+  { value: '37/37', label: 'Tests Passing' }
+];
+
+stats.forEach(s => {
+  const card = document.createElement('div');
+  card.className = 'stat-card';
+  card.innerHTML = `
+    <div class="stat-value">${s.value}</div>
+    <div class="stat-label">${s.label}</div>
+  `;
+  summaryGrid.appendChild(card);
+});
+</script>
+
+</body>
+</html>

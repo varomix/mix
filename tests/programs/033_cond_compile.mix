@@ -1,0 +1,12 @@
+// conditional compilation
+@os == "macos"
+    get_os() -> str
+        "macos"
+
+@arch == "aarch64"
+    get_arch() -> str
+        "aarch64"
+
+main()
+    print(get_os())
+    print(get_arch())

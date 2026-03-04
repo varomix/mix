@@ -1,0 +1,16 @@
+shape Vec2
+    x, y: float
+
+vec2_add(a: Vec2, b: Vec2) -> Vec2
+    Vec2(x: a.x + b.x, y: a.y + b.y)
+
+vec2_length_sq(v: Vec2) -> float
+    v.x * v.x + v.y * v.y
+
+main()
+    a = Vec2(x: 1.0, y: 2.0)
+    b = Vec2(x: 3.0, y: 4.0)
+    c = vec2_add(a, b)
+    print(c.x)
+    print(c.y)
+    print(vec2_length_sq(c))

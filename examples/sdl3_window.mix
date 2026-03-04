@@ -1,0 +1,66 @@
+// MIX + SDL3 — create a window with a colored background
+
+extern "SDL3"
+    SDL_Init(flags: uint32) -> int32 ~
+    SDL_Quit() ~
+    SDL_CreateWindow(title: *byte, w: int32, h: int32, flags: uint64) -> *byte ~
+    SDL_DestroyWindow(win: *byte) ~
+    SDL_CreateRenderer(win: *byte, name: *byte) -> *byte ~
+    SDL_DestroyRenderer(rnd: *byte) ~
+    SDL_SetRenderDrawColor(rnd: *byte, r: uint8, g: uint8, b: uint8, a: uint8) -> int32 ~
+    SDL_RenderClear(rnd: *byte) -> int32 ~
+    SDL_RenderPresent(rnd: *byte) -> int32 ~
+    SDL_PollEvent(event: *byte) -> int32 ~
+    SDL_Delay(ms: uint32) ~
+
+extern "runtime"
+    mix_bytes(n: int) -> *byte ~
+    mix_peek_u32(ptr: *byte) -> uint32
+    mix_free(ptr: *byte) ~
+
+@const SDL_INIT_VIDEO = 0x00000020
+@const SDL_EVENT_QUIT = 0x100
+@const WINDOW_W = 800
+@const WINDOW_H = 600
+
+main()
+    ok = SDL_Init(SDL_INIT_VIDEO)
+    if ok == 0
+        print("Failed to init SDL3")
+        done 1
+
+    win = SDL_CreateWindow("MIX + SDL3", WINDOW_W, WINDOW_H, 0)
+    if win == 0
+        print("Failed to create window")
+        done 1
+
+    rnd = SDL_CreateRenderer(win, 0)
+    if rnd == 0
+        print("Failed to create renderer")
+        done 1
+
+    event = mix_bytes(128)
+    running! = 1
+
+    print("Window open — close it to exit")
+
+    while running > 0
+        // drain event queue
+        while SDL_PollEvent(event) > 0
+            etype = mix_peek_u32(event)
+            if etype == SDL_EVENT_QUIT
+                running! = 0
+
+        // draw — cornflower blue background
+        SDL_SetRenderDrawColor(rnd, 100, 149, 237, 255)
+        SDL_RenderClear(rnd)
+        SDL_RenderPresent(rnd)
+
+        // don't burn CPU
+        SDL_Delay(16)
+
+    mix_free(event)
+    SDL_DestroyRenderer(rnd)
+    SDL_DestroyWindow(win)
+    SDL_Quit()
+    print("Clean exit")

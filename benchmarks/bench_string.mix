@@ -1,0 +1,10 @@
+// Benchmark 4: String operations (runtime)
+// String concat via replace in a loop
+main()
+    s! = "hello world"
+    i! = 0
+    while i < 100000
+        s! = s.replace("world", "mix")
+        s! = s.replace("mix", "world")
+        i! += 1
+    print(s)

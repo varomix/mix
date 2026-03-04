@@ -1,0 +1,22 @@
+// string operations — concat, ends_with, char_at, to_string
+main()
+    // string concatenation with +
+    greeting = "Hello" + " " + "World"
+    print(greeting)
+
+    // ends_with
+    print("hello.mix".ends_with(".mix"))
+    print("hello.mix".ends_with(".py"))
+
+    // char_at
+    word = "abcdef"
+    print(word.char_at(0))
+    print(word.char_at(3))
+
+    // to_string
+    s = to_string(42)
+    print(s)
+    print(s + " is the answer")
+
+    sf = to_string(3.14)
+    print(sf)

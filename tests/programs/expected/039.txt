@@ -1,0 +1,8 @@
+Hello World
+true
+false
+a
+d
+42
+42 is the answer
+3.14

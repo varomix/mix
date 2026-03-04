@@ -1,0 +1,36 @@
+// Shapes with methods and computed fields
+shape Circle
+    radius: float
+
+    area() -> float
+        done 3.14159 * self.radius * self.radius
+
+    circumference() -> float
+        done 2.0 * 3.14159 * self.radius
+
+shape Rect
+    width: float
+    height: float
+
+    area() -> float
+        done self.width * self.height
+
+    perimeter() -> float
+        done 2.0 * (self.width + self.height)
+
+    is_square() -> bool
+        done self.width == self.height
+
+main()
+    c = Circle(radius: 5.0)
+    print("Circle radius: {c.radius}")
+    print("Circle area: {c.area()}")
+    print("Circle circumference: {c.circumference()}")
+
+    r = Rect(width: 4.0, height: 6.0)
+    print("Rect area: {r.area()}")
+    print("Rect perimeter: {r.perimeter()}")
+    print("Is square: {r.is_square()}")
+
+    sq = Rect(width: 3.0, height: 3.0)
+    print("Is square: {sq.is_square()}")

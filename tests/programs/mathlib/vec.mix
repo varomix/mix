@@ -1,0 +1,13 @@
+// vector math module
+
+pub shape Vec2
+    x, y: float
+
+    length_sq() -> float
+        x * x + y * y
+
+pub vec2_add(a: Vec2, b: Vec2) -> Vec2
+    Vec2(x: a.x + b.x, y: a.y + b.y)
+
+pub vec2_scale(v: Vec2, s: float) -> Vec2
+    Vec2(x: v.x * s, y: v.y * s)

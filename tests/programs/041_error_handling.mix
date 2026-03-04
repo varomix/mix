@@ -1,0 +1,16 @@
+// error handling — divide with fail, catch with else
+divide(a: float, b: float) -> float ~
+    if b == 0.0
+        fail "division by zero"
+    done a / b
+
+main()
+    // Successful division — unwrap with else
+    result = divide(10.0, 3.0) else 0.0
+    print(result)
+
+    // Failed division — catch with else
+    safe = divide(10.0, 0.0) else -1.0
+    print(safe)
+
+    print("done")

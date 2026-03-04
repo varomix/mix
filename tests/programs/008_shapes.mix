@@ -1,0 +1,8 @@
+shape Vec2
+    x, y: float
+
+main()
+    v = Vec2(x: 3.0, y: 4.0)
+    print(v.x)
+    print(v.y)
+    print(v.x + v.y)

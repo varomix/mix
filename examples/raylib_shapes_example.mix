@@ -1,0 +1,34 @@
+extern "raylib"
+    InitWindow(w: int32, h: int32, title: *byte) ~
+    WindowShouldClose() -> bool ~
+    BeginDrawing() ~
+    EndDrawing() ~
+    CloseWindow() ~
+    ClearBackground(color: Color) ~
+    SetTargetFPS(fps: int32) ~
+    DrawText(text: *byte, posx: int32, posy: int32, fontsize: int32, color: Color) ~
+    DrawRectangle(posx: int32, posy: int32, width: int32, height: int32, color: Color) ~
+
+@const WIN_W = 1280
+@const WIN_H = 800
+
+shape Color
+    r, g, b, a: uint8
+
+add( x: int, y : int) -> int
+    x + y
+
+main()
+    InitWindow(WIN_W, WIN_H, "MIX raylib example")
+    print(add(5, 10))
+
+    SetTargetFPS(60)
+    while not WindowShouldClose()
+        BeginDrawing()
+        ClearBackground(Color(36, 36, 36, 255))
+        DrawText("Raylib Shapes", 20, 20, 24, Color(0, 255, 255, 255))
+        DrawRectangle(100, 100, 600, 300, Color(0, 255, 255, 255))
+        EndDrawing()
+
+    CloseWindow()
+    

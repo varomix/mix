@@ -1,0 +1,21 @@
+// Tagged unions with match — mirrors test 025
+shape Shape
+    Circle(radius: float)
+    Rect(w: float, h: float)
+
+describe(s: Shape) ~
+    match s
+        Circle(r) => print(r)
+        Rect(w, h) =>
+            print(w)
+            print(h)
+        _ => print(0)
+
+main()
+    c = Circle(radius: 5.0)
+    r = Rect(w: 4.0, h: 3.0)
+
+    print("Circle:")
+    describe(c)
+    print("Rect:")
+    describe(r)

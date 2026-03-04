@@ -1,0 +1,6 @@
+extern "libc"
+    puts(s: *byte) -> int32 ~
+
+main()
+    puts("Hello from C!")
+    puts("MIX speaks C fluently.")

@@ -1,0 +1,15 @@
+// import shapes and functions from a module
+use mathlib.vec
+
+main()
+    a = Vec2(x: 1.0, y: 2.0)
+    b = Vec2(x: 3.0, y: 4.0)
+    c = vec2_add(a, b)
+    print(c.x)
+    print(c.y)
+
+    d = vec2_scale(c, 2.0)
+    print(d.x)
+    print(d.y)
+
+    print(d.length_sq())

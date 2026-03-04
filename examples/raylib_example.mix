@@ -1,0 +1,28 @@
+extern "raylib"
+    InitWindow(w: int32, h: int32, title: *byte) ~
+    WindowShouldClose() -> bool ~
+    BeginDrawing() ~
+    EndDrawing() ~
+    CloseWindow() ~
+    ClearBackground(color: Color) ~
+    SetTargetFPS(fps: int32) ~
+    DrawText(text: *byte, posx: int32, posy: int32, fontsize: int32, color: Color) ~
+
+@const WIN_W = 1280
+@const WIN_H = 800
+
+shape Color
+    r, g, b, a: uint8
+
+main()
+    InitWindow(WIN_W, WIN_H, "MIX raylib example")
+
+    SetTargetFPS(60)
+    while not WindowShouldClose()
+        BeginDrawing()
+        ClearBackground(Color(36, 36, 36, 255))
+        DrawText("Hello World", 20, 20, 24, Color(0, 255, 255, 255))
+        EndDrawing()
+    
+    CloseWindow()
+    

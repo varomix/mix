@@ -1,0 +1,16 @@
+// slices and comprehensions
+main()
+    nums = [1, 2, 3, 4, 5]
+
+    // Slice tests
+    print(nums[1..3])
+    print(nums[..2])
+    print(nums[2..])
+    print(nums[0..=2])
+
+    // Comprehension
+    squares = [x * x for x in nums]
+    print(squares)
+
+    evens = [x for x in nums if x % 2 == 0]
+    print(evens)

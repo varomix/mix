@@ -1,0 +1,30 @@
+// zones — scoped memory
+extern "runtime"
+    mix_zone_alloc(size: int) -> *byte ~
+    mix_peek_u32(ptr: *byte) -> uint32
+
+main()
+    print("before zone")
+
+    zone
+        buf1 = mix_zone_alloc(64)
+        buf2 = mix_zone_alloc(64)
+        print("inside zone")
+    // buf1 and buf2 freed here
+
+    print("after zone")
+
+    // nested zones
+    zone:outer
+        a = mix_zone_alloc(32)
+        print("outer zone")
+
+        zone:inner
+            b = mix_zone_alloc(32)
+            print("inner zone")
+        // b freed here
+
+        print("back in outer")
+    // a freed here
+
+    print("all done")

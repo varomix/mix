@@ -1,0 +1,10 @@
+// math module — provides pub functions
+
+pub add(a: int, b: int) -> int
+    a + b
+
+pub mul(a: int, b: int) -> int
+    a * b
+
+pub square(x: int) -> int
+    x * x

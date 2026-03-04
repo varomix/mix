@@ -1,0 +1,22 @@
+// positional shape construction (no field labels)
+shape Color
+    r, g, b, a: uint8
+
+shape Vec2
+    x, y: float
+
+main()
+    // named (existing)
+    c1 = Color(r: 255, g: 0, b: 0, a: 255)
+    print(c1.r)
+    print(c1.g)
+
+    // positional (new)
+    c2 = Color(0, 255, 0, 255)
+    print(c2.r)
+    print(c2.g)
+
+    // positional vec2
+    v = Vec2(3.0, 4.0)
+    print(v.x)
+    print(v.y)

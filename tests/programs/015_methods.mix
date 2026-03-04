@@ -1,0 +1,29 @@
+// shape methods
+shape Circle
+    radius: float
+
+    area() -> float
+        3.14159 * radius * radius
+
+    circumference() -> float
+        2.0 * 3.14159 * radius
+
+shape Vec2
+    x, y: float
+
+    length_sq() -> float
+        x * x + y * y
+
+    dot(other: Vec2) -> float
+        x * other.x + y * other.y
+
+main()
+    c = Circle(radius: 5.0)
+    print(c.area())
+    print(c.circumference())
+
+    v1 = Vec2(x: 3.0, y: 4.0)
+    print(v1.length_sq())
+
+    v2 = Vec2(x: 1.0, y: 0.0)
+    print(v1.dot(v2))

@@ -1,0 +1,22 @@
+// Concurrency with go/wait and shared
+double(x: int) -> int
+    done x * 2
+
+main()
+    // Launch concurrent tasks
+    t1 = go double(10)
+    t2 = go double(20)
+    t3 = go double(30)
+
+    // Wait for results
+    r1 = wait t1
+    r2 = wait t2
+    r3 = wait t3
+    print("Results: {r1}, {r2}, {r3}")
+
+    // Shared counter with thread-safe updates
+    counter = shared int(0)
+    counter.update!(x => x + 1)
+    counter.update!(x => x + 1)
+    counter.update!(x => x + 1)
+    print("Counter: {counter.read()}")

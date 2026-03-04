@@ -1,0 +1,8 @@
+add(a: int, b: int) -> int
+    a + b
+
+main()
+    x = 10
+    y = 20
+    print(add(x, y))
+    print(x * y)

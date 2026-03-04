@@ -1,0 +1,22 @@
+// lists — create, index, len, push, iterate
+main()
+    // list literal
+    nums = [10, 20, 30, 40, 50]
+    print(nums[0])
+    print(nums[2])
+    print(nums[4])
+    print(nums.len)
+
+    // print whole list
+    print(nums)
+
+    // push
+    nums.push!(60)
+    print(nums.len)
+    print(nums[5])
+
+    // for-each iteration
+    total! = 0
+    for x in nums
+        total! += x
+    print(total)

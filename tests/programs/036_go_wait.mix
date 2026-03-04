@@ -1,0 +1,13 @@
+compute(x: int) -> int
+    x * x + 1
+
+main()
+    t = go compute(5)
+    result = wait t
+    print(result)
+    t2 = go compute(10)
+    t3 = go compute(3)
+    r2 = wait t2
+    r3 = wait t3
+    print(r2)
+    print(r3)

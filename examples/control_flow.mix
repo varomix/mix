@@ -1,0 +1,11 @@
+main()
+    x = 42
+    if x > 0
+        print("positive")
+    else
+        print("negative")
+
+    i! = 0
+    while i < 5
+        print(i)
+        i! += 1

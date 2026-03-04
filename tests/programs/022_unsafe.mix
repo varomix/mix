@@ -1,0 +1,23 @@
+// unsafe blocks — pointer arithmetic and dereference writes
+extern "runtime"
+    mix_alloc(size: int) -> *byte ~
+    mix_free(ptr: *byte) ~
+    mix_peek_u32(ptr: *byte) -> uint32
+
+main()
+    // allocate a buffer, write values via pointer
+    buf = mix_alloc(32)
+
+    unsafe
+        *buf = 42
+        p2 = buf + 8
+        *p2 = 99
+
+    // read back via peek
+    v1 = mix_peek_u32(buf)
+    v2 = mix_peek_u32(buf + 8)
+    print(v1)
+    print(v2)
+
+    mix_free(buf)
+    print("done")

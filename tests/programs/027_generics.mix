@@ -1,0 +1,27 @@
+// generics with @T
+
+@T
+identity(x: T) -> T
+    x
+
+@T
+max_of(a: T, b: T) -> T
+    if a > b
+        done a
+    b
+
+@T, K
+pair_first(a: T, b: K) -> T
+    a
+
+main()
+    // generic identity works with int and float
+    print(identity(42))
+    print(identity(99))
+
+    // generic max
+    print(max_of(10, 20))
+    print(max_of(100, 50))
+
+    // multi-type-param generic
+    print(pair_first(7, 99))

@@ -1,0 +1,10 @@
+// fail keyword — validate then succeed
+validate(x: int) ~
+    if x < 0
+        fail "value must be non-negative"
+    print("valid")
+
+main()
+    validate(50)
+    validate(10)
+    print("done")

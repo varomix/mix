@@ -1,0 +1,8 @@
+// Benchmark 2: Fibonacci (recursive function calls)
+fibonacci(n: int) -> int
+    if n <= 1
+        done n
+    fibonacci(n - 1) + fibonacci(n - 2)
+
+main()
+    print(fibonacci(40))

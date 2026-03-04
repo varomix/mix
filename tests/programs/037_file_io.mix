@@ -1,0 +1,17 @@
+// file I/O — write_all, read_all, open/write/close/read
+main()
+    // write and read a file
+    ok = file_write_all("/tmp/mix_test.txt", "hello from MIX")
+    print(ok)
+
+    content = file_read_all("/tmp/mix_test.txt")
+    print(content)
+
+    // manual open/write/close/read
+    f = file_open("/tmp/mix_test2.txt", "w")
+    file_write(f, "line one\n")
+    file_write(f, "line two")
+    file_close(f)
+
+    data = file_read_all("/tmp/mix_test2.txt")
+    print(data)

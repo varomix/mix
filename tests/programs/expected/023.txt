@@ -1,0 +1,7 @@
+before zone
+inside zone
+after zone
+outer zone
+inner zone
+back in outer
+all done

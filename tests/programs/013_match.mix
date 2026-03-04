@@ -1,0 +1,16 @@
+// match expressions
+extern "libc"
+    puts(s: *byte) -> int32 ~
+
+describe(code: int) ~
+    match code
+        200 => puts("ok")
+        404 => puts("not found")
+        500 => puts("server error")
+        _   => puts("unknown")
+
+main()
+    describe(200)
+    describe(404)
+    describe(500)
+    describe(42)

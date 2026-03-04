@@ -1,0 +1,19 @@
+// type aliases
+type Score = int
+
+// lambdas — stored in variables, passed to functions
+main()
+    s: Score = 100
+    print(s)
+
+    // lambda — single param
+    double = x => x * 2
+    triple = x => x * 3
+
+    // call stored lambda variable
+    print(double(21))
+    print(triple(10))
+
+    // inline lambda
+    nums = x => x + 1
+    print(nums(99))

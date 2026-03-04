@@ -1,0 +1,7 @@
+// string interpolation
+main()
+    name = "MIX"
+    x = 42
+    print("Hello {name}!")
+    print("x = {x}")
+    print("{x} + {x} = {x + x}")

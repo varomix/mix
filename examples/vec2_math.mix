@@ -1,0 +1,32 @@
+// Vec2 with operator overloading
+shape Vec2
+    x: float
+    y: float
+
+    op_add(other: Vec2) -> Vec2
+        done Vec2(x: self.x + other.x, y: self.y + other.y)
+
+    op_sub(other: Vec2) -> Vec2
+        done Vec2(x: self.x - other.x, y: self.y - other.y)
+
+    op_mul(other: Vec2) -> Vec2
+        done Vec2(x: self.x * other.x, y: self.y * other.y)
+
+    dot(other: Vec2) -> float
+        done self.x * other.x + self.y * other.y
+
+    length() -> float
+        done sqrt(self.x * self.x + self.y * self.y)
+
+main()
+    a = Vec2(x: 3.0, y: 4.0)
+    b = Vec2(x: 1.0, y: 2.0)
+
+    c = a + b
+    print("add: ({c.x}, {c.y})")
+
+    d = a - b
+    print("sub: ({d.x}, {d.y})")
+
+    print("dot: {a.dot(b)}")
+    print("length a: {a.length()}")

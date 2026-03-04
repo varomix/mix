@@ -1,0 +1,36 @@
+// list operations — sort, contains, index_of, pop, reverse, insert, remove, join
+main()
+    nums = [5, 3, 1, 4, 2]
+
+    // sort
+    nums.sort!()
+    print(nums)
+
+    // contains
+    print(nums.contains(3))
+    print(nums.contains(9))
+
+    // index_of
+    print(nums.index_of(4))
+    print(nums.index_of(9))
+
+    // reverse
+    nums.reverse!()
+    print(nums)
+
+    // pop
+    last = nums.pop!()
+    print(last)
+    print(nums.len)
+
+    // insert
+    nums.insert!(0, 99)
+    print(nums[0])
+
+    // remove
+    nums.remove!(0)
+    print(nums[0])
+
+    // join on string list
+    words = ["a", "b", "c"]
+    print(words.join(", "))

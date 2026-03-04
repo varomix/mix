@@ -1,0 +1,6 @@
+// C interop via extern
+extern "libc"
+    puts(s: *byte) -> int32 ~
+
+main()
+    puts("Hello from C!")

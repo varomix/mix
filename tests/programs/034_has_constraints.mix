@@ -1,0 +1,12 @@
+// has constraints on generics
+@T has ==
+contains(list: [T], val: T) -> bool
+    for x in list
+        if x == val
+            done true
+    false
+
+main()
+    nums = [10, 20, 30, 40]
+    print(contains(nums, 20))
+    print(contains(nums, 99))

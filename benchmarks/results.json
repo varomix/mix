@@ -1,0 +1,10 @@
+[
+  {"name": "bench_sum_squares", "mix": 0.016, "c": 0.013, "ratio": 1.23}
+,
+  {"name": "bench_fib", "mix": 0.240, "c": 0.197, "ratio": 1.21}
+,
+  {"name": "bench_list", "mix": 0.016, "c": 0.014, "ratio": 1.14}
+,
+  {"name": "bench_string", "mix": 0.017, "c": 0.021, "ratio": .80}
+
+]

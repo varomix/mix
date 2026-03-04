@@ -1,0 +1,23 @@
+// computed fields — zero-param methods accessed without ()
+shape Rect
+    width, height: float
+
+    area() -> float
+        width * height
+
+    perimeter() -> float
+        2.0 * (width + height)
+
+main()
+    r = Rect(width: 4.0, height: 3.0)
+
+    // computed fields — no parens needed
+    print(r.area)
+    print(r.perimeter)
+
+    // regular field access still works
+    print(r.width)
+    print(r.height)
+
+    // method call with parens also still works
+    print(r.area())

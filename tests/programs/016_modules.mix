@@ -1,0 +1,7 @@
+// module import test
+use mathlib.mymath
+
+main()
+    print(add(3, 4))
+    print(mul(5, 6))
+    print(square(7))

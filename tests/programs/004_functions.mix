@@ -1,0 +1,11 @@
+// user-defined functions with implicit return
+add(a: int, b: int) -> int
+    a + b
+
+mul(a: int, b: int) -> int
+    a * b
+
+main()
+    print(add(10, 20))
+    print(mul(6, 7))
+    print(add(mul(3, 4), 5))

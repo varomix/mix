@@ -39,6 +39,7 @@ static char *read_file(const char *path) {
 }
 
 static void usage(void) {
+    fprintf(stderr, "mix %s (%s)\n\n", MIX_VERSION, MIX_VERSION_DATE);
     fprintf(stderr, "Usage: mix [command] [options] [file.mix]\n\n");
     fprintf(stderr, "Commands:\n");
     fprintf(stderr, "  build [file.mix]    Compile to binary (default)\n");
@@ -52,6 +53,7 @@ static void usage(void) {
     fprintf(stderr, "  --debug             Enable debug mode (DWARF info + @debug)\n");
     fprintf(stderr, "  --bind <path>       Generate .mix bindings from C header(s)\n");
     fprintf(stderr, "  --lib <name>        Library name for --bind (e.g., SDL3)\n");
+    fprintf(stderr, "  --version           Show version\n");
     fprintf(stderr, "  -v                  Verbose\n\n");
     fprintf(stderr, "Examples:\n");
     fprintf(stderr, "  mix game.mix              Compile game.mix -> game\n");
@@ -252,6 +254,9 @@ int main(int argc, char **argv) {
             debug_mode = true;
         } else if (strcmp(argv[i], "--release") == 0) {
             debug_mode = false;
+        } else if (strcmp(argv[i], "--version") == 0) {
+            printf("mix %s (%s)\n", MIX_VERSION, MIX_VERSION_DATE);
+            return 0;
         } else if (strcmp(argv[i], "--bind") == 0 && i + 1 < argc) {
             bind_path = argv[++i];
         } else if (strcmp(argv[i], "--lib") == 0 && i + 1 < argc) {

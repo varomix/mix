@@ -1,6 +1,9 @@
 #ifndef MIX_H
 #define MIX_H
 
+#define MIX_VERSION "0.1.0"
+#define MIX_VERSION_DATE "2026-03-04"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

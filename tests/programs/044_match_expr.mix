@@ -1,0 +1,33 @@
+// match as expression — implicit return from match arms
+describe(n: int) -> str
+    match n
+        1 => "one"
+        2 => "two"
+        3 => "three"
+        _ => "many"
+
+grade(score: int) -> str
+    match score
+        100 => "perfect"
+        90  => "excellent"
+        80  => "good"
+        _   => "keep trying"
+
+category(x: int) -> int
+    match x
+        0 => 0
+        1 => 10
+        2 => 20
+        _ => -1
+
+main()
+    print(describe(1))
+    print(describe(2))
+    print(describe(3))
+    print(describe(99))
+    print(grade(100))
+    print(grade(80))
+    print(grade(50))
+    print(category(0))
+    print(category(2))
+    print(category(7))

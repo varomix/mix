@@ -24,7 +24,7 @@ typedef struct {
 
 #define MAX_FUNCS  4096
 #define MAX_CONSTS 4096
-#define MAX_BUF    (4 * 1024 * 1024) // 4MB preprocessor output limit
+#define MAX_BUF    (16 * 1024 * 1024) // 16MB preprocessor output limit
 
 static CFunc funcs[MAX_FUNCS];
 static int func_count = 0;
@@ -144,8 +144,8 @@ static const char *c_type_to_mix(const char *ctype) {
     // char (not pointer)
     if (strcmp(buf, "char") == 0) return "byte";
 
-    // Unknown type (struct, union, typedef we can't resolve, etc.)
-    return NULL;
+    // Unknown type — treat as opaque pointer (*byte)
+    return "*byte";
 }
 
 // ---- Strip __attribute__ ----
@@ -200,8 +200,28 @@ static char *run_command(const char *cmd, bool verbose) {
 }
 
 static char *preprocess_header(const char *path, bool verbose) {
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cc -E -P -x c \"%s\" 2>/dev/null", path);
+    // Derive parent include dir (e.g., /opt/homebrew/include from
+    // /opt/homebrew/include/SDL3/SDL.h)
+    char include_dir[1024] = "";
+    const char *slash = strrchr(path, '/');
+    if (slash && slash > path) {
+        const char *prev_slash = slash - 1;
+        while (prev_slash > path && *prev_slash != '/') prev_slash--;
+        if (*prev_slash == '/') {
+            int len = (int)(prev_slash - path);
+            if (len > 0 && len < (int)sizeof(include_dir)) {
+                memcpy(include_dir, path, len);
+                include_dir[len] = '\0';
+            }
+        }
+    }
+
+    char cmd[2048];
+    if (include_dir[0])
+        snprintf(cmd, sizeof(cmd), "cc -E -P -I\"%s\" -x c \"%s\" 2>/dev/null",
+                 include_dir, path);
+    else
+        snprintf(cmd, sizeof(cmd), "cc -E -P -x c \"%s\" 2>/dev/null", path);
     return run_command(cmd, verbose);
 }
 
@@ -381,20 +401,26 @@ static int parse_prototypes(const char *text) {
         while (*p && (isspace((unsigned char)*p))) p++;
         if (!*p) break;
 
+        // Skip braced blocks entirely (struct/union/function bodies)
+        if (*p == '{') {
+            int depth = 0;
+            while (*p) {
+                if (*p == '{') depth++;
+                else if (*p == '}') { depth--; if (depth == 0) { p++; break; } }
+                p++;
+            }
+            continue;
+        }
+
         // Collect until ';' or '{' or end
         int si = 0;
-        int brace_depth = 0;
-        bool in_braces = false;
         while (*p && si < (int)sizeof(stmt) - 1) {
-            if (*p == '{') { brace_depth++; in_braces = true; }
-            if (*p == '}') { brace_depth--; }
-            if (*p == ';' && brace_depth == 0) { p++; break; }
-            if (brace_depth < 0) break;
+            if (*p == '{') break;   // stop before brace, outer loop will skip it
+            if (*p == ';') { p++; break; }
             if (*p == '\n' || *p == '\r') { stmt[si++] = ' '; p++; continue; }
             stmt[si++] = *p++;
         }
         stmt[si] = '\0';
-        if (in_braces) continue; // skip struct/function definitions
 
         trim(stmt);
         if (strlen(stmt) < 3) continue;
@@ -601,38 +627,56 @@ int cbind_generate(const char *header_path, const char *out_path,
     }
 
     if (path_is_directory(header_path)) {
-        // Process all .h files in the directory
+        // Count total .h files first for progress
         DIR *dir = opendir(header_path);
         if (!dir) {
             fprintf(stderr, "mix: cannot open directory '%s'\n", header_path);
             return 1;
         }
+        int total_files = 0;
         struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            const char *name = entry->d_name;
+            int nlen = (int)strlen(name);
+            if (nlen < 3 || strcmp(name + nlen - 2, ".h") != 0) continue;
+            total_files++;
+        }
+        closedir(dir);
+
+        if (total_files == 0) {
+            fprintf(stderr, "mix: no .h files found in '%s'\n", header_path);
+            return 1;
+        }
+
+        // Process all .h files in the directory
+        dir = opendir(header_path);
+        if (!dir) {
+            fprintf(stderr, "mix: cannot open directory '%s'\n", header_path);
+            return 1;
+        }
         int file_count = 0;
         while ((entry = readdir(dir)) != NULL) {
             const char *name = entry->d_name;
             int nlen = (int)strlen(name);
             if (nlen < 3 || strcmp(name + nlen - 2, ".h") != 0) continue;
 
+            file_count++;
+            fprintf(stderr, "mix: [%d/%d] %s\n", file_count, total_files, name);
+
             char full_path[1024];
             snprintf(full_path, sizeof(full_path), "%s/%s", header_path, name);
 
-            if (verbose) fprintf(stderr, "mix: processing %s\n", full_path);
-
             char *text = preprocess_header(full_path, verbose);
             if (text) {
-                parse_prototypes(text);
+                int nf = parse_prototypes(text);
                 free(text);
+                int nc = extract_defines(full_path, verbose);
+                if (verbose) fprintf(stderr, "  -> %d functions, %d constants\n", nf, nc);
+            } else {
+                extract_defines(full_path, verbose);
             }
-            extract_defines(full_path, verbose);
-            file_count++;
         }
         closedir(dir);
-
-        if (file_count == 0) {
-            fprintf(stderr, "mix: no .h files found in '%s'\n", header_path);
-            return 1;
-        }
     } else {
         // Single file
         char *text = preprocess_header(header_path, verbose);

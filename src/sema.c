@@ -283,6 +283,29 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
             expr->resolved_type = make_set_type(sema->arena, elem_type);
             return expr->resolved_type;
         }
+        case NODE_CAST_EXPR: {
+            resolve_expr(sema, expr->cast_expr.value);
+            TypeKind tk = TYPE_INT;
+            switch (expr->cast_expr.target_type) {
+                case TOK_INT:     tk = TYPE_INT; break;
+                case TOK_FLOAT:   tk = TYPE_FLOAT; break;
+                case TOK_BOOL:    tk = TYPE_BOOL; break;
+                case TOK_BYTE:    tk = TYPE_BYTE; break;
+                case TOK_INT8:    tk = TYPE_INT8; break;
+                case TOK_INT16:   tk = TYPE_INT16; break;
+                case TOK_INT32:   tk = TYPE_INT32; break;
+                case TOK_INT64:   tk = TYPE_INT64; break;
+                case TOK_UINT8:   tk = TYPE_UINT8; break;
+                case TOK_UINT16:  tk = TYPE_UINT16; break;
+                case TOK_UINT32:  tk = TYPE_UINT32; break;
+                case TOK_UINT64:  tk = TYPE_UINT64; break;
+                case TOK_FLOAT32: tk = TYPE_FLOAT32; break;
+                case TOK_FLOAT64: tk = TYPE_FLOAT64; break;
+                default: break;
+            }
+            expr->resolved_type = make_type(sema->arena, tk);
+            return expr->resolved_type;
+        }
         case NODE_INDEX_EXPR: {
             MixType *obj_type = resolve_expr(sema, expr->index_expr.object);
             resolve_expr(sema, expr->index_expr.index);
@@ -1144,6 +1167,36 @@ void sema_analyze(Sema *sema, AstNode *program) {
         ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
         ft->func.param_types[0] = make_type(sema->arena, TYPE_INFER);
         symtab_insert(&sema->symtab, "to_string", ft, false);
+    }
+
+    // to_int(value) -> int  (float->int or str->int)
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_INT);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_INFER);
+        symtab_insert(&sema->symtab, "to_int", ft, false);
+    }
+
+    // to_float(value) -> float  (int->float or str->float)
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_FLOAT);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_INFER);
+        symtab_insert(&sema->symtab, "to_float", ft, false);
+    }
+
+    // to_set(list: [str]) -> set[str]
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_set_type(sema->arena, make_type(sema->arena, TYPE_STR));
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_list_type(sema->arena, make_type(sema->arena, TYPE_STR));
+        symtab_insert(&sema->symtab, "to_set", ft, false);
     }
 
     // str_reverse(s: str) -> str

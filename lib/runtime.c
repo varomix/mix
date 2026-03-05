@@ -595,6 +595,22 @@ char *mix_to_string_float(double val) {
     return result;
 }
 
+int64_t mix_to_int(double val) {
+    return (int64_t)val;
+}
+
+double mix_to_float(int64_t val) {
+    return (double)val;
+}
+
+int64_t mix_parse_int(const char *s) {
+    return strtoll(s, NULL, 10);
+}
+
+double mix_parse_float(const char *s) {
+    return strtod(s, NULL);
+}
+
 // ---- File I/O ----
 
 int64_t mix_file_open(const char *path, const char *mode) {
@@ -907,6 +923,15 @@ void mix_print_set(const void *set_ptr) {
         }
     }
     printf("}\n");
+}
+
+void *mix_set_from_list(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    void *set = mix_set_new();
+    for (int64_t i = 0; i < list->len; i++) {
+        mix_set_add(set, (const char *)list->data[i]);
+    }
+    return set;
 }
 
 // ---- Shared (mutex-wrapped values) ----

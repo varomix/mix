@@ -52,6 +52,7 @@ typedef enum {
     NODE_LIST_COMP,         // [expr for x in iter if cond]
     NODE_ELSE_EXPR,         // expr else default
     NODE_SET_LIT,           // set{1, 2, 3}
+    NODE_CAST_EXPR,         // int32(expr), uint8(expr)
 
     // Shape-related
     NODE_SHAPE_DECL,
@@ -326,6 +327,12 @@ struct AstNode {
             AstNode **elements;
             int element_count;
         } set_lit;
+
+        // NODE_CAST_EXPR — int32(expr), uint8(expr)
+        struct {
+            TokenKind target_type;
+            AstNode *value;
+        } cast_expr;
 
         // NODE_TYPE_ALIAS — type Name = Type
         struct {

@@ -351,6 +351,28 @@ static AstNode *parse_primary(Parser *p) {
             node->list_lit.element_count = elem_count;
             return node;
         }
+        // Type-as-cast: int32(expr), uint8(expr), float(expr), etc.
+        case TOK_INT: case TOK_FLOAT: case TOK_BOOL: case TOK_BYTE:
+        case TOK_INT8: case TOK_INT16: case TOK_INT32: case TOK_INT64:
+        case TOK_UINT8: case TOK_UINT16: case TOK_UINT32: case TOK_UINT64:
+        case TOK_FLOAT32: case TOK_FLOAT64: {
+            // Only treat as cast if followed by '('
+            if (peek_at(p, 1)->kind == TOK_LPAREN) {
+                TokenKind target = t->kind;
+                advance_tok(p); // skip type keyword
+                expect(p, TOK_LPAREN);
+                AstNode *val = parse_expr(p);
+                expect(p, TOK_RPAREN);
+                AstNode *node = ast_new(p->arena, NODE_CAST_EXPR, loc);
+                node->cast_expr.target_type = target;
+                node->cast_expr.value = val;
+                return node;
+            }
+            // Otherwise fall through to error (type keyword used as expression)
+            mix_error(loc, "unexpected type keyword '%s' in expression", token_kind_name(t->kind));
+            advance_tok(p);
+            return ast_new(p->arena, NODE_INT_LIT, loc);
+        }
         case TOK_SET: {
             // Set literal: set{expr, expr, ...}
             advance_tok(p); // skip 'set'

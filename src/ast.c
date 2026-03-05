@@ -194,6 +194,10 @@ void ast_print(AstNode *node, int indent) {
             for (int i = 0; i < node->set_lit.element_count; i++)
                 ast_print(node->set_lit.elements[i], indent + 1);
             break;
+        case NODE_CAST_EXPR:
+            printf("Cast\n");
+            ast_print(node->cast_expr.value, indent + 1);
+            break;
         case NODE_INDEX_EXPR:
             printf("IndexExpr\n");
             ast_print(node->index_expr.object, indent + 1);

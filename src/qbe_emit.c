@@ -321,6 +321,91 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             }
             return set_t;
         }
+        case NODE_CAST_EXPR: {
+            int val = emit_expr(emit, expr->cast_expr.value);
+            MixType *src = expr->cast_expr.value->resolved_type;
+            int t = next_temp(emit);
+            bool src_float = src && type_is_float(src);
+            bool src_int = src && type_is_integer(src);
+
+            switch (expr->cast_expr.target_type) {
+                // Target: 64-bit int
+                case TOK_INT: case TOK_INT64:
+                    if (src_float) {
+                        fprintf(emit->out, "\t%%t%d =l dtosi %%t%d\n", t, val);
+                    } else {
+                        fprintf(emit->out, "\t%%t%d =l extsw %%t%d\n", t, val);
+                    }
+                    break;
+                // Target: 64-bit uint
+                case TOK_UINT64:
+                    if (src_float) {
+                        fprintf(emit->out, "\t%%t%d =l dtosi %%t%d\n", t, val);
+                    } else {
+                        fprintf(emit->out, "\t%%t%d =l copy %%t%d\n", t, val);
+                    }
+                    break;
+                // Target: 32-bit int/uint
+                case TOK_INT32: case TOK_UINT32:
+                    if (src_float) {
+                        int tmp = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =l dtosi %%t%d\n", tmp, val);
+                        fprintf(emit->out, "\t%%t%d =w copy %%t%d\n", t, tmp);
+                    } else {
+                        fprintf(emit->out, "\t%%t%d =w copy %%t%d\n", t, val);
+                    }
+                    break;
+                // Target: 16-bit or 8-bit int/uint/byte
+                case TOK_INT16: case TOK_UINT16:
+                case TOK_INT8: case TOK_UINT8: case TOK_BYTE:
+                    if (src_float) {
+                        int tmp = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =l dtosi %%t%d\n", tmp, val);
+                        fprintf(emit->out, "\t%%t%d =w copy %%t%d\n", t, tmp);
+                    } else {
+                        fprintf(emit->out, "\t%%t%d =w copy %%t%d\n", t, val);
+                    }
+                    break;
+                // Target: 64-bit float (double)
+                case TOK_FLOAT: case TOK_FLOAT64:
+                    if (src_int) {
+                        fprintf(emit->out, "\t%%t%d =d sltof %%t%d\n", t, val);
+                    } else if (src && src->kind == TYPE_FLOAT32) {
+                        fprintf(emit->out, "\t%%t%d =d exts %%t%d\n", t, val);
+                    } else {
+                        fprintf(emit->out, "\t%%t%d =d copy %%t%d\n", t, val);
+                    }
+                    break;
+                // Target: 32-bit float
+                case TOK_FLOAT32:
+                    if (src_int) {
+                        int tmp = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =d sltof %%t%d\n", tmp, val);
+                        fprintf(emit->out, "\t%%t%d =s truncd %%t%d\n", t, tmp);
+                    } else if (src_float && (!src || src->kind != TYPE_FLOAT32)) {
+                        fprintf(emit->out, "\t%%t%d =s truncd %%t%d\n", t, val);
+                    } else {
+                        fprintf(emit->out, "\t%%t%d =s copy %%t%d\n", t, val);
+                    }
+                    break;
+                // Target: bool
+                case TOK_BOOL:
+                    if (src_float) {
+                        int zero = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =d copy d_0.0\n", zero);
+                        fprintf(emit->out, "\t%%t%d =w cned %%t%d, %%t%d\n", t, val, zero);
+                    } else {
+                        int zero = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =l copy 0\n", zero);
+                        fprintf(emit->out, "\t%%t%d =w cnel %%t%d, %%t%d\n", t, val, zero);
+                    }
+                    break;
+                default:
+                    fprintf(emit->out, "\t%%t%d =l copy %%t%d\n", t, val);
+                    break;
+            }
+            return t;
+        }
         case NODE_INDEX_EXPR: {
             int obj = emit_expr(emit, expr->index_expr.object);
             int idx = emit_expr(emit, expr->index_expr.index);
@@ -625,7 +710,13 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 if (atype && atype->kind == TYPE_STR) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_print_str(l %%t%d)\n", t, arg_temps[0]);
                 } else if (atype && type_is_float(atype)) {
-                    fprintf(emit->out, "\t%%t%d =l call $mix_print_float(d %%t%d)\n", t, arg_temps[0]);
+                    int arg_f = arg_temps[0];
+                    if (atype->kind == TYPE_FLOAT32) {
+                        int ext = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =d exts %%t%d\n", ext, arg_f);
+                        arg_f = ext;
+                    }
+                    fprintf(emit->out, "\t%%t%d =l call $mix_print_float(d %%t%d)\n", t, arg_f);
                 } else if (atype && atype->kind == TYPE_BOOL) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_print_bool(w %%t%d)\n", t, arg_temps[0]);
                 } else if (atype && atype->kind == TYPE_LIST) {
@@ -788,6 +879,47 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             if (strcmp(expr->call.name, "str_count") == 0 && expr->call.arg_count == 2) {
                 fprintf(emit->out, "\t%%t%d =l call $mix_str_count(l %%t%d, l %%t%d)\n",
                         t, arg_temps[0], arg_temps[1]);
+                return t;
+            }
+
+            // to_int(value) -> int
+            if (strcmp(expr->call.name, "to_int") == 0 && expr->call.arg_count == 1) {
+                MixType *atype = expr->call.args[0]->resolved_type;
+                if (atype && type_is_float(atype)) {
+                    // float -> int: QBE dtosi
+                    fprintf(emit->out, "\t%%t%d =l dtosi %%t%d\n", t, arg_temps[0]);
+                } else if (atype && atype->kind == TYPE_STR) {
+                    // str -> int: call runtime
+                    fprintf(emit->out, "\t%%t%d =l call $mix_parse_int(l %%t%d)\n",
+                            t, arg_temps[0]);
+                } else {
+                    // int -> int (or smaller int types): just copy
+                    fprintf(emit->out, "\t%%t%d =l extsw %%t%d\n", t, arg_temps[0]);
+                }
+                return t;
+            }
+
+            // to_float(value) -> float
+            if (strcmp(expr->call.name, "to_float") == 0 && expr->call.arg_count == 1) {
+                MixType *atype = expr->call.args[0]->resolved_type;
+                if (atype && type_is_integer(atype)) {
+                    // int -> float: QBE sltof
+                    fprintf(emit->out, "\t%%t%d =d sltof %%t%d\n", t, arg_temps[0]);
+                } else if (atype && atype->kind == TYPE_STR) {
+                    // str -> float: call runtime
+                    fprintf(emit->out, "\t%%t%d =d call $mix_parse_float(l %%t%d)\n",
+                            t, arg_temps[0]);
+                } else {
+                    // float -> float: just copy
+                    fprintf(emit->out, "\t%%t%d =d copy %%t%d\n", t, arg_temps[0]);
+                }
+                return t;
+            }
+
+            // to_set(list) -> set
+            if (strcmp(expr->call.name, "to_set") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_set_from_list(l %%t%d)\n",
+                        t, arg_temps[0]);
                 return t;
             }
 

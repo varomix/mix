@@ -1,0 +1,56 @@
+// Type conversions and casts
+main()
+    // float -> int
+    f = 3.14
+    n = to_int(f)
+    print(n)
+
+    // int -> float
+    x = 42
+    y = to_float(x)
+    print(y)
+
+    // str -> int
+    s = "123"
+    v = to_int(s)
+    print(v)
+
+    // str -> float
+    sf = "2.718"
+    vf = to_float(sf)
+    print(vf)
+
+    // to_string (already existing)
+    print(to_string(99) + " bottles")
+
+    // negative float -> int (truncation)
+    neg = to_int(-7.9)
+    print(neg)
+
+    // to_set from list
+    fruits = ["apple", "banana", "apple", "cherry", "banana"]
+    unique = to_set(fruits)
+    print(unique.len)
+    print(unique.has("apple"))
+    print(unique.has("grape"))
+
+    // Type-as-cast: int32(expr)
+    big = 1000
+    small = int32(big)
+    print(small)
+
+    // uint8 cast
+    byte_val = uint8(255)
+    print(byte_val)
+
+    // float -> int32 cast
+    f32 = int32(9.7)
+    print(f32)
+
+    // int -> float32 cast
+    sf32 = float32(42)
+    print(sf32)
+
+    // int -> float cast
+    d = float(7)
+    print(d)

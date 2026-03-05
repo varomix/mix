@@ -6,6 +6,7 @@
 #include "ast.h"
 #include "sema.h"
 #include "qbe_emit.h"
+#include "c_emit.h"
 #include "cbind.h"
 #include <errno.h>
 #include <unistd.h>
@@ -52,6 +53,7 @@ static void usage(void) {
     fprintf(stderr, "  --emit-ast          Print AST\n");
     fprintf(stderr, "  --debug             Enable debug mode (DWARF info + @debug)\n");
     fprintf(stderr, "  --bind <path>       Generate .mix bindings from C header(s)\n");
+    fprintf(stderr, "  --backend <name>    Backend: qbe (default), c\n");
     fprintf(stderr, "  --lib <name>        Library name for --bind (e.g., SDL3)\n");
     fprintf(stderr, "  --version           Show version\n");
     fprintf(stderr, "  -v                  Verbose\n\n");
@@ -184,11 +186,12 @@ static char *resolve_module_path(Arena *arena, const char *base_dir,
     return arena_strdup(arena, path);
 }
 
-// Compile a single module, return its .s file path (or NULL on failure)
-// Also populates the sema symbol table with pub exports
+// Compile a single module, return its output file path (or NULL on failure)
+// For QBE backend: returns .s file path
+// For C backend: returns .c file path
 static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
                             const char *base_dir, bool verbose, int module_id,
-                            const char *prefix, bool debug) {
+                            const char *prefix, bool debug, bool use_c_backend) {
     char *source = read_file(source_path);
     if (!source) return NULL;
 
@@ -206,7 +209,20 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
     sema_analyze(sema, program);
     if (mix_error_count() > 0) { free(source); free(lexer.tokens); return NULL; }
 
-    // Emit QBE IR
+    if (use_c_backend) {
+        // C backend: emit .c file directly
+        char c_path[256];
+        snprintf(c_path, sizeof(c_path), "/tmp/mod_%d_%d.c", getpid(), module_id);
+        FILE *c_out = fopen(c_path, "w");
+        if (!c_out) { free(source); free(lexer.tokens); return NULL; }
+        CEmitter c_emitter = c_emitter_create(c_out, arena, &sema->symtab);
+        c_emit_program(&c_emitter, program);
+        fclose(c_out);
+        free(source);
+        free(lexer.tokens);
+        return arena_strdup(arena, c_path);
+    } else {
+        // QBE backend: emit .ssa, compile to .s
     char ssa_path[256], asm_path[256];
     snprintf(ssa_path, sizeof(ssa_path), "/tmp/mod_%d_%d.ssa", getpid(), module_id);
     snprintf(asm_path, sizeof(asm_path), "/tmp/mod_%d_%d.s", getpid(), module_id);
@@ -235,6 +251,7 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
     free(lexer.tokens);
 
     return arena_strdup(arena, asm_path);
+    } /* end QBE backend */
 }
 
 int main(int argc, char **argv) {
@@ -247,6 +264,7 @@ int main(int argc, char **argv) {
     bool emit_ast = false;
     bool verbose = false;
     bool debug_mode = false;
+    const char *backend = "qbe";  /* "qbe" or "c" */
     RunMode mode = MODE_BUILD;
     bool output_set = false;
 
@@ -289,6 +307,8 @@ int main(int argc, char **argv) {
             return 0;
         } else if (strcmp(argv[i], "--bind") == 0 && i + 1 < argc) {
             bind_path = argv[++i];
+        } else if (strcmp(argv[i], "--backend") == 0 && i + 1 < argc) {
+            backend = argv[++i];
         } else if (strcmp(argv[i], "--lib") == 0 && i + 1 < argc) {
             bind_lib = argv[++i];
         } else if (strncmp(argv[i], "-l", 2) == 0 || strncmp(argv[i], "-L", 2) == 0 ||
@@ -307,6 +327,13 @@ int main(int argc, char **argv) {
         if (!output_file) output_file = "a.out";
         return cbind_generate(bind_path, output_file, bind_lib, verbose);
     }
+
+    // Check MIX_BACKEND env var
+    {
+        const char *env_backend = getenv("MIX_BACKEND");
+        if (env_backend && env_backend[0]) backend = env_backend;
+    }
+    bool use_c_backend = (strcmp(backend, "c") == 0);
 
     // Auto-discover if no input file specified
     if (!input_file) {
@@ -458,7 +485,7 @@ int main(int argc, char **argv) {
 
             char *asm_file = compile_module(mod_path, &arena, &sema, base_dir,
                                             verbose, module_count, decl->use_decl.module_path,
-                                            debug_mode);
+                                            debug_mode, use_c_backend);
             if (!asm_file) {
                 fprintf(stderr, "mix: failed to compile module '%s'\n", decl->use_decl.module_path);
                 return 1;
@@ -476,52 +503,67 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Emit QBE IR for main file
-    char ssa_path[256];
-    if (emit_ir_only) {
-        snprintf(ssa_path, sizeof(ssa_path), "%s", output_file);
+    // Emit code for main file
+    char gen_path[256];  // generated .ssa or .c
+    char asm_path[256];  // .s from QBE (only for qbe backend)
+
+    if (use_c_backend) {
+        // C backend: emit .c file
+        if (emit_ir_only) {
+            snprintf(gen_path, sizeof(gen_path), "%s", output_file);
+        } else {
+            snprintf(gen_path, sizeof(gen_path), "/tmp/mix_%d.c", getpid());
+        }
+        FILE *c_out = fopen(gen_path, "w");
+        if (!c_out) {
+            fprintf(stderr, "mix: cannot create '%s': %s\n", gen_path, strerror(errno));
+            return 1;
+        }
+        CEmitter c_emitter = c_emitter_create(c_out, &arena, &sema.symtab);
+        c_emit_program(&c_emitter, program);
+        fclose(c_out);
     } else {
-        snprintf(ssa_path, sizeof(ssa_path), "/tmp/mix_%d.ssa", getpid());
+        // QBE backend: emit .ssa file
+        if (emit_ir_only) {
+            snprintf(gen_path, sizeof(gen_path), "%s", output_file);
+        } else {
+            snprintf(gen_path, sizeof(gen_path), "/tmp/mix_%d.ssa", getpid());
+        }
+        FILE *ssa_out = fopen(gen_path, "w");
+        if (!ssa_out) {
+            fprintf(stderr, "mix: cannot create '%s': %s\n", gen_path, strerror(errno));
+            return 1;
+        }
+        QbeEmitter emitter = qbe_emitter_create(ssa_out, &arena, &sema.symtab, debug_mode);
+        qbe_emit_program(&emitter, program);
+        fclose(ssa_out);
     }
-
-    FILE *ssa_out = fopen(ssa_path, "w");
-    if (!ssa_out) {
-        fprintf(stderr, "mix: cannot create '%s': %s\n", ssa_path, strerror(errno));
-        return 1;
-    }
-
-    QbeEmitter emitter = qbe_emitter_create(ssa_out, &arena, &sema.symtab, debug_mode);
-    qbe_emit_program(&emitter, program);
-    fclose(ssa_out);
 
     if (emit_ir_only) {
-        if (verbose) fprintf(stderr, "mix: wrote %s\n", ssa_path);
+        if (verbose) fprintf(stderr, "mix: wrote %s\n", gen_path);
         arena_destroy(&arena); free(source); free(lexer.tokens);
         return 0;
     }
 
-    // QBE compile main file
-    char asm_path[256];
-    snprintf(asm_path, sizeof(asm_path), "/tmp/mix_%d.s", getpid());
-
-    char qbe_cmd[512];
-    snprintf(qbe_cmd, sizeof(qbe_cmd), "qbe -o %s %s", asm_path, ssa_path);
-    if (verbose) fprintf(stderr, "mix: %s\n", qbe_cmd);
-
-    int ret = system(qbe_cmd);
-    if (ret != 0) {
-        fprintf(stderr, "mix: qbe failed (exit %d)\n", ret);
-        return 1;
+    // QBE backend: compile .ssa -> .s
+    if (!use_c_backend) {
+        snprintf(asm_path, sizeof(asm_path), "/tmp/mix_%d.s", getpid());
+        char qbe_cmd[512];
+        snprintf(qbe_cmd, sizeof(qbe_cmd), "qbe -o %s %s", asm_path, gen_path);
+        if (verbose) fprintf(stderr, "mix: %s\n", qbe_cmd);
+        int ret = system(qbe_cmd);
+        if (ret != 0) {
+            fprintf(stderr, "mix: qbe failed (exit %d)\n", ret);
+            return 1;
+        }
     }
 
-    // Find runtime — search relative to CWD, then relative to the mix binary
-    // (exe_dir already computed above for stdlib resolution)
+    // Find runtime
     char runtime_beside_exe[1100] = "";
     if (exe_dir[0]) {
         snprintf(runtime_beside_exe, sizeof(runtime_beside_exe),
                  "%s/../lib/runtime.c", exe_dir);
     }
-
     const char *runtime_paths[] = {
         "lib/runtime.c",
         "../lib/runtime.c",
@@ -534,33 +576,38 @@ int main(int argc, char **argv) {
         if (test) { fclose(test); runtime_path = runtime_paths[i]; break; }
     }
 
-    // Link: main .s + module .s files + runtime + libraries
+    // Link
     char link_cmd[2048];
     int off = 0;
-    off = snprintf(link_cmd, sizeof(link_cmd), "cc %s%s%s",
-                   debug_mode ? "-g " : "",
-                   debug_mode ? "" : "-O2 ",
-                   asm_path);
-    for (int i = 0; i < module_count; i++) {
-        off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " %s", module_asm_files[i]);
+    if (use_c_backend) {
+        // C backend: cc generated.c + module .c files + runtime
+        off = snprintf(link_cmd, sizeof(link_cmd), "cc %s%s%s",
+                       debug_mode ? "-g " : "",
+                       debug_mode ? "" : "-O2 ",
+                       gen_path);
+        for (int i = 0; i < module_count; i++)
+            off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " %s", module_asm_files[i]);
+    } else {
+        // QBE backend: cc .s + module .s files
+        off = snprintf(link_cmd, sizeof(link_cmd), "cc %s%s%s",
+                       debug_mode ? "-g " : "",
+                       debug_mode ? "" : "-O2 ",
+                       asm_path);
+        for (int i = 0; i < module_count; i++)
+            off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " %s", module_asm_files[i]);
     }
-    if (runtime_path) {
+    if (runtime_path)
         off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " %s", runtime_path);
-    }
     off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " -o %s -lm", output_file);
-    for (int i = 0; i < link_flag_count; i++) {
+    for (int i = 0; i < link_flag_count; i++)
         off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " %s", link_flags[i]);
-    }
-
-    // Pick up LDFLAGS from environment (e.g., -L/opt/homebrew/lib)
     const char *env_ldflags = getenv("LDFLAGS");
-    if (env_ldflags && env_ldflags[0]) {
+    if (env_ldflags && env_ldflags[0])
         off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " %s", env_ldflags);
-    }
 
     if (verbose) fprintf(stderr, "mix: %s\n", link_cmd);
 
-    ret = system(link_cmd);
+    int ret = system(link_cmd);
     if (ret != 0) {
         fprintf(stderr, "mix: linker failed (exit %d)\n", ret);
         return 1;
@@ -568,11 +615,10 @@ int main(int argc, char **argv) {
 
     // Cleanup
     if (!verbose) {
-        remove(ssa_path);
-        remove(asm_path);
-        for (int i = 0; i < module_count; i++) {
+        remove(gen_path);
+        if (!use_c_backend) remove(asm_path);
+        for (int i = 0; i < module_count; i++)
             remove(module_asm_files[i]);
-        }
     }
 
     if (verbose) fprintf(stderr, "mix: wrote %s\n", output_file);

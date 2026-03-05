@@ -12,7 +12,7 @@ FRONTEND_SRCS = $(SRC_DIR)/arena.c $(SRC_DIR)/ast.c $(SRC_DIR)/errors.c \
 FRONTEND_OBJS = $(FRONTEND_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # Compiler-only objects
-COMPILER_SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/qbe_emit.c $(SRC_DIR)/cbind.c
+COMPILER_SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/qbe_emit.c $(SRC_DIR)/c_emit.c $(SRC_DIR)/cbind.c
 COMPILER_OBJS = $(COMPILER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # LSP objects

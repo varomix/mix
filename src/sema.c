@@ -1383,14 +1383,20 @@ void sema_analyze(Sema *sema, AstNode *program) {
             if (strcmp(cn, "os") == 0) {
                 #ifdef __APPLE__
                 active = !cv || strcmp(cv, "macos") == 0;
-                #elif __linux__
+                #elif defined(__linux__)
                 active = !cv || strcmp(cv, "linux") == 0;
+                #elif defined(__sgi)
+                active = !cv || strcmp(cv, "irix") == 0;
                 #endif
             } else if (strcmp(cn, "arch") == 0) {
                 #ifdef __aarch64__
                 active = !cv || strcmp(cv, "aarch64") == 0 || strcmp(cv, "arm64") == 0;
-                #elif __x86_64__
+                #elif defined(__x86_64__)
                 active = !cv || strcmp(cv, "x86_64") == 0;
+                #elif defined(__mips__) && defined(__mips64)
+                active = !cv || strcmp(cv, "mips64") == 0 || strcmp(cv, "mips") == 0;
+                #elif defined(__mips__)
+                active = !cv || strcmp(cv, "mips") == 0;
                 #endif
             } else if (strcmp(cn, "debug") == 0) {
                 active = sema->debug_mode;

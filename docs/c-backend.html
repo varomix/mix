@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mix -- C Backend &amp; IRIX Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+    --bg: #08090d; --bg2: #0f1117; --bg-card: #151820; --bg-code: #1a1e2a;
+    --border: #262d3d; --text: #e4e8f1; --text-dim: #7d849a;
+    --accent: #6cb4ff; --accent2: #5efa9e; --accent3: #c49cff; --accent4: #ffb86c;
+    --red: #ff6b6b;
+    --grad1: linear-gradient(135deg, #6cb4ff 0%, #c49cff 50%, #ff6b9d 100%);
+    --grad2: linear-gradient(135deg, #5efa9e 0%, #6cb4ff 100%);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 16px;
+}
+
+/* -- NAV -- */
+nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+    background: rgba(8, 9, 13, 0.85);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 2rem;
+    height: 60px;
+    display: flex; align-items: center; justify-content: space-between;
+}
+nav .brand {
+    font-family: 'Funnel Display', sans-serif;
+    font-size: 1.4rem;
+    font-weight: 700;
+    background: var(--grad1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-decoration: none;
+}
+nav .links { display: flex; gap: 1.5rem; align-items: center; flex-wrap: wrap; }
+nav .links a {
+    color: var(--text-dim); text-decoration: none; font-size: 0.85rem; font-weight: 500;
+    transition: color 0.2s;
+}
+nav .links a:hover { color: var(--accent); }
+nav .links a.active { color: var(--accent); }
+
+/* -- CONTAINER -- */
+.container { max-width: 900px; margin: 0 auto; padding: 100px 2rem 4rem; }
+
+/* -- HEADER -- */
+.page-header {
+    text-align: center;
+    margin-bottom: 4rem;
+    padding: 2rem 0;
+}
+.page-header h1 {
+    font-family: 'Funnel Display', sans-serif;
+    font-size: 2.8rem;
+    font-weight: 700;
+    background: var(--grad1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.5rem;
+}
+.page-header p { color: var(--text-dim); font-size: 1.1rem; max-width: 600px; margin: 0 auto; }
+
+/* -- SECTIONS -- */
+section { margin-bottom: 3.5rem; }
+section h2 {
+    font-family: 'Funnel Display', sans-serif;
+    font-size: 1.8rem; font-weight: 600;
+    color: var(--text);
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+}
+section h2 .num {
+    color: var(--accent);
+    font-size: 0.85rem;
+    font-weight: 700;
+    margin-right: 0.5rem;
+    vertical-align: middle;
+}
+section h3 { font-size: 1.15rem; color: var(--accent3); margin: 1.5rem 0 0.5rem; }
+section h4 { font-size: 1rem; color: var(--accent4); margin: 1.2rem 0 0.4rem; }
+
+p { margin-bottom: 1rem; }
+ul, ol { margin: 0 0 1rem 1.5rem; }
+li { margin-bottom: 0.3rem; }
+code { font-family: 'JetBrains Mono', monospace; font-size: 0.9em; }
+a { color: var(--accent); }
+
+/* -- CODE BLOCKS -- */
+pre {
+    position: relative;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    margin: 1rem 0 1.5rem;
+}
+pre .label {
+    position: absolute; top: 8px; right: 12px;
+    font-size: 0.65rem; font-weight: 600; text-transform: uppercase;
+    color: var(--text-dim); letter-spacing: 0.08em;
+}
+.kw { color: var(--accent3); }
+.fn { color: var(--accent); }
+.str { color: var(--accent2); }
+.cm { color: var(--text-dim); font-style: italic; }
+.num-lit { color: var(--accent4); }
+.type { color: var(--accent4); }
+
+/* -- INFO BOXES -- */
+.info-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    margin: 1.5rem 0;
+}
+.info-box.warning { border-left: 3px solid var(--accent4); }
+.info-box.tip { border-left: 3px solid var(--accent2); }
+.info-box strong { color: var(--accent4); }
+.info-box.tip strong { color: var(--accent2); }
+
+/* -- TABLE -- */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 1.5rem;
+    font-size: 0.9rem;
+}
+th, td {
+    padding: 0.6rem 1rem;
+    text-align: left;
+    border: 1px solid var(--border);
+}
+th { background: var(--bg-card); color: var(--accent); font-weight: 600; }
+td code { color: var(--accent2); }
+
+/* -- DIAGRAM -- */
+.diagram {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    margin: 1.5rem 0;
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    line-height: 2;
+}
+.diagram .arrow { color: var(--accent); }
+.diagram .stage { color: var(--accent2); }
+.diagram .file { color: var(--accent4); }
+
+/* -- FOOTER -- */
+footer {
+    border-top: 1px solid var(--border);
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+}
+footer a { color: var(--accent); text-decoration: none; }
+
+@media (max-width: 768px) {
+    nav { padding: 0 1rem; }
+    nav .links { gap: 0.8rem; }
+    nav .links a { font-size: 0.75rem; }
+    .container { padding: 80px 1rem 2rem; }
+    .page-header h1 { font-size: 2rem; }
+    section h2 { font-size: 1.4rem; }
+    pre { font-size: 0.8rem; padding: 1rem; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+    <a href="index.html" class="brand">mix</a>
+    <div class="links">
+        <a href="index.html">Home</a>
+        <a href="overview.html">Reference</a>
+        <a href="tutorials.html">Tutorials</a>
+        <a href="c-backend.html" class="active">C Backend</a>
+    </div>
+</nav>
+
+<div class="container">
+
+<div class="page-header">
+    <h1>C Backend &amp; IRIX Guide</h1>
+    <p>Compile MIX programs to portable C for any platform with a C compiler &mdash; including SGI IRIX on MIPS.</p>
+</div>
+
+
+<!-- ====== OVERVIEW ====== -->
+<section id="overview">
+<h2><span class="num">01</span>Overview</h2>
+
+<p>MIX ships with two compilation backends:</p>
+
+<table>
+<tr><th>Backend</th><th>Flag</th><th>Pipeline</th><th>Platforms</th></tr>
+<tr>
+    <td><strong>QBE</strong> (default)</td>
+    <td><em>none</em></td>
+    <td><code>.mix &rarr; QBE IR &rarr; assembly &rarr; binary</code></td>
+    <td>x86_64, aarch64, riscv64</td>
+</tr>
+<tr>
+    <td><strong>C</strong></td>
+    <td><code>--backend c</code></td>
+    <td><code>.mix &rarr; C source &rarr; cc &rarr; binary</code></td>
+    <td>Any platform with a C compiler</td>
+</tr>
+</table>
+
+<p>The C backend translates MIX directly to portable C99 code, bypassing QBE entirely. The generated C is then compiled by whatever <code>cc</code> is available on the target system &mdash; MIPSpro on IRIX, GCC on Linux, Clang on macOS.</p>
+
+<div class="diagram">
+    <div style="margin-bottom: 0.5rem; color: var(--text-dim)">QBE backend (default)</div>
+    <span class="file">.mix</span> <span class="arrow">&rarr;</span>
+    <span class="stage">AST</span> <span class="arrow">&rarr;</span>
+    <span class="stage">qbe_emit</span> <span class="arrow">&rarr;</span>
+    <span class="file">.ssa</span> <span class="arrow">&rarr;</span>
+    <span class="stage">QBE</span> <span class="arrow">&rarr;</span>
+    <span class="file">.s</span> <span class="arrow">&rarr;</span>
+    <span class="stage">cc</span> <span class="arrow">&rarr;</span>
+    <span class="file">binary</span>
+    <br><br>
+    <div style="margin-bottom: 0.5rem; color: var(--text-dim)">C backend (--backend c)</div>
+    <span class="file">.mix</span> <span class="arrow">&rarr;</span>
+    <span class="stage">AST</span> <span class="arrow">&rarr;</span>
+    <span class="stage">c_emit</span> <span class="arrow">&rarr;</span>
+    <span class="file">.c</span> <span class="arrow">&rarr;</span>
+    <span class="stage">cc</span> <span class="arrow">&rarr;</span>
+    <span class="file">binary</span>
+</div>
+</section>
+
+
+<!-- ====== USAGE ====== -->
+<section id="usage">
+<h2><span class="num">02</span>Usage</h2>
+
+<h3>Basic Commands</h3>
+
+<pre><code><span class="cm"># Build with C backend</span>
+mix --backend c build game.mix
+
+<span class="cm"># Build and run</span>
+mix --backend c run game.mix
+
+<span class="cm"># Inspect generated C (no compilation)</span>
+mix --backend c --emit-ir -o game.c game.mix
+
+<span class="cm"># Set backend via environment variable</span>
+<span class="kw">export</span> MIX_BACKEND=c
+mix build game.mix       <span class="cm"># uses C backend automatically</span>
+mix run game.mix</code><span class="label">shell</span></pre>
+
+<h3>Generated Output</h3>
+
+<p>Use <code>--emit-ir</code> with the C backend to inspect the generated C code:</p>
+
+<pre><code>mix --backend c --emit-ir -o output.c hello.mix</code><span class="label">shell</span></pre>
+
+<p>This produces a self-contained <code>.c</code> file with:</p>
+<ul>
+    <li>Standard <code>#include</code> headers (<code>stdio.h</code>, <code>stdint.h</code>, <code>math.h</code>, etc.)</li>
+    <li><code>extern</code> declarations for all MIX runtime functions</li>
+    <li>Shape struct <code>typedef</code> definitions</li>
+    <li>Forward declarations for all MIX functions</li>
+    <li>Function and method implementations</li>
+</ul>
+
+<h3>Example</h3>
+
+<p>Given this MIX program:</p>
+
+<pre><code><span class="kw">shape</span> Vec2
+    x, y: <span class="type">float</span>
+
+    length() -> <span class="type">float</span>
+        sqrt(x * x + y * y)
+
+<span class="fn">main</span>()
+    v = Vec2(x: <span class="num-lit">3.0</span>, y: <span class="num-lit">4.0</span>)
+    <span class="fn">print</span>(v.length())</code><span class="label">mix</span></pre>
+
+<p>The C backend generates:</p>
+
+<pre><code><span class="cm">/* Generated by mix --backend c */</span>
+<span class="kw">#include</span> <span class="str">&lt;stdio.h&gt;</span>
+<span class="kw">#include</span> <span class="str">&lt;stdint.h&gt;</span>
+<span class="kw">#include</span> <span class="str">&lt;math.h&gt;</span>
+
+<span class="kw">extern</span> <span class="type">void</span> mix_print_float(<span class="type">double</span>);
+<span class="kw">extern</span> <span class="type">void</span> *mix_alloc(<span class="type">int64_t</span>);
+<span class="cm">/* ... more runtime declarations ... */</span>
+
+<span class="kw">typedef struct</span> {
+    <span class="type">double</span> x;
+    <span class="type">double</span> y;
+} Vec2;
+
+<span class="kw">static</span> <span class="type">double</span> <span class="fn">Vec2_length</span>(Vec2 *self) {
+    <span class="type">double</span> t0 = self->x;
+    <span class="type">double</span> t1 = self->x;
+    <span class="type">double</span> t2 = t0 * t1;
+    <span class="type">double</span> t3 = self->y;
+    <span class="type">double</span> t4 = self->y;
+    <span class="type">double</span> t5 = t3 * t4;
+    <span class="type">double</span> t6 = t2 + t5;
+    <span class="type">double</span> t7 = mix_math_sqrt(t6);
+    <span class="kw">return</span> t7;
+}
+
+<span class="type">int</span> <span class="fn">main</span>(<span class="type">int</span> argc, <span class="type">char</span> **argv) {
+    mix_set_args((<span class="type">int32_t</span>)argc, argv);
+    Vec2 *t0 = (Vec2 *)mix_alloc(<span class="kw">sizeof</span>(Vec2));
+    t0->x = <span class="num-lit">3.0</span>;
+    t0->y = <span class="num-lit">4.0</span>;
+    <span class="type">double</span> t1 = Vec2_length(t0);
+    mix_print_float(t1);
+    <span class="kw">return</span> <span class="num-lit">0</span>;
+}</code><span class="label">C</span></pre>
+</section>
+
+
+<!-- ====== IRIX ====== -->
+<section id="irix">
+<h2><span class="num">03</span>Building for SGI IRIX</h2>
+
+<p>The C backend was specifically designed to target SGI IRIX on MIPS hardware (R10000/R12000/R14000 processors). IRIX has MIPSpro <code>cc</code> but no QBE &mdash; the C backend solves this.</p>
+
+<h3>Prerequisites</h3>
+
+<ul>
+    <li>SGI Octane 2 (or any IRIX workstation) running IRIX 6.5</li>
+    <li>MIPSpro C compiler (<code>cc</code>) &mdash; included with IRIX IDO</li>
+    <li>POSIX pthreads (included with IRIX)</li>
+</ul>
+
+<h3>Step 1: Build the MIX Compiler on IRIX</h3>
+
+<p>Transfer the MIX source tree to your IRIX machine and build the compiler natively:</p>
+
+<pre><code><span class="cm"># On the SGI Octane 2 (IRIX 6.5)</span>
+cd /usr/people/yourname/mix_lang
+
+<span class="cm"># Build with MIPSpro cc in 64-bit mode</span>
+<span class="cm"># Note: override CC since Makefile defaults to cc,</span>
+<span class="cm"># and add -64 for 64-bit MIPS ABI</span>
+make clean
+make CC="cc -64" CFLAGS="-O2 -64"</code><span class="label">shell</span></pre>
+
+<div class="info-box warning">
+    <strong>Note:</strong> The QBE backend will not work on IRIX since QBE does not support MIPS. The MIX compiler itself compiles fine (it's portable C), but you must use <code>--backend c</code> when compiling MIX programs.
+</div>
+
+<h3>Step 2: Compile MIX Programs</h3>
+
+<pre><code><span class="cm"># Compile a MIX program using the C backend</span>
+./build/mix --backend c build game.mix
+
+<span class="cm"># Or set the environment variable</span>
+<span class="kw">export</span> MIX_BACKEND=c
+./build/mix build game.mix
+./build/mix run game.mix
+
+<span class="cm"># Install system-wide</span>
+make install PREFIX=/usr/local CC="cc -64" CFLAGS="-O2 -64"
+
+<span class="cm"># Then use from anywhere</span>
+mix --backend c run hello.mix</code><span class="label">shell</span></pre>
+
+<h3>Step 3: Conditional Compilation</h3>
+
+<p>Use <code>@os</code> and <code>@arch</code> directives to write platform-specific code:</p>
+
+<pre><code><span class="cm">// Platform-specific paths</span>
+<span class="kw">@os</span> == <span class="str">"irix"</span>
+    get_temp_dir() -> <span class="type">str</span>
+        <span class="str">"/var/tmp"</span>
+
+<span class="kw">@os</span> == <span class="str">"macos"</span>
+    get_temp_dir() -> <span class="type">str</span>
+        <span class="str">"/tmp"</span>
+
+<span class="cm">// Architecture-specific code</span>
+<span class="kw">@arch</span> == <span class="str">"mips64"</span>
+    print_arch~()
+        <span class="fn">print</span>(<span class="str">"Running on MIPS64"</span>)
+
+<span class="kw">@arch</span> == <span class="str">"aarch64"</span>
+    print_arch~()
+        <span class="fn">print</span>(<span class="str">"Running on ARM64"</span>)</code><span class="label">mix</span></pre>
+
+<p>Supported values:</p>
+
+<table>
+<tr><th>Directive</th><th>Values</th></tr>
+<tr><td><code>@os</code></td><td><code>"macos"</code>, <code>"linux"</code>, <code>"irix"</code></td></tr>
+<tr><td><code>@arch</code></td><td><code>"aarch64"</code> / <code>"arm64"</code>, <code>"x86_64"</code>, <code>"mips64"</code>, <code>"mips"</code></td></tr>
+<tr><td><code>@debug</code></td><td>(boolean, true when <code>--debug</code> flag is set)</td></tr>
+<tr><td><code>@release</code></td><td>(boolean, true when <code>--debug</code> is not set)</td></tr>
+</table>
+
+<h3>IRIX-Specific Notes</h3>
+
+<div class="info-box tip">
+    <strong>64-bit mode:</strong> Always compile with <code>-64</code> on IRIX. MIX assumes 64-bit pointers (<code>sizeof(void*) == 8</code>). The default IRIX ABI is 32-bit (<code>-n32</code>), which will cause pointer truncation.
+</div>
+
+<ul>
+    <li><strong>MIPSpro flags:</strong> The generated C is C99-compatible. MIPSpro supports C99 with <code>-c99</code> flag. If you encounter issues, try <code>CC="cc -64 -c99"</code>.</li>
+    <li><strong>Math library:</strong> The linker automatically includes <code>-lm</code> for math functions (<code>sqrt</code>, <code>sin</code>, <code>cos</code>, etc.).</li>
+    <li><strong>Pthreads:</strong> MIX concurrency (<code>go</code>/<code>wait</code>/<code>shared</code>) uses POSIX pthreads, which IRIX supports natively. No extra flags needed.</li>
+    <li><strong>Runtime:</strong> The MIX runtime (<code>lib/runtime.c</code>) is portable C and compiles on IRIX without modification.</li>
+</ul>
+</section>
+
+
+<!-- ====== OTHER PLATFORMS ====== -->
+<section id="platforms">
+<h2><span class="num">04</span>Other Platforms</h2>
+
+<p>The C backend makes MIX portable to any platform with a C99 compiler:</p>
+
+<table>
+<tr><th>Platform</th><th>Compiler</th><th>Notes</th></tr>
+<tr><td>SGI IRIX (MIPS)</td><td>MIPSpro <code>cc -64</code></td><td>Primary target for C backend</td></tr>
+<tr><td>Linux (any arch)</td><td>GCC / Clang</td><td>Works out of the box</td></tr>
+<tr><td>macOS (ARM/Intel)</td><td>Clang</td><td>Works out of the box</td></tr>
+<tr><td>FreeBSD / OpenBSD</td><td>GCC / Clang</td><td>Should work (untested)</td></tr>
+<tr><td>PowerPC (classic Mac, PS3)</td><td>GCC</td><td>Should work (untested)</td></tr>
+<tr><td>SPARC (Sun workstations)</td><td>GCC / Sun Studio</td><td>Should work (untested)</td></tr>
+<tr><td>ARM 32-bit (RPi)</td><td>GCC</td><td>Should work (untested)</td></tr>
+<tr><td>RISC-V</td><td>GCC</td><td>QBE backend also available</td></tr>
+</table>
+
+<h3>Cross-Compilation</h3>
+
+<p>You can also cross-compile from a modern machine. Generate the C source, then transfer and compile on the target:</p>
+
+<pre><code><span class="cm"># On your modern machine: generate C source</span>
+mix --backend c --emit-ir -o game.c game.mix
+
+<span class="cm"># Transfer game.c and lib/runtime.c to target machine</span>
+scp game.c lib/runtime.c user@octane2:~/
+
+<span class="cm"># On the target: compile natively</span>
+cc -64 -O2 game.c runtime.c -o game -lm</code><span class="label">shell</span></pre>
+
+<div class="info-box tip">
+    <strong>Tip:</strong> The generated <code>.c</code> file and <code>runtime.c</code> are the only files needed on the target machine. No MIX compiler installation required.
+</div>
+</section>
+
+
+<!-- ====== DIFFERENCES ====== -->
+<section id="differences">
+<h2><span class="num">05</span>QBE vs C Backend</h2>
+
+<p>Both backends produce identical program behavior &mdash; all 50 tests pass with matching output. The differences are in compilation:</p>
+
+<table>
+<tr><th>Aspect</th><th>QBE Backend</th><th>C Backend</th></tr>
+<tr><td>Speed</td><td>Faster (QBE is optimized)</td><td>Depends on target <code>cc</code></td></tr>
+<tr><td>Optimization</td><td>QBE + <code>cc -O2</code></td><td><code>cc -O2</code> only</td></tr>
+<tr><td>Debug info</td><td>DWARF via <code>--debug</code></td><td><code>cc -g</code> via <code>--debug</code></td></tr>
+<tr><td>Dependencies</td><td>Requires QBE installed</td><td>Only needs a C compiler</td></tr>
+<tr><td>Portability</td><td>x86_64, aarch64, riscv64</td><td>Any platform with C99</td></tr>
+<tr><td>Output quality</td><td>Optimized machine code</td><td>Readable C source</td></tr>
+</table>
+
+<div class="info-box tip">
+    <strong>When to use which:</strong> Use the QBE backend (default) for development on supported platforms &mdash; it's faster and produces better optimized code. Use the C backend when targeting unsupported architectures, when QBE is not available, or when you want to inspect the generated code.
+</div>
+</section>
+
+</div><!-- .container -->
+
+<footer>
+    <div class="container">
+        mix C Backend Guide &mdash; <a href="index.html">Back to main docs</a>
+    </div>
+</footer>
+
+</body>
+</html>

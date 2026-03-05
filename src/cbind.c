@@ -22,14 +22,22 @@ typedef struct {
     bool is_float;
 } CConst;
 
+typedef struct {
+    char name[128];       // struct/typedef name (e.g., "Vector2", "Color")
+    char fields[2048];    // MIX shape fields string
+} CShape;
+
 #define MAX_FUNCS  4096
 #define MAX_CONSTS 4096
+#define MAX_SHAPES 512
 #define MAX_BUF    (16 * 1024 * 1024) // 16MB preprocessor output limit
 
 static CFunc funcs[MAX_FUNCS];
 static int func_count = 0;
 static CConst consts[MAX_CONSTS];
 static int const_count = 0;
+static CShape shapes[MAX_SHAPES];
+static int shape_count = 0;
 
 // ---- Helpers ----
 
@@ -55,6 +63,33 @@ static bool is_ident_char(char c) {
 static bool func_exists(const char *name) {
     for (int i = 0; i < func_count; i++) {
         if (strcmp(funcs[i].name, name) == 0) return true;
+    }
+    return false;
+}
+
+// Check if a type name is a known shape (parsed struct)
+static bool shape_exists(const char *name) {
+    for (int i = 0; i < shape_count; i++) {
+        if (strcmp(shapes[i].name, name) == 0) return true;
+    }
+    return false;
+}
+
+// Check if a parameter name is a MIX reserved word
+static bool is_reserved_word(const char *name) {
+    static const char *reserved[] = {
+        "if", "else", "while", "for", "in", "match", "break", "continue",
+        "done", "shape", "extern", "use", "pub", "type", "zone", "defer",
+        "unsafe", "and", "or", "not", "go", "run", "wait", "stream",
+        "yield", "shared", "repeat", "as", "then", "set", "true", "false",
+        "none", "int", "float", "bool", "byte", "str",
+        "int8", "int16", "int32", "int64",
+        "uint8", "uint16", "uint32", "uint64",
+        "float32", "float64",
+        NULL
+    };
+    for (int i = 0; reserved[i]; i++) {
+        if (strcmp(name, reserved[i]) == 0) return true;
     }
     return false;
 }
@@ -143,6 +178,11 @@ static const char *c_type_to_mix(const char *ctype) {
 
     // char (not pointer)
     if (strcmp(buf, "char") == 0) return "byte";
+
+    // Check if this is a known struct/typedef that we parsed as a shape
+    for (int i = 0; i < shape_count; i++) {
+        if (strcmp(shapes[i].name, buf) == 0) return shapes[i].name;
+    }
 
     // Unknown type — treat as opaque pointer (*byte)
     return "*byte";
@@ -251,6 +291,9 @@ static int extract_defines(const char *path, bool verbose) {
 
         // Skip internal/compiler macros (start with _ or __)
         if (name[0] == '_') { line = strtok(NULL, "\n"); continue; }
+
+        // Skip MIX reserved words (true, false, none, type, etc.)
+        if (is_reserved_word(name)) { line = strtok(NULL, "\n"); continue; }
 
         // Skip well-known system constant prefixes
         if (starts_with(name, "INT") || starts_with(name, "UINT") ||
@@ -385,8 +428,159 @@ static bool parse_one_param(const char *param_str, char *out, int idx) {
     const char *mix_type = c_type_to_mix(ptype_str);
     if (!mix_type) return false; // unknown type
 
+    // Rename reserved words by appending underscore
+    if (is_reserved_word(pname)) {
+        int pnlen = (int)strlen(pname);
+        if (pnlen < 126) {
+            pname[pnlen] = '_';
+            pname[pnlen + 1] = '\0';
+        }
+    }
+
     snprintf(out, 256, "%s: %s", pname, mix_type);
     return true;
+}
+
+// ---- Parse struct/typedef definitions into shapes ----
+
+static int parse_structs(const char *text) {
+    int added = 0;
+    const char *p = text;
+
+    while (*p) {
+        // Look for "typedef struct" pattern
+        const char *ts = strstr(p, "typedef struct");
+        if (!ts) break;
+        p = ts + 14; // skip "typedef struct"
+
+        // Skip whitespace
+        while (*p && isspace((unsigned char)*p)) p++;
+
+        // Optional struct tag name (skip it)
+        if (is_ident_char(*p)) {
+            while (*p && is_ident_char(*p)) p++;
+            while (*p && isspace((unsigned char)*p)) p++;
+        }
+
+        // Must have opening brace
+        if (*p != '{') continue;
+        p++; // skip {
+
+        // Collect everything until matching }
+        int depth = 1;
+        const char *body_start = p;
+        while (*p && depth > 0) {
+            if (*p == '{') depth++;
+            else if (*p == '}') depth--;
+            if (depth > 0) p++;
+        }
+        if (depth != 0) break;
+        const char *body_end = p;
+        p++; // skip }
+
+        // Skip whitespace to find the typedef name
+        while (*p && isspace((unsigned char)*p)) p++;
+        if (!is_ident_char(*p)) continue;
+
+        char typedef_name[128];
+        int ni = 0;
+        while (*p && is_ident_char(*p) && ni < 127) typedef_name[ni++] = *p++;
+        typedef_name[ni] = '\0';
+
+        // Skip if already recorded or if it starts with __
+        if (typedef_name[0] == '_' && typedef_name[1] == '_') continue;
+        if (shape_exists(typedef_name)) continue;
+
+        // Parse fields from the body
+        char fields[2048] = "";
+        int flen = 0;
+        const char *fp = body_start;
+        int field_count = 0;
+
+        while (fp < body_end) {
+            // Skip whitespace
+            while (fp < body_end && isspace((unsigned char)*fp)) fp++;
+            if (fp >= body_end) break;
+
+            // Skip nested structs/unions
+            if (*fp == '{') {
+                int d = 1;
+                fp++;
+                while (fp < body_end && d > 0) {
+                    if (*fp == '{') d++;
+                    else if (*fp == '}') d--;
+                    fp++;
+                }
+                continue;
+            }
+
+            // Collect one field declaration until ';'
+            char fdecl[512];
+            int fi = 0;
+            while (fp < body_end && *fp != ';' && fi < 510) {
+                if (*fp == '{') break; // nested struct
+                fdecl[fi++] = *fp++;
+            }
+            fdecl[fi] = '\0';
+            if (fp < body_end && *fp == ';') fp++;
+            trim(fdecl);
+            if (strlen(fdecl) < 2) continue;
+
+            // Strip qualifiers from the field declaration
+            strip_attributes(fdecl);
+            trim(fdecl);
+
+            // Extract field name (last ident) and type (everything before)
+            int dlen = (int)strlen(fdecl);
+            int ne = dlen - 1;
+            while (ne >= 0 && isspace((unsigned char)fdecl[ne])) ne--;
+            if (ne < 0 || !is_ident_char(fdecl[ne])) continue;
+
+            int ns = ne;
+            while (ns > 0 && is_ident_char(fdecl[ns - 1])) ns--;
+
+            // Check there's type info before the name
+            int before = ns - 1;
+            while (before >= 0 && isspace((unsigned char)fdecl[before])) before--;
+            if (before < 0) continue;
+
+            char fname[128];
+            int fnlen = ne - ns + 1;
+            memcpy(fname, fdecl + ns, fnlen);
+            fname[fnlen] = '\0';
+
+            char ftype_str[512];
+            memcpy(ftype_str, fdecl, ns);
+            ftype_str[ns] = '\0';
+            trim(ftype_str);
+
+            const char *mix_ft = c_type_to_mix(ftype_str);
+            if (!mix_ft || strlen(mix_ft) == 0) continue;
+
+            // Rename reserved words by appending underscore
+            if (is_reserved_word(fname)) {
+                int fl = (int)strlen(fname);
+                if (fl < 126) { fname[fl] = '_'; fname[fl + 1] = '\0'; }
+            }
+
+            // Add to fields string
+            if (field_count > 0) {
+                flen += snprintf(fields + flen, sizeof(fields) - flen, "\n");
+            }
+            flen += snprintf(fields + flen, sizeof(fields) - flen,
+                             "    %s: %s", fname, mix_ft);
+            field_count++;
+        }
+
+        if (field_count > 0 && shape_count < MAX_SHAPES) {
+            strncpy(shapes[shape_count].name, typedef_name, 127);
+            strncpy(shapes[shape_count].fields, fields, sizeof(shapes[shape_count].fields) - 1);
+            shape_count++;
+            added++;
+        }
+    }
+
+    return added;
 }
 
 static int parse_prototypes(const char *text) {
@@ -553,6 +747,14 @@ static void write_mix_output(FILE *out, const char *lib_name, const char *source
     fprintf(out, "// Source: %s\n", source_path);
     fprintf(out, "// Generated by: mix --bind\n\n");
 
+    // Emit shape declarations for parsed structs
+    if (shape_count > 0) {
+        fprintf(out, "// ---- Shapes ----\n\n");
+        for (int i = 0; i < shape_count; i++) {
+            fprintf(out, "shape %s\n%s\n\n", shapes[i].name, shapes[i].fields);
+        }
+    }
+
     if (func_count > 0) {
         fprintf(out, "extern \"%s\"\n", lib_name);
         for (int i = 0; i < func_count; i++) {
@@ -618,6 +820,7 @@ int cbind_generate(const char *header_path, const char *out_path,
     // Reset globals
     func_count = 0;
     const_count = 0;
+    shape_count = 0;
 
     // Derive lib name if not provided
     char derived_lib[256] = "";
@@ -668,6 +871,7 @@ int cbind_generate(const char *header_path, const char *out_path,
 
             char *text = preprocess_header(full_path, verbose);
             if (text) {
+                parse_structs(text);
                 int nf = parse_prototypes(text);
                 free(text);
                 int nc = extract_defines(full_path, verbose);
@@ -684,6 +888,7 @@ int cbind_generate(const char *header_path, const char *out_path,
             fprintf(stderr, "mix: failed to preprocess '%s'\n", header_path);
             return 1;
         }
+        parse_structs(text);
         parse_prototypes(text);
         free(text);
         extract_defines(header_path, verbose);
@@ -699,7 +904,7 @@ int cbind_generate(const char *header_path, const char *out_path,
     write_mix_output(out, lib_name, header_path);
     fclose(out);
 
-    fprintf(stderr, "mix: wrote %d functions, %d constants to %s\n",
-            func_count, const_count, out_path);
+    fprintf(stderr, "mix: wrote %d shapes, %d functions, %d constants to %s\n",
+            shape_count, func_count, const_count, out_path);
     return 0;
 }

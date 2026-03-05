@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mix -- Language Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+    --bg: #08090d; --bg2: #0f1117; --bg-card: #151820; --bg-code: #1a1e2a;
+    --border: #262d3d; --text: #e4e8f1; --text-dim: #7d849a;
+    --accent: #6cb4ff; --accent2: #5efa9e; --accent3: #c49cff; --accent4: #ffb86c;
+    --red: #ff6b6b;
+    --grad1: linear-gradient(135deg, #6cb4ff 0%, #c49cff 50%, #ff6b9d 100%);
+    --grad2: linear-gradient(135deg, #5efa9e 0%, #6cb4ff 100%);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 16px;
+}
+
+/* ── NAV ── */
+nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+    background: rgba(8, 9, 13, 0.85);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 2rem;
+    height: 60px;
+    display: flex; align-items: center; justify-content: space-between;
+}
+nav .brand {
+    font-family: 'Funnel Display', sans-serif;
+    font-size: 1.6rem; font-weight: 700;
+    background: var(--grad1); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-decoration: none;
+}
+nav .links { display: flex; gap: 1.5rem; align-items: center; flex-wrap: wrap; }
+nav .links a {
+    color: var(--text-dim); text-decoration: none; font-size: 0.85rem;
+    font-weight: 500; transition: color 0.2s;
+}
+nav .links a:hover { color: var(--accent); }
+nav .links a.active { color: var(--accent); }
+
+/* ── LAYOUT ── */
+.container { max-width: 900px; margin: 0 auto; padding: 0 2rem; }
+
+/* ── PAGE HEADER ── */
+.page-header {
+    padding-top: 100px; padding-bottom: 2rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 3rem;
+}
+.page-header h1 {
+    font-family: 'Funnel Display', sans-serif;
+    font-size: 2.4rem; font-weight: 700;
+    background: var(--grad1); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.3rem;
+}
+.page-header p {
+    color: var(--text-dim); font-size: 1.05rem;
+}
+
+/* ── SECTIONS ── */
+section { margin-bottom: 4rem; }
+h2 {
+    font-family: 'Funnel Display', sans-serif;
+    font-size: 1.6rem; font-weight: 600;
+    color: var(--text); margin-bottom: 1.2rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+}
+h2 .num {
+    color: var(--accent); font-size: 0.85rem; font-weight: 700;
+    margin-right: 0.75rem; letter-spacing: 0.05em;
+}
+h3 {
+    font-size: 1.15rem; font-weight: 600; color: var(--accent);
+    margin: 1.8rem 0 0.6rem;
+}
+h4 {
+    font-size: 1rem; font-weight: 600; color: var(--accent3);
+    margin: 1.2rem 0 0.4rem;
+}
+
+p { margin-bottom: 0.8rem; color: var(--text); }
+p + pre { margin-top: 0.4rem; }
+
+/* ── CODE ── */
+pre {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.2rem 1.4rem;
+    margin-bottom: 1.2rem;
+    overflow-x: auto;
+    position: relative;
+    font-size: 0.88rem;
+    line-height: 1.65;
+}
+pre code {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    color: var(--text);
+}
+pre .label {
+    position: absolute; top: 0.5rem; right: 0.7rem;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.65rem; font-weight: 600;
+    color: var(--text-dim); text-transform: uppercase;
+    letter-spacing: 0.08em; opacity: 0.5;
+}
+
+code:not(pre code) {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    background: var(--bg-code); border: 1px solid var(--border);
+    border-radius: 4px; padding: 0.15em 0.4em; font-size: 0.85em;
+}
+
+/* ── SYNTAX HIGHLIGHTING ── */
+.kw { color: var(--accent3); }       /* keywords */
+.fn { color: var(--accent); }        /* function names */
+.str { color: var(--accent2); }      /* strings */
+.num { color: var(--accent4); }      /* numbers */
+.cm { color: #555e75; font-style: italic; } /* comments */
+.op { color: var(--red); }           /* operators */
+.ty { color: #e3b341; }              /* type names */
+
+/* ── TABLES ── */
+table {
+    width: 100%; border-collapse: collapse;
+    margin-bottom: 1.2rem; font-size: 0.9rem;
+}
+th, td {
+    padding: 0.6rem 1rem;
+    border: 1px solid var(--border);
+    text-align: left;
+}
+th {
+    background: var(--bg-card);
+    color: var(--accent); font-weight: 600;
+    font-size: 0.8rem; text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+td { color: var(--text); }
+td code {
+    font-size: 0.82em;
+}
+
+/* ── LISTS ── */
+ul, ol { margin: 0.5rem 0 1rem 1.5rem; }
+li { margin-bottom: 0.3rem; }
+
+/* ── FOOTER ── */
+footer {
+    border-top: 1px solid var(--border);
+    padding: 2rem 0; margin-top: 4rem;
+    text-align: center; color: var(--text-dim);
+    font-size: 0.85rem;
+}
+footer a { color: var(--accent); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 700px) {
+    .container { padding: 0 1rem; }
+    nav { padding: 0 1rem; }
+    nav .links { gap: 0.8rem; }
+    nav .links a { font-size: 0.75rem; }
+    .page-header h1 { font-size: 1.8rem; }
+    h2 { font-size: 1.3rem; }
+    pre { padding: 0.8rem 1rem; font-size: 0.82rem; }
+}
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════ NAV ════════════════════════════════════════════ -->
+<nav>
+    <a href="DOCS.html" class="brand">mix</a>
+    <div class="links">
+        <a href="DOCS.html">Home</a>
+        <a href="tutorials.html">Tutorials</a>
+        <a href="#types">Types</a>
+        <a href="#variables">Variables</a>
+        <a href="#functions">Functions</a>
+        <a href="#control-flow">Control Flow</a>
+        <a href="#shapes">Shapes</a>
+        <a href="#collections">Collections</a>
+        <a href="#errors">Errors</a>
+        <a href="#modules">Modules</a>
+        <a href="#generics">Generics</a>
+        <a href="#concurrency">Concurrency</a>
+        <a href="#memory">Memory</a>
+        <a href="#interop">C Interop</a>
+        <a href="#compile-time">Compile-Time</a>
+        <a href="#builtins">Builtins</a>
+        <a href="#build">Build</a>
+    </div>
+</nav>
+
+<div class="container">
+
+<!-- ════════════════════════════════════════════ HEADER ════════════════════════════════════════════ -->
+<div class="page-header">
+    <h1>Language Reference</h1>
+    <p>Complete overview of the mix programming language -- types, syntax, standard library, and tooling.</p>
+</div>
+
+
+<!-- ════════════════════════════════════════════ 01 TYPES ════════════════════════════════════════════ -->
+<section id="types">
+<h2><span class="num">01</span>Type System</h2>
+
+<p>mix is statically typed. Every value has a known type at compile time. Types are inferred where possible, but can always be annotated explicitly.</p>
+
+<h3>Primitives</h3>
+<table>
+    <tr><th>Type</th><th>Description</th><th>Example</th></tr>
+    <tr><td><code class="ty">int</code></td><td>64-bit signed integer</td><td><code><span class="num">42</span></code></td></tr>
+    <tr><td><code class="ty">float</code></td><td>64-bit double-precision</td><td><code><span class="num">3.14</span></code></td></tr>
+    <tr><td><code class="ty">bool</code></td><td>Boolean</td><td><code><span class="kw">true</span></code>, <code><span class="kw">false</span></code></td></tr>
+    <tr><td><code class="ty">byte</code></td><td>Unsigned 8-bit</td><td><code><span class="num">0xFF</span></code></td></tr>
+    <tr><td><code class="ty">str</code></td><td>UTF-8 string</td><td><code><span class="str">"hello"</span></code></td></tr>
+</table>
+
+<h3>Sized Integers</h3>
+<table>
+    <tr><th>Signed</th><th>Unsigned</th><th>Bits</th></tr>
+    <tr><td><code class="ty">int8</code></td><td><code class="ty">uint8</code></td><td>8</td></tr>
+    <tr><td><code class="ty">int16</code></td><td><code class="ty">uint16</code></td><td>16</td></tr>
+    <tr><td><code class="ty">int32</code></td><td><code class="ty">uint32</code></td><td>32</td></tr>
+    <tr><td><code class="ty">int64</code></td><td><code class="ty">uint64</code></td><td>64</td></tr>
+</table>
+
+<h3>Sized Floats</h3>
+<table>
+    <tr><th>Type</th><th>Description</th></tr>
+    <tr><td><code class="ty">float32</code></td><td>32-bit single-precision</td></tr>
+    <tr><td><code class="ty">float64</code></td><td>64-bit double-precision (same as <code class="ty">float</code>)</td></tr>
+</table>
+
+<h3>Pointers</h3>
+<pre><code><span class="kw">let</span> p<span class="op">:</span> <span class="op">*</span><span class="ty">byte</span> <span class="op">=</span> <span class="fn">raw_alloc</span>(<span class="num">256</span>)
+<span class="kw">let</span> q<span class="op">:</span> <span class="op">*</span><span class="ty">int</span> <span class="op">=</span> <span class="op">&amp;</span>value</code><span class="label">mix</span></pre>
+
+<h3>Optionals</h3>
+<p>Append <code>?</code> to any type to make it optional. Use <code class="kw">none</code> for absent values and <code class="kw">else</code> for fallback.</p>
+<pre><code>name<span class="op">:</span> <span class="ty">str?</span> <span class="op">=</span> <span class="kw">none</span>
+
+<span class="cm">// unwrap with else</span>
+display <span class="op">=</span> name <span class="kw">else</span> <span class="str">"anonymous"</span>
+
+<span class="cm">// check before use</span>
+<span class="kw">if</span> name <span class="op">!=</span> <span class="kw">none</span> {
+    <span class="fn">print</span>(<span class="str">"Hello, {name}"</span>)
+}</code><span class="label">mix</span></pre>
+
+<h3>Collections</h3>
+<table>
+    <tr><th>Syntax</th><th>Type</th><th>Description</th></tr>
+    <tr><td><code>[<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>]</code></td><td><code>[<span class="ty">int</span>]</code></td><td>List of integers</td></tr>
+    <tr><td><code>{<span class="str">"a"</span>: <span class="num">1</span>}</code></td><td><code>{<span class="ty">str</span>: <span class="ty">int</span>}</code></td><td>Map from strings to integers</td></tr>
+    <tr><td><code><span class="kw">set</span>{<span class="str">"x"</span>, <span class="str">"y"</span>}</code></td><td><code><span class="kw">set</span>[<span class="ty">str</span>]</code></td><td>Set of strings</td></tr>
+</table>
+
+<h3>Type Aliases</h3>
+<pre><code><span class="kw">type</span> <span class="ty">Score</span> <span class="op">=</span> <span class="ty">int</span>
+<span class="kw">type</span> <span class="ty">Names</span> <span class="op">=</span> [<span class="ty">str</span>]
+<span class="kw">type</span> <span class="ty">Config</span> <span class="op">=</span> {<span class="ty">str</span>: <span class="ty">str</span>}</code><span class="label">mix</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 02 VARIABLES ════════════════════════════════════════════ -->
+<section id="variables">
+<h2><span class="num">02</span>Variables</h2>
+
+<h3>Immutable by Default</h3>
+<p>Variables are immutable unless marked with <code class="op">!</code>.</p>
+<pre><code>x <span class="op">=</span> <span class="num">42</span>           <span class="cm">// immutable -- cannot be reassigned</span>
+y<span class="op">!</span> <span class="op">=</span> <span class="num">10</span>          <span class="cm">// mutable -- can be reassigned</span>
+y<span class="op">!</span> <span class="op">=</span> <span class="num">20</span>          <span class="cm">// OK</span></code><span class="label">mix</span></pre>
+
+<p>Every mutation requires the <code class="op">!</code> marker at the point of change, not just at declaration.</p>
+
+<h3>Typed Declarations</h3>
+<pre><code>x<span class="op">:</span> <span class="ty">float</span> <span class="op">=</span> <span class="num">3.14</span>
+name<span class="op">:</span> <span class="ty">str</span> <span class="op">=</span> <span class="str">"mix"</span>
+flag<span class="op">:</span> <span class="ty">bool</span> <span class="op">=</span> <span class="kw">true</span></code><span class="label">mix</span></pre>
+
+<h3>Compound Assignment</h3>
+<pre><code>count<span class="op">!</span> <span class="op">=</span> <span class="num">0</span>
+count<span class="op">!</span> <span class="op">+=</span> <span class="num">5</span>      <span class="cm">// count is now 5</span>
+count<span class="op">!</span> <span class="op">-=</span> <span class="num">2</span>      <span class="cm">// count is now 3</span>
+count<span class="op">!</span> <span class="op">*=</span> <span class="num">4</span>      <span class="cm">// count is now 12</span>
+count<span class="op">!</span> <span class="op">/=</span> <span class="num">3</span>      <span class="cm">// count is now 4</span></code><span class="label">mix</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 03 FUNCTIONS ════════════════════════════════════════════ -->
+<section id="functions">
+<h2><span class="num">03</span>Functions</h2>
+
+<h3>Basic Declaration</h3>
+<pre><code><span class="kw">fn</span> <span class="fn">add</span>(a<span class="op">:</span> <span class="ty">int</span>, b<span class="op">:</span> <span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span> {
+    a <span class="op">+</span> b    <span class="cm">// implicit return -- last expression is the return value</span>
+}</code><span class="label">mix</span></pre>
+
+<h3>No Return Value</h3>
+<pre><code><span class="kw">fn</span> <span class="fn">greet</span>(name<span class="op">:</span> <span class="ty">str</span>) {
+    <span class="fn">print</span>(<span class="str">"Hello, {name}!"</span>)
+}</code><span class="label">mix</span></pre>
+
+<h3>Early Return with <code class="kw">done</code></h3>
+<pre><code><span class="kw">fn</span> <span class="fn">first_positive</span>(nums<span class="op">:</span> [<span class="ty">int</span>]) <span class="op">-></span> <span class="ty">int</span> {
+    <span class="kw">for</span> n <span class="kw">in</span> nums {
+        <span class="kw">if</span> n <span class="op">></span> <span class="num">0</span> {
+            <span class="kw">done</span> n
+        }
+    }
+    <span class="num">0</span>
+}</code><span class="label">mix</span></pre>
+
+<h3>Side Effects Marker <code class="op">~</code></h3>
+<p>Functions that perform I/O, use <code class="kw">fail</code>, or have other side effects must be marked with <code class="op">~</code>.</p>
+<pre><code><span class="kw">fn</span> <span class="fn">save</span><span class="op">~</span>(data<span class="op">:</span> <span class="ty">str</span>, path<span class="op">:</span> <span class="ty">str</span>) <span class="op">-></span> <span class="ty">bool</span> {
+    <span class="fn">file_write_all</span>(path, data)
+    <span class="kw">done</span> <span class="kw">true</span>
+}</code><span class="label">mix</span></pre>
+
+<h3>Mutation Marker <code class="op">!</code></h3>
+<p>Functions that mutate their arguments use the <code class="op">!</code> marker.</p>
+<pre><code><span class="kw">fn</span> <span class="fn">double_all</span><span class="op">!</span>(nums<span class="op">:</span> [<span class="ty">int</span>]) {
+    <span class="kw">for</span> i <span class="kw">in</span> <span class="num">0</span><span class="op">..</span>nums.<span class="fn">len</span> {
+        nums[i]<span class="op">!</span> <span class="op">=</span> nums[i] <span class="op">*</span> <span class="num">2</span>
+    }
+}</code><span class="label">mix</span></pre>
+
+<h3>Recursion</h3>
+<pre><code><span class="kw">fn</span> <span class="fn">factorial</span>(n<span class="op">:</span> <span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span> {
+    <span class="kw">if</span> n <span class="op"><=</span> <span class="num">1</span> {
+        <span class="kw">done</span> <span class="num">1</span>
+    }
+    n <span class="op">*</span> <span class="fn">factorial</span>(n <span class="op">-</span> <span class="num">1</span>)
+}</code><span class="label">mix</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 04 CONTROL FLOW ════════════════════════════════════════════ -->
+<section id="control-flow">
+<h2><span class="num">04</span>Control Flow</h2>
+
+<h3>if / else if / else</h3>
+<pre><code><span class="kw">if</span> x <span class="op">></span> <span class="num">100</span> {
+    <span class="fn">print</span>(<span class="str">"big"</span>)
+} <span class="kw">else if</span> x <span class="op">></span> <span class="num">10</span> {
+    <span class="fn">print</span>(<span class="str">"medium"</span>)
+} <span class="kw">else</span> {
+    <span class="fn">print</span>(<span class="str">"small"</span>)
+}</code><span class="label">mix</span></pre>
+
+<h3>while</h3>
+<pre><code>i<span class="op">!</span> <span class="op">=</span> <span class="num">0</span>
+<span class="kw">while</span> i <span class="op"><</span> <span class="num">10</span> {
+    <span class="fn">print</span>(<span class="str">"{i}"</span>)
+    i<span class="op">!</span> <span class="op">+=</span> <span class="num">1</span>
+}</code><span class="label">mix</span></pre>
+
+<h3>for Loops</h3>
+<pre><code><span class="cm">// exclusive range: 0, 1, 2, 3, 4</span>
+<span class="kw">for</span> i <span class="kw">in</span> <span class="num">0</span><span class="op">..</span><span class="num">5</span> {
+    <span class="fn">print</span>(<span class="str">"{i}"</span>)
+}
+
+<span class="cm">// inclusive range: 0, 1, 2, 3, 4, 5</span>
+<span class="kw">for</span> i <span class="kw">in</span> <span class="num">0</span><span class="op">..=</span><span class="num">5</span> {
+    <span class="fn">print</span>(<span class="str">"{i}"</span>)
+}
+
+<span class="cm">// iterate over a list</span>
+<span class="kw">for</span> item <span class="kw">in</span> items {
+    <span class="fn">print</span>(<span class="str">"{item}"</span>)
+}
+
+<span class="cm">// iterate over a map</span>
+<span class="kw">for</span> key, value <span class="kw">in</span> config {
+    <span class="fn">print</span>(<span class="str">"{key} = {value}"</span>)
+}
+
+<span class="cm">// iterate over a set</span>
+<span class="kw">for</span> item <span class="kw">in</span> names {
+    <span class="fn">print</span>(<span class="str">"{item}"</span>)
+}</code><span class="label">mix</span></pre>
+
+<h3>break and continue</h3>
+<pre><code><span class="kw">for</span> i <span class="kw">in</span> <span class="num">0</span><span class="op">..</span><span class="num">100</span> {
+    <span class="kw">if</span> i <span class="op">%</span> <span class="num">2</span> <span class="op">==</span> <span class="num">0</span> {
+        <span class="kw">continue</span>    <span class="cm">// skip even numbers</span>
+    }
+    <span class="kw">if</span> i <span class="op">></span> <span class="num">20</span> {
+        <span class="kw">break</span>       <span class="cm">// stop at 20</span>
+    }
+    <span class="fn">print</span>(<span class="str">"{i}"</span>)
+}</code><span class="label">mix</span></pre>
+
+<h3>match</h3>
+<p>Pattern matching with exhaustive checking.</p>
+<pre><code><span class="kw">match</span> command {
+    <span class="str">"start"</span> <span class="op">=></span> <span class="fn">start_server</span>()
+    <span class="str">"stop"</span>  <span class="op">=></span> <span class="fn">stop_server</span>()
+    <span class="str">"help"</span>  <span class="op">=></span> <span class="fn">show_help</span>()
+    <span class="op">_</span>       <span class="op">=></span> <span class="fn">print</span>(<span class="str">"Unknown command: {command}"</span>)
+}</code><span class="label">mix</span></pre>
+
+<h3>Match as Expression</h3>
+<p>Match arms can produce values, making match usable as an expression.</p>
+<pre><code><span class="kw">fn</span> <span class="fn">describe</span>(n<span class="op">:</span> <span class="ty">int</span>) <span class="op">-></span> <span class="ty">str</span> {
+    <span class="kw">match</span> n {
+        <span class="num">0</span>  <span class="op">=></span> <span class="str">"zero"</span>
+        <span class="num">1</span>  <span class="op">=></span> <span class="str">"one"</span>
+        <span class="op">_</span>  <span class="op">=></span> <span class="str">"many"</span>
+    }
+}</code><span class="label">mix</span></pre>
+
+<h3>Match with Destructuring</h3>
+<pre><code><span class="kw">match</span> event {
+    <span class="ty">Click</span>(x, y)     <span class="op">=></span> <span class="fn">handle_click</span>(x, y)
+    <span class="ty">KeyPress</span>(key)   <span class="op">=></span> <span class="fn">handle_key</span>(key)
+    <span class="ty">Resize</span>(w, h)    <span class="op">=></span> <span class="fn">handle_resize</span>(w, h)
+    <span class="op">_</span>               <span class="op">=></span> <span class="fn">print</span>(<span class="str">"unhandled event"</span>)
+}</code><span class="label">mix</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 05 SHAPES ════════════════════════════════════════════ -->
+<section id="shapes">
+<h2><span class="num">05</span>Shapes</h2>
+
+<p>Shapes are mix's structured data types -- similar to structs, but with built-in methods, computed fields, operator overloading, and tagged unions.</p>
+
+<h3>Declaration</h3>
+<pre><code><span class="kw">shape</span> <span class="ty">Vec2</span> {
+    x<span class="op">:</span> <span class="ty">float</span>
+    y<span class="op">:</span> <span class="ty">float</span>
+}</code><span class="label">mix</span></pre>
+
+<h3>Construction</h3>
+<pre><code><span class="cm">// named fields</span>
+pos <span class="op">=</span> <span class="ty">Vec2</span> { x<span class="op">:</span> <span class="num">3.0</span>, y<span class="op">:</span> <span class="num">4.0</span> }
+
+<span class="cm">// positional</span>
+pos <span class="op">=</span> <span class="ty">Vec2</span>(<span class="num">3.0</span>, <span class="num">4.0</span>)</code><span class="label">mix</span></pre>
+
+<h3>Methods</h3>
+<p>Methods have implicit <code>self</code>. Fields are accessed directly by name.</p>
+<pre><code><span class="kw">shape</span> <span class="ty">Vec2</span> {
+    x<span class="op">:</span> <span class="ty">float</span>
+    y<span class="op">:</span> <span class="ty">float</span>
+
+    <span class="kw">fn</span> <span class="fn">length</span>() <span class="op">-></span> <span class="ty">float</span> {
+        <span class="fn">sqrt</span>(x <span class="op">*</span> x <span class="op">+</span> y <span class="op">*</span> y)
+    }
+
+    <span class="kw">fn</span> <span class="fn">scale</span><span class="op">!</span>(factor<span class="op">:</span> <span class="ty">float</span>) {
+        x<span class="op">!</span> <span class="op">=</span> x <span class="op">*</span> factor
+        y<span class="op">!</span> <span class="op">=</span> y <span class="op">*</span> factor
+    }
+}</code><span class="label">mix</span></pre>
+
+<h3>Computed Fields</h3>
+<p>No-parens methods that look like field access.</p>
+<pre><code><span class="kw">shape</span> <span class="ty">Circle</span> {
+    radius<span class="op">:</span> <span class="ty">float</span>
+
+    <span class="kw">fn</span> <span class="fn">area</span> <span class="op">-></span> <span class="ty">float</span> {
+        <span class="num">3.14159</span> <span class="op">*</span> radius <span class="op">*</span> radius
+    }
+}
+
+c <span class="op">=</span> <span class="ty">Circle</span> { radius<span class="op">:</span> <span class="num">5.0</span> }
+<span class="fn">print</span>(<span class="str">"{c.area}"</span>)   <span class="cm">// accessed like a field</span></code><span class="label">mix</span></pre>
+
+<h3>Operator Overloading</h3>
+<pre><code><span class="kw">shape</span> <span class="ty">Vec2</span> {
+    x<span class="op">:</span> <span class="ty">float</span>
+    y<span class="op">:</span> <span class="ty">float</span>
+
+    <span class="kw">fn</span> <span class="op">+</span>(other<span class="op">:</span> <span class="ty">Vec2</span>) <span class="op">-></span> <span class="ty">Vec2</span> {
+        <span class="ty">Vec2</span>(x <span class="op">+</span> other.x, y <span class="op">+</span> other.y)
+    }
+
+    <span class="kw">fn</span> <span class="op">==</span>(other<span class="op">:</span> <span class="ty">Vec2</span>) <span class="op">-></span> <span class="ty">bool</span> {
+        x <span class="op">==</span> other.x <span class="op">&amp;&amp;</span> y <span class="op">==</span> other.y
+    }
+}
+
+a <span class="op">=</span> <span class="ty">Vec2</span>(<span class="num">1.0</span>, <span class="num">2.0</span>)
+b <span class="op">=</span> <span class="ty">Vec2</span>(<span class="num">3.0</span>, <span class="num">4.0</span>)
+c <span class="op">=</span> a <span class="op">+</span> b   <span class="cm">// Vec2(4.0, 6.0)</span></code><span class="label">mix</span></pre>
+
+<p>Overloadable operators: <code class="op">+</code> <code class="op">-</code> <code class="op">*</code> <code class="op">/</code> <code class="op">%</code> <code class="op">==</code> <code class="op">!=</code> <code class="op">&lt;</code> <code class="op">&gt;</code> <code class="op">&lt;=</code> <code class="op">&gt;=</code></p>
+
+<h3>Tagged Unions</h3>
+<pre><code><span class="kw">shape</span> <span class="ty">Expr</span> {
+    <span class="ty">Num</span>(<span class="ty">float</span>)
+    <span class="ty">Add</span>(<span class="ty">Expr</span>, <span class="ty">Expr</span>)
+    <span class="ty">Mul</span>(<span class="ty">Expr</span>, <span class="ty">Expr</span>)
+}
+
+<span class="kw">fn</span> <span class="fn">eval</span>(e<span class="op">:</span> <span class="ty">Expr</span>) <span class="op">-></span> <span class="ty">float</span> {
+    <span class="kw">match</span> e {
+        <span class="ty">Num</span>(n)    <span class="op">=></span> n
+        <span class="ty">Add</span>(a, b) <span class="op">=></span> <span class="fn">eval</span>(a) <span class="op">+</span> <span class="fn">eval</span>(b)
+        <span class="ty">Mul</span>(a, b) <span class="op">=></span> <span class="fn">eval</span>(a) <span class="op">*</span> <span class="fn">eval</span>(b)
+    }
+}</code><span class="label">mix</span></pre>
+
+<h3>Public Shapes</h3>
+<pre><code><span class="kw">pub</span> <span class="kw">shape</span> <span class="ty">Config</span> {
+    host<span class="op">:</span> <span class="ty">str</span>
+    port<span class="op">:</span> <span class="ty">int</span>
+}</code><span class="label">mix</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 06 COLLECTIONS ════════════════════════════════════════════ -->
+<section id="collections">
+<h2><span class="num">06</span>Collections</h2>
+
+<h3>Lists</h3>
+<pre><code>nums <span class="op">=</span> [<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>, <span class="num">5</span>]
+empty<span class="op">:</span> [<span class="ty">int</span>] <span class="op">=</span> []
+
+<span class="cm">// access and length</span>
+first <span class="op">=</span> nums[<span class="num">0</span>]
+count <span class="op">=</span> nums.<span class="fn">len</span>
+
+<span class="cm">// mutation</span>
+nums.<span class="fn">push!</span>(<span class="num">6</span>)
+last <span class="op">=</span> nums.<span class="fn">pop!</span>()
+nums.<span class="fn">insert!</span>(<span class="num">0</span>, <span class="num">99</span>)
+nums.<span class="fn">remove!</span>(<span class="num">0</span>)
+nums.<span class="fn">sort!</span>()
+nums.<span class="fn">reverse!</span>()
+
+<span class="cm">// query</span>
+has_three <span class="op">=</span> nums.<span class="fn">contains</span>(<span class="num">3</span>)
+idx <span class="op">=</span> nums.<span class="fn">index_of</span>(<span class="num">3</span>)
+
+<span class="cm">// transform</span>
+joined <span class="op">=</span> names.<span class="fn">join</span>(<span class="str">", "</span>)
+
+<span class="cm">// slicing</span>
+sub <span class="op">=</span> nums[<span class="num">1</span><span class="op">..</span><span class="num">3</span>]   <span class="cm">// elements at index 1, 2</span></code><span class="label">mix</span></pre>
+
+<h4>List Comprehensions</h4>
+<pre><code>squares <span class="op">=</span> [x <span class="op">*</span> x <span class="kw">for</span> x <span class="kw">in</span> nums]
+evens <span class="op">=</span> [x <span class="kw">for</span> x <span class="kw">in</span> nums <span class="kw">if</span> x <span class="op">%</span> <span class="num">2</span> <span class="op">==</span> <span class="num">0</span>]</code><span class="label">mix</span></pre>
+
+<h3>Maps</h3>
+<pre><code>ages <span class="op">=</span> {<span class="str">"alice"</span><span class="op">:</span> <span class="num">30</span>, <span class="str">"bob"</span><span class="op">:</span> <span class="num">25</span>}
+empty<span class="op">:</span> {<span class="ty">str</span><span class="op">:</span> <span class="ty">int</span>} <span class="op">=</span> {}
+
+<span class="cm">// access</span>
+age <span class="op">=</span> ages[<span class="str">"alice"</span>]
+count <span class="op">=</span> ages.<span class="fn">len</span>
+
+<span class="cm">// query</span>
+exists <span class="op">=</span> ages.<span class="fn">has</span>(<span class="str">"alice"</span>)
+
+<span class="cm">// mutation</span>
+ages.<span class="fn">remove!</span>(<span class="str">"bob"</span>)
+
+<span class="cm">// iteration</span>
+all_keys <span class="op">=</span> ages.<span class="fn">keys</span>
+all_vals <span class="op">=</span> ages.<span class="fn">values</span>
+
+<span class="kw">for</span> k, v <span class="kw">in</span> ages {
+    <span class="fn">print</span>(<span class="str">"{k} is {v}"</span>)
+}</code><span class="label">mix</span></pre>
+
+<h3>Sets</h3>
+<pre><code>tags <span class="op">=</span> <span class="kw">set</span>{<span class="str">"rust"</span>, <span class="str">"go"</span>, <span class="str">"mix"</span>}
+empty<span class="op">:</span> <span class="kw">set</span>[<span class="ty">str</span>] <span class="op">=</span> <span class="kw">set</span>{}
+
+<span class="cm">// mutation</span>
+tags.<span class="fn">add!</span>(<span class="str">"zig"</span>)
+tags.<span class="fn">remove!</span>(<span class="str">"go"</span>)
+
+<span class="cm">// query</span>
+has_mix <span class="op">=</span> tags.<span class="fn">has</span>(<span class="str">"mix"</span>)
+count <span class="op">=</span> tags.<span class="fn">len</span>
+
+<span class="cm">// set operations</span>
+a <span class="op">=</span> <span class="kw">set</span>{<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>}
+b <span class="op">=</span> <span class="kw">set</span>{<span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>}
+all <span class="op">=</span> a.<span class="fn">union</span>(b)       <span class="cm">// {1, 2, 3, 4}</span>
+common <span class="op">=</span> a.<span class="fn">intersect</span>(b) <span class="cm">// {2, 3}</span>
+diff <span class="op">=</span> a.<span class="fn">diff</span>(b)        <span class="cm">// {1}</span>
+
+<span class="cm">// iteration</span>
+items <span class="op">=</span> tags.<span class="fn">values</span>
+<span class="kw">for</span> tag <span class="kw">in</span> tags {
+    <span class="fn">print</span>(<span class="str">"{tag}"</span>)
+}</code><span class="label">mix</span></pre>
+
+<h3>Strings</h3>
+<pre><code>greeting <span class="op">=</span> <span class="str">"Hello, world!"</span>
+name <span class="op">=</span> <span class="str">"mix"</span>
+
+<span class="cm">// interpolation</span>
+msg <span class="op">=</span> <span class="str">"Welcome to {name}!"</span>
+
+<span class="cm">// concatenation</span>
+full <span class="op">=</span> <span class="str">"Hello"</span> <span class="op">+</span> <span class="str">" "</span> <span class="op">+</span> <span class="str">"world"</span>
+
+<span class="cm">// properties and methods</span>
+length <span class="op">=</span> greeting.<span class="fn">len</span>
+upper <span class="op">=</span> greeting.<span class="fn">upper</span>()
+lower <span class="op">=</span> greeting.<span class="fn">lower</span>()
+trimmed <span class="op">=</span> <span class="str">"  hi  "</span>.<span class="fn">trim</span>()
+
+<span class="cm">// search and test</span>
+parts <span class="op">=</span> <span class="str">"a,b,c"</span>.<span class="fn">split</span>(<span class="str">","</span>)
+has <span class="op">=</span> greeting.<span class="fn">contains</span>(<span class="str">"world"</span>)
+starts <span class="op">=</span> greeting.<span class="fn">starts_with</span>(<span class="str">"Hello"</span>)
+ends <span class="op">=</span> greeting.<span class="fn">ends_with</span>(<span class="str">"!"</span>)
+idx <span class="op">=</span> greeting.<span class="fn">index_of</span>(<span class="str">"world"</span>)
+
+<span class="cm">// transform</span>
+replaced <span class="op">=</span> greeting.<span class="fn">replace</span>(<span class="str">"world"</span>, <span class="str">"mix"</span>)
+ch <span class="op">=</span> greeting.<span class="fn">char_at</span>(<span class="num">0</span>)
+sub <span class="op">=</span> greeting.<span class="fn">slice</span>(<span class="num">0</span>, <span class="num">5</span>)
+rep <span class="op">=</span> <span class="str">"ha"</span>.<span class="fn">repeat</span>(<span class="num">3</span>)        <span class="cm">// "hahaha"</span>
+rev <span class="op">=</span> <span class="str">"abc"</span>.<span class="fn">reverse</span>()      <span class="cm">// "cba"</span>
+
+<span class="cm">// conversion</span>
+s <span class="op">=</span> <span class="fn">to_string</span>(<span class="num">42</span>)         <span class="cm">// "42"</span></code><span class="label">mix</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 07 ERROR HANDLING ════════════════════════════════════════════ -->
+<section id="errors">
+<h2><span class="num">07</span>Error Handling</h2>
+
+<p>mix uses a Result-based error model. Functions that can fail are automatically wrapped in a Result type.</p>
+
+<h3>Signaling Failure</h3>
+<pre><code><span class="kw">fn</span> <span class="fn">parse_port</span><span class="op">~</span>(s<span class="op">:</span> <span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span> {
+    <span class="kw">if</span> s.<span class="fn">len</span> <span class="op">==</span> <span class="num">0</span> {
+        <span class="kw">fail</span> <span class="str">"empty string"</span>
+    }
+    <span class="cm">// ... parsing logic ...</span>
+    <span class="kw">done</span> port
+}</code><span class="label">mix</span></pre>
+
+<h3>Result Auto-Wrapping</h3>
+<p>When a function has <code class="op">~</code>, a non-void return type, and its body contains <code class="kw">fail</code> or <code class="op">?</code>, the return type is automatically wrapped in <code class="ty">Result</code>. Callers receive either a success value or an error.</p>
+
+<h3>Handling Errors with <code class="kw">else</code></h3>
+<pre><code><span class="cm">// provide a fallback value on failure</span>
+port <span class="op">=</span> <span class="fn">parse_port</span>(<span class="str">"8080"</span>) <span class="kw">else</span> <span class="num">3000</span>
+
+<span class="cm">// always succeeds -- port is 8080 or 3000</span>
+<span class="fn">print</span>(<span class="str">"Using port {port}"</span>)</code><span class="label">mix</span></pre>
+
+<h3>Error Propagation with <code class="op">?</code></h3>
+<p>The <code class="op">?</code> operator propagates errors to the caller automatically.</p>
+<pre><code><span class="kw">fn</span> <span class="fn">load_config</span><span class="op">~</span>(path<span class="op">:</span> <span class="ty">str</span>) <span class="op">-></span> <span class="ty">Config</span> {
+    content <span class="op">=</span> <span class="fn">file_read_all</span>(path)<span class="op">?</span>
+    config <span class="op">=</span> <span class="fn">parse_config</span>(content)<span class="op">?</span>
+    <span class="kw">done</span> config
+}</code><span class="label">mix</span></pre>
+
+<h3>Early Success with <code class="kw">done</code></h3>
+<pre><code><span class="kw">fn</span> <span class="fn">find_user</span><span class="op">~</span>(id<span class="op">:</span> <span class="ty">int</span>) <span class="op">-></span> <span class="ty">User</span> {
+    <span class="kw">for</span> user <span class="kw">in</span> users {
+        <span class="kw">if</span> user.id <span class="op">==</span> id {
+            <span class="kw">done</span> user
+        }
+    }
+    <span class="kw">fail</span> <span class="str">"user not found: {id}"</span>
+}</code><span class="label">mix</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 08 MODULES ════════════════════════════════════════════ -->
+<section id="modules">
+<h2><span class="num">08</span>Modules &amp; Standard Library</h2>
+
+<h3>Importing Modules</h3>
+<pre><code><span class="kw">use</span> std.math
+<span class="kw">use</span> std.string
+<span class="kw">use</span> std.collections</code><span class="label">mix</span></pre>
+
+<h3>Exporting with <code class="kw">pub</code></h3>
+<pre><code><span class="cm">// in my_module.mix</span>
+<span class="kw">pub</span> <span class="kw">fn</span> <span class="fn">helper</span>(x<span class="op">:</span> <span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span> {
+    x <span class="op">*</span> <span class="num">2</span>
+}
+
+<span class="kw">pub</span> <span class="kw">shape</span> <span class="ty">Widget</span> {
+    name<span class="op">:</span> <span class="ty">str</span>
+}</code><span class="label">mix</span></pre>
+
+<h3>std.math</h3>
+<table>
+    <tr><th>Function</th><th>Description</th></tr>
+    <tr><td><code><span class="fn">PI</span>()</code></td><td>Returns pi (3.14159...)</td></tr>
+    <tr><td><code><span class="fn">E</span>()</code></td><td>Returns Euler's number (2.71828...)</td></tr>
+    <tr><td><code><span class="fn">TAU</span>()</code></td><td>Returns tau (6.28318...)</td></tr>
+    <tr><td><code><span class="fn">deg_to_rad</span>(d)</code></td><td>Degrees to radians</td></tr>
+    <tr><td><code><span class="fn">rad_to_deg</span>(r)</code></td><td>Radians to degrees</td></tr>
+    <tr><td><code><span class="fn">hypot</span>(a, b)</code></td><td>Hypotenuse length</td></tr>
+    <tr><td><code><span class="fn">sign</span>(x)</code></td><td>Sign of x (-1, 0, or 1)</td></tr>
+    <tr><td><code><span class="fn">fmod</span>(a, b)</code></td><td>Floating-point modulo</td></tr>
+</table>
+
+<h3>std.string</h3>
+<table>
+    <tr><th>Function</th><th>Description</th></tr>
+    <tr><td><code><span class="fn">is_empty</span>(s)</code></td><td>True if string is empty</td></tr>
+    <tr><td><code><span class="fn">capitalize</span>(s)</code></td><td>Capitalize first character</td></tr>
+    <tr><td><code><span class="fn">reverse</span>(s)</code></td><td>Reverse a string</td></tr>
+    <tr><td><code><span class="fn">count</span>(s, sub)</code></td><td>Count occurrences of substring</td></tr>
+    <tr><td><code><span class="fn">pad_left</span>(s, n, ch)</code></td><td>Pad string on the left</td></tr>
+    <tr><td><code><span class="fn">pad_right</span>(s, n, ch)</code></td><td>Pad string on the right</td></tr>
+</table>
+
+<h3>std.collections</h3>
+
+<h4>Stack</h4>
+<pre><code><span class="kw">use</span> std.collections
+
+stack<span class="op">!</span> <span class="op">=</span> <span class="ty">Stack</span>()
+stack.<span class="fn">push!</span>(<span class="num">1</span>)
+stack.<span class="fn">push!</span>(<span class="num">2</span>)
+top <span class="op">=</span> stack.<span class="fn">peek</span>()      <span class="cm">// 2</span>
+val <span class="op">=</span> stack.<span class="fn">pop!</span>()      <span class="cm">// 2</span>
+n <span class="op">=</span> stack.<span class="fn">size</span>          <span class="cm">// 1</span>
+empty <span class="op">=</span> stack.<span class="fn">is_empty</span>  <span class="cm">// false</span></code><span class="label">mix</span></pre>
+
+<h4>Queue</h4>
+<pre><code><span class="kw">use</span> std.collections
+
+q<span class="op">!</span> <span class="op">=</span> <span class="ty">Queue</span>()
+q.<span class="fn">enqueue!</span>(<span class="str">"first"</span>)
+q.<span class="fn">enqueue!</span>(<span class="str">"second"</span>)
+front <span class="op">=</span> q.<span class="fn">peek</span>()        <span class="cm">// "first"</span>
+val <span class="op">=</span> q.<span class="fn">dequeue!</span>()      <span class="cm">// "first"</span>
+n <span class="op">=</span> q.<span class="fn">size</span>              <span class="cm">// 1</span>
+empty <span class="op">=</span> q.<span class="fn">is_empty</span>      <span class="cm">// false</span></code><span class="label">mix</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 09 GENERICS ════════════════════════════════════════════ -->
+<section id="generics">
+<h2><span class="num">09</span>Generics</h2>
+
+<h3>Generic Functions</h3>
+<pre><code><span class="kw">fn</span> <span class="fn">identity</span><span class="op">@</span><span class="ty">T</span>(x<span class="op">:</span> <span class="ty">T</span>) <span class="op">-></span> <span class="ty">T</span> {
+    x
+}
+
+<span class="kw">fn</span> <span class="fn">swap</span><span class="op">@</span><span class="ty">T</span>(a<span class="op">:</span> <span class="ty">T</span>, b<span class="op">:</span> <span class="ty">T</span>) <span class="op">-></span> (<span class="ty">T</span>, <span class="ty">T</span>) {
+    (b, a)
+}</code><span class="label">mix</span></pre>
+
+<h3>Multiple Type Parameters</h3>
+<pre><code><span class="kw">fn</span> <span class="fn">map_pair</span><span class="op">@</span><span class="ty">T</span>,<span class="ty">K</span>(pair<span class="op">:</span> (<span class="ty">T</span>, <span class="ty">T</span>), f<span class="op">:</span> <span class="kw">fn</span>(<span class="ty">T</span>) <span class="op">-></span> <span class="ty">K</span>) <span class="op">-></span> (<span class="ty">K</span>, <span class="ty">K</span>) {
+    (<span class="fn">f</span>(pair.<span class="num">0</span>), <span class="fn">f</span>(pair.<span class="num">1</span>))
+}</code><span class="label">mix</span></pre>
+
+<h3>Constraints</h3>
+<pre><code><span class="kw">fn</span> <span class="fn">find</span><span class="op">@</span><span class="ty">T</span> <span class="kw">has</span> <span class="op">==</span>(items<span class="op">:</span> [<span class="ty">T</span>], target<span class="op">:</span> <span class="ty">T</span>) <span class="op">-></span> <span class="ty">int</span> {
+    <span class="kw">for</span> i <span class="kw">in</span> <span class="num">0</span><span class="op">..</span>items.<span class="fn">len</span> {
+        <span class="kw">if</span> items[i] <span class="op">==</span> target {
+            <span class="kw">done</span> i
+        }
+    }
+    <span class="op">-</span><span class="num">1</span>
+}</code><span class="label">mix</span></pre>
+
+<h3>Generic Shapes</h3>
+<pre><code><span class="kw">shape</span> <span class="ty">Pair</span><span class="op">@</span><span class="ty">T</span> {
+    first<span class="op">:</span> <span class="ty">T</span>
+    second<span class="op">:</span> <span class="ty">T</span>
+
+    <span class="kw">fn</span> <span class="fn">swap</span>() <span class="op">-></span> <span class="ty">Pair</span><span class="op">@</span><span class="ty">T</span> {
+        <span class="ty">Pair</span>(second, first)
+    }
+}
+
+p <span class="op">=</span> <span class="ty">Pair</span>(<span class="num">1</span>, <span class="num">2</span>)
+q <span class="op">=</span> p.<span class="fn">swap</span>()   <span class="cm">// Pair(2, 1)</span></code><span class="label">mix</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 10 CONCURRENCY ════════════════════════════════════════════ -->
+<section id="concurrency">
+<h2><span class="num">10</span>Concurrency</h2>
+
+<h3>Shared State</h3>
+<p>The <code class="kw">shared</code> keyword creates a thread-safe value that can be read and updated atomically.</p>
+<pre><code>counter <span class="op">=</span> <span class="kw">shared</span> <span class="ty">int</span>(<span class="num">0</span>)
+
+<span class="cm">// read the current value</span>
+current <span class="op">=</span> counter.<span class="fn">read</span>()
+
+<span class="cm">// update atomically</span>
+counter.<span class="fn">update!</span>(<span class="kw">fn</span>(n) { n <span class="op">+</span> <span class="num">1</span> })</code><span class="label">mix</span></pre>
+
+<h3>Spawning Tasks</h3>
+<pre><code><span class="kw">fn</span> <span class="fn">compute</span>(x<span class="op">:</span> <span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span> {
+    x <span class="op">*</span> x
+}
+
+task <span class="op">=</span> <span class="kw">go</span> <span class="fn">compute</span>(<span class="num">42</span>)
+result <span class="op">=</span> <span class="kw">wait</span> task   <span class="cm">// blocks until done, returns 1764</span></code><span class="label">mix</span></pre>
+
+<h3>Parallel Work</h3>
+<pre><code>t1 <span class="op">=</span> <span class="kw">go</span> <span class="fn">fetch_users</span>()
+t2 <span class="op">=</span> <span class="kw">go</span> <span class="fn">fetch_posts</span>()
+t3 <span class="op">=</span> <span class="kw">go</span> <span class="fn">fetch_comments</span>()
+
+users <span class="op">=</span> <span class="kw">wait</span> t1
+posts <span class="op">=</span> <span class="kw">wait</span> t2
+comments <span class="op">=</span> <span class="kw">wait</span> t3</code><span class="label">mix</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 11 MEMORY ════════════════════════════════════════════ -->
+<section id="memory">
+<h2><span class="num">11</span>Memory &amp; Safety</h2>
+
+<h3>Unsafe Blocks</h3>
+<p>Low-level operations like pointer dereferencing and arithmetic require an <code class="kw">unsafe</code> block.</p>
+<pre><code><span class="kw">unsafe</span> {
+    ptr<span class="op">:</span> <span class="op">*</span><span class="ty">int</span> <span class="op">=</span> <span class="fn">raw_alloc</span>(<span class="num">8</span>)
+    <span class="op">*</span>ptr <span class="op">=</span> <span class="num">42</span>
+    val <span class="op">=</span> <span class="op">*</span>ptr
+    ptr <span class="op">=</span> ptr <span class="op">+</span> <span class="num">1</span>   <span class="cm">// pointer arithmetic</span>
+}</code><span class="label">mix</span></pre>
+
+<h3>Zones</h3>
+<p>Zone-based memory management for grouping allocations.</p>
+<pre><code><span class="kw">zone</span> {
+    <span class="cm">// all allocations in this block are grouped</span>
+    data <span class="op">=</span> <span class="fn">process</span>(input)
+    result <span class="op">=</span> <span class="fn">transform</span>(data)
+}  <span class="cm">// memory freed here</span>
+
+<span class="cm">// named zones</span>
+<span class="kw">zone</span><span class="op">:</span>render {
+    frame <span class="op">=</span> <span class="fn">build_frame</span>()
+    <span class="fn">draw</span>(frame)
+}</code><span class="label">mix</span></pre>
+
+<h3>Defer</h3>
+<p>Deferred statements run in LIFO order when the enclosing scope exits.</p>
+<pre><code><span class="kw">fn</span> <span class="fn">process_file</span><span class="op">~</span>(path<span class="op">:</span> <span class="ty">str</span>) {
+    handle <span class="op">=</span> <span class="fn">file_open</span>(path)
+    <span class="kw">defer</span> <span class="fn">file_close</span>(handle)
+
+    <span class="cm">// work with file...</span>
+    <span class="cm">// file_close is called automatically on exit</span>
+}</code><span class="label">mix</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 12 C INTEROP ════════════════════════════════════════════ -->
+<section id="interop">
+<h2><span class="num">12</span>C Interop</h2>
+
+<h3>External Declarations</h3>
+<pre><code><span class="kw">extern</span> <span class="str">"SDL2"</span> {
+    <span class="kw">fn</span> <span class="fn">SDL_Init</span>(flags<span class="op">:</span> <span class="ty">uint32</span>) <span class="op">-></span> <span class="ty">int</span>
+    <span class="kw">fn</span> <span class="fn">SDL_Quit</span>()
+    <span class="kw">fn</span> <span class="fn">SDL_CreateWindow</span>(
+        title<span class="op">:</span> <span class="ty">str</span>,
+        x<span class="op">:</span> <span class="ty">int</span>, y<span class="op">:</span> <span class="ty">int</span>,
+        w<span class="op">:</span> <span class="ty">int</span>, h<span class="op">:</span> <span class="ty">int</span>,
+        flags<span class="op">:</span> <span class="ty">uint32</span>
+    ) <span class="op">-></span> <span class="op">*</span><span class="ty">byte</span>
+}</code><span class="label">mix</span></pre>
+
+<h3>Type Mapping</h3>
+<table>
+    <tr><th>C Type</th><th>mix Type</th></tr>
+    <tr><td><code>int</code>, <code>int32_t</code></td><td><code class="ty">int32</code></td></tr>
+    <tr><td><code>long</code>, <code>int64_t</code></td><td><code class="ty">int64</code></td></tr>
+    <tr><td><code>float</code></td><td><code class="ty">float32</code></td></tr>
+    <tr><td><code>double</code></td><td><code class="ty">float64</code></td></tr>
+    <tr><td><code>uint8_t</code></td><td><code class="ty">uint8</code> / <code class="ty">byte</code></td></tr>
+    <tr><td><code>uint32_t</code></td><td><code class="ty">uint32</code></td></tr>
+    <tr><td><code>char*</code></td><td><code class="ty">str</code> / <code class="op">*</code><code class="ty">byte</code></td></tr>
+    <tr><td><code>void*</code></td><td><code class="op">*</code><code class="ty">byte</code></td></tr>
+    <tr><td><code>bool</code></td><td><code class="ty">bool</code></td></tr>
+</table>
+
+<h3>Binding Generation</h3>
+<p>Use the <code>--bind</code> flag to auto-generate mix bindings from a C header.</p>
+<pre><code><span class="cm"># generate bindings for a C library</span>
+mix --bind raylib.h</code><span class="label">shell</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 13 COMPILE-TIME ════════════════════════════════════════════ -->
+<section id="compile-time">
+<h2><span class="num">13</span>Compile-Time Features</h2>
+
+<h3>Compile-Time Constants</h3>
+<pre><code><span class="kw">@const</span> MAX_SIZE <span class="op">=</span> <span class="num">1024</span>
+<span class="kw">@const</span> VERSION <span class="op">=</span> <span class="str">"1.0.0"</span></code><span class="label">mix</span></pre>
+
+<h3>Platform Detection</h3>
+<pre><code><span class="kw">if</span> <span class="kw">@os</span> <span class="op">==</span> <span class="str">"macos"</span> {
+    <span class="fn">print</span>(<span class="str">"Running on macOS"</span>)
+} <span class="kw">else if</span> <span class="kw">@os</span> <span class="op">==</span> <span class="str">"linux"</span> {
+    <span class="fn">print</span>(<span class="str">"Running on Linux"</span>)
+}
+
+<span class="kw">if</span> <span class="kw">@arch</span> <span class="op">==</span> <span class="str">"aarch64"</span> {
+    <span class="fn">print</span>(<span class="str">"ARM 64-bit"</span>)
+} <span class="kw">else if</span> <span class="kw">@arch</span> <span class="op">==</span> <span class="str">"x86_64"</span> {
+    <span class="fn">print</span>(<span class="str">"x86 64-bit"</span>)
+}</code><span class="label">mix</span></pre>
+
+<h3>Debug Mode</h3>
+<pre><code><span class="kw">if</span> <span class="kw">@debug</span> {
+    <span class="fn">print</span>(<span class="str">"Debug build -- extra checks enabled"</span>)
+}</code><span class="label">mix</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 14 BUILTINS ════════════════════════════════════════════ -->
+<section id="builtins">
+<h2><span class="num">14</span>Built-in Functions</h2>
+
+<h3>OS &amp; I/O</h3>
+<table>
+    <tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+    <tr><td><code><span class="fn">print</span></code></td><td><code>(<span class="ty">str</span>)</code></td><td>Print to stdout with newline</td></tr>
+    <tr><td><code><span class="fn">shell</span></code></td><td><code>(<span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span></code></td><td>Run shell command, return exit code</td></tr>
+    <tr><td><code><span class="fn">shell_output</span></code></td><td><code>(<span class="ty">str</span>) <span class="op">-></span> <span class="ty">str</span></code></td><td>Run command, capture stdout</td></tr>
+    <tr><td><code><span class="fn">file_exists</span></code></td><td><code>(<span class="ty">str</span>) <span class="op">-></span> <span class="ty">bool</span></code></td><td>Check if file exists</td></tr>
+    <tr><td><code><span class="fn">file_read_all</span></code></td><td><code>(<span class="ty">str</span>) <span class="op">-></span> <span class="ty">str</span></code></td><td>Read entire file contents</td></tr>
+    <tr><td><code><span class="fn">file_write_all</span></code></td><td><code>(<span class="ty">str</span>, <span class="ty">str</span>)</code></td><td>Write string to file (overwrite)</td></tr>
+    <tr><td><code><span class="fn">file_open</span></code></td><td><code>(<span class="ty">str</span>, <span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span></code></td><td>Open file with mode, return handle</td></tr>
+    <tr><td><code><span class="fn">file_write</span></code></td><td><code>(<span class="ty">int</span>, <span class="ty">str</span>)</code></td><td>Write to file handle</td></tr>
+    <tr><td><code><span class="fn">file_close</span></code></td><td><code>(<span class="ty">int</span>)</code></td><td>Close file handle</td></tr>
+    <tr><td><code><span class="fn">list_dir</span></code></td><td><code>(<span class="ty">str</span>) <span class="op">-></span> [<span class="ty">str</span>]</code></td><td>List directory entries</td></tr>
+    <tr><td><code><span class="fn">env</span></code></td><td><code>(<span class="ty">str</span>) <span class="op">-></span> <span class="ty">str</span></code></td><td>Read environment variable</td></tr>
+    <tr><td><code><span class="fn">exit</span></code></td><td><code>(<span class="ty">int</span>)</code></td><td>Exit process with code</td></tr>
+    <tr><td><code><span class="fn">getcwd</span></code></td><td><code>() <span class="op">-></span> <span class="ty">str</span></code></td><td>Current working directory</td></tr>
+    <tr><td><code><span class="fn">mkdir</span></code></td><td><code>(<span class="ty">str</span>) <span class="op">-></span> <span class="ty">bool</span></code></td><td>Recursive mkdir (like <code>mkdir -p</code>)</td></tr>
+    <tr><td><code><span class="fn">args</span></code></td><td><code>() <span class="op">-></span> [<span class="ty">str</span>]</code></td><td>Command-line arguments</td></tr>
+</table>
+
+<h3>Math</h3>
+<table>
+    <tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+    <tr><td><code><span class="fn">sqrt</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Square root</td></tr>
+    <tr><td><code><span class="fn">abs</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Absolute value</td></tr>
+    <tr><td><code><span class="fn">floor</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Floor</td></tr>
+    <tr><td><code><span class="fn">ceil</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Ceiling</td></tr>
+    <tr><td><code><span class="fn">round</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Round to nearest</td></tr>
+    <tr><td><code><span class="fn">pow</span></code></td><td><code>(<span class="ty">float</span>, <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Exponentiation</td></tr>
+    <tr><td><code><span class="fn">min</span></code></td><td><code>(<span class="ty">float</span>, <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Minimum</td></tr>
+    <tr><td><code><span class="fn">max</span></code></td><td><code>(<span class="ty">float</span>, <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Maximum</td></tr>
+    <tr><td><code><span class="fn">sin</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Sine</td></tr>
+    <tr><td><code><span class="fn">cos</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Cosine</td></tr>
+    <tr><td><code><span class="fn">tan</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Tangent</td></tr>
+    <tr><td><code><span class="fn">asin</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Arc sine</td></tr>
+    <tr><td><code><span class="fn">acos</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Arc cosine</td></tr>
+    <tr><td><code><span class="fn">atan2</span></code></td><td><code>(<span class="ty">float</span>, <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Two-argument arc tangent</td></tr>
+    <tr><td><code><span class="fn">log</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Natural logarithm</td></tr>
+    <tr><td><code><span class="fn">clamp</span></code></td><td><code>(<span class="ty">float</span>, <span class="ty">float</span>, <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Clamp value between min and max</td></tr>
+    <tr><td><code><span class="fn">lerp</span></code></td><td><code>(<span class="ty">float</span>, <span class="ty">float</span>, <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Linear interpolation</td></tr>
+</table>
+
+<h3>Conversion &amp; Utility</h3>
+<table>
+    <tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+    <tr><td><code><span class="fn">to_string</span></code></td><td><code>(<span class="ty">any</span>) <span class="op">-></span> <span class="ty">str</span></code></td><td>Convert value to string</td></tr>
+    <tr><td><code><span class="fn">str_reverse</span></code></td><td><code>(<span class="ty">str</span>) <span class="op">-></span> <span class="ty">str</span></code></td><td>Reverse a string</td></tr>
+    <tr><td><code><span class="fn">str_count</span></code></td><td><code>(<span class="ty">str</span>, <span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span></code></td><td>Count substring occurrences</td></tr>
+</table>
+</section>
+
+
+<!-- ════════════════════════════════════════════ 15 BUILD ════════════════════════════════════════════ -->
+<section id="build">
+<h2><span class="num">15</span>Build System</h2>
+
+<h3>CLI Commands</h3>
+<table>
+    <tr><th>Command</th><th>Description</th></tr>
+    <tr><td><code>mix build game.mix</code></td><td>Compile to executable <code>game</code></td></tr>
+    <tr><td><code>mix run game.mix</code></td><td>Compile and execute</td></tr>
+    <tr><td><code>mix build -o myapp game.mix</code></td><td>Compile with custom output name</td></tr>
+    <tr><td><code>mix build</code></td><td>Auto-discover and build (looks for <code>build.mix</code>)</td></tr>
+    <tr><td><code>mix run</code></td><td>Auto-discover, build, and run</td></tr>
+</table>
+
+<h3>Project Shape</h3>
+<p>Define build configuration using the built-in <code class="ty">Project</code> shape in a <code>build.mix</code> file.</p>
+<pre><code><span class="kw">fn</span> <span class="fn">main</span><span class="op">~</span>() {
+    project <span class="op">=</span> <span class="ty">Project</span> {
+        name<span class="op">:</span>          <span class="str">"my_app"</span>
+        entry<span class="op">:</span>         <span class="str">"src/main.mix"</span>
+        output<span class="op">:</span>        <span class="str">"build/my_app"</span>
+        libs<span class="op">:</span>          [<span class="str">"SDL2"</span>, <span class="str">"SDL2_image"</span>]
+        lib_paths<span class="op">:</span>     [<span class="str">"/opt/homebrew/lib"</span>]
+        include_paths<span class="op">:</span> [<span class="str">"/opt/homebrew/include"</span>]
+        flags<span class="op">:</span>         [<span class="str">"-O2"</span>]
+        debug<span class="op">:</span>         <span class="kw">false</span>
+    }
+
+    project.<span class="fn">build</span>()
+}</code><span class="label">mix</span></pre>
+
+<h3>Project Fields</h3>
+<table>
+    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    <tr><td><code>name</code></td><td><code class="ty">str</code></td><td>Project name</td></tr>
+    <tr><td><code>entry</code></td><td><code class="ty">str</code></td><td>Entry point source file</td></tr>
+    <tr><td><code>output</code></td><td><code class="ty">str</code></td><td>Output binary path</td></tr>
+    <tr><td><code>libs</code></td><td><code>[<span class="ty">str</span>]</code></td><td>Libraries to link (<code>-l</code>)</td></tr>
+    <tr><td><code>lib_paths</code></td><td><code>[<span class="ty">str</span>]</code></td><td>Library search paths (<code>-L</code>)</td></tr>
+    <tr><td><code>include_paths</code></td><td><code>[<span class="ty">str</span>]</code></td><td>Include search paths (<code>-I</code>)</td></tr>
+    <tr><td><code>flags</code></td><td><code>[<span class="ty">str</span>]</code></td><td>Additional compiler flags</td></tr>
+    <tr><td><code>debug</code></td><td><code class="ty">bool</code></td><td>Enable debug mode</td></tr>
+</table>
+
+<h3>Build Script Example</h3>
+<p>Build scripts are regular mix programs. You can use any language feature -- conditionals, loops, OS builtins -- to create custom build logic.</p>
+<pre><code><span class="kw">fn</span> <span class="fn">main</span><span class="op">~</span>() {
+    <span class="cm">// clean build directory</span>
+    <span class="kw">if</span> <span class="fn">file_exists</span>(<span class="str">"build"</span>) {
+        <span class="fn">shell</span>(<span class="str">"rm -rf build"</span>)
+    }
+    <span class="fn">mkdir</span>(<span class="str">"build"</span>)
+
+    <span class="cm">// detect platform-specific libs</span>
+    libs<span class="op">!</span> <span class="op">=</span> [<span class="str">"SDL2"</span>]
+    <span class="kw">if</span> <span class="kw">@os</span> <span class="op">==</span> <span class="str">"linux"</span> {
+        libs.<span class="fn">push!</span>(<span class="str">"GL"</span>)
+    } <span class="kw">else</span> {
+        libs.<span class="fn">push!</span>(<span class="str">"OpenGL"</span>)
+    }
+
+    project <span class="op">=</span> <span class="ty">Project</span> {
+        name<span class="op">:</span>   <span class="str">"game"</span>
+        entry<span class="op">:</span>  <span class="str">"src/main.mix"</span>
+        output<span class="op">:</span> <span class="str">"build/game"</span>
+        libs<span class="op">:</span>   libs
+        debug<span class="op">:</span>  <span class="kw">true</span>
+    }
+
+    project.<span class="fn">build</span>()
+    <span class="fn">print</span>(<span class="str">"Build complete!"</span>)
+}</code><span class="label">mix</span></pre>
+</section>
+
+
+</div><!-- .container -->
+
+<!-- ════════════════════════════════════════════ FOOTER ════════════════════════════════════════════ -->
+<footer>
+    <div class="container">
+        mix Language Reference &mdash; <a href="DOCS.html">Back to main docs</a>
+    </div>
+</footer>
+
+</body>
+</html>

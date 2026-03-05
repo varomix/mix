@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mix -- Tutorials</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&display=swap" rel="stylesheet">
+<style>
+:root {
+    --bg: #08090d; --bg2: #0f1117; --bg-card: #151820; --bg-code: #1a1e2a;
+    --border: #262d3d; --text: #e4e8f1; --text-dim: #7d849a;
+    --accent: #6cb4ff; --accent2: #5efa9e; --accent3: #c49cff; --accent4: #ffb86c;
+    --red: #ff6b6b;
+    --grad1: linear-gradient(135deg, #6cb4ff 0%, #c49cff 50%, #ff6b9d 100%);
+    --grad2: linear-gradient(135deg, #5efa9e 0%, #6cb4ff 100%);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.75;
+    font-size: 16px;
+    overflow-x: hidden;
+}
+::selection { background: #6cb4ff44; }
+
+/* ---- NAV BAR ---- */
+.topnav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    background: #08090dee;
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    height: 52px;
+    font-size: 14px;
+}
+.topnav .brand {
+    font-family: 'Funnel Display', sans-serif;
+    font-weight: 800;
+    font-size: 20px;
+    background: var(--grad1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-right: 32px;
+}
+.topnav a {
+    color: var(--text-dim);
+    text-decoration: none;
+    margin: 0 12px;
+    transition: color 0.2s;
+}
+.topnav a:hover { color: var(--accent); }
+
+/* ---- PAGE HEADER ---- */
+.page-header {
+    padding: 100px 24px 48px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+}
+.page-header::before {
+    content: '';
+    position: absolute;
+    top: -100px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, #6cb4ff12 0%, #c49cff08 40%, transparent 70%);
+    pointer-events: none;
+}
+.page-header h1 {
+    font-family: 'Funnel Display', sans-serif;
+    font-size: 56px;
+    font-weight: 800;
+    letter-spacing: -2px;
+    background: var(--grad1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    position: relative;
+    z-index: 1;
+}
+.page-header .subtitle {
+    font-size: 20px;
+    color: var(--text-dim);
+    font-style: italic;
+    margin-top: 8px;
+    position: relative;
+    z-index: 1;
+}
+
+/* ---- CONTAINER ---- */
+.container { max-width: 900px; margin: 0 auto; padding: 0 24px; }
+
+/* ---- SECTIONS ---- */
+section {
+    padding: 80px 0;
+    border-bottom: 1px solid var(--border);
+}
+section:last-of-type { border-bottom: none; }
+
+h2 {
+    font-size: 40px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    margin-bottom: 12px;
+}
+h2 .num {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--accent);
+    display: block;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+h3 {
+    font-size: 22px;
+    font-weight: 700;
+    margin: 36px 0 12px;
+    color: var(--text);
+}
+h4 {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 24px 0 8px;
+    color: var(--accent4);
+}
+p { margin-bottom: 16px; color: var(--text); }
+.dim { color: var(--text-dim); }
+
+/* ---- CODE ---- */
+code {
+    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace;
+    background: var(--bg-code);
+    padding: 2px 8px;
+    border-radius: 5px;
+    font-size: 14px;
+    border: 1px solid var(--border);
+}
+pre {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    overflow-x: auto;
+    margin: 12px 0 24px;
+    position: relative;
+}
+pre code {
+    background: none;
+    padding: 0;
+    border: none;
+    font-size: 14px;
+    line-height: 1.7;
+}
+pre .label {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    font-family: sans-serif;
+}
+.kw { color: var(--accent3); }
+.fn { color: var(--accent); }
+.str { color: var(--accent2); }
+.num { color: var(--accent4); }
+.cm { color: #555e75; font-style: italic; }
+.op { color: var(--red); }
+.ty { color: #e3b341; }
+
+/* ---- TABLES ---- */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 24px;
+    font-size: 14px;
+}
+th {
+    text-align: left;
+    padding: 12px 16px;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+td { padding: 10px 16px; border: 1px solid var(--border); }
+tr:hover td { background: var(--bg-card); }
+
+/* ---- CARDS ---- */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+    margin: 24px 0;
+}
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    transition: border-color 0.2s, transform 0.2s;
+}
+.card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.card h4 { margin-top: 0; color: var(--accent2); font-size: 15px; }
+.card p { font-size: 13px; color: var(--text-dim); margin: 0; }
+
+/* ---- FOOTER ---- */
+footer {
+    text-align: center;
+    padding: 60px 24px;
+    color: var(--text-dim);
+    font-size: 14px;
+    border-top: 1px solid var(--border);
+}
+footer em { color: var(--text); }
+footer a { color: var(--accent); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+
+/* ---- RESPONSIVE ---- */
+@media (max-width: 700px) {
+    .page-header h1 { font-size: 36px; letter-spacing: -1px; }
+    .page-header .subtitle { font-size: 16px; }
+    h2 { font-size: 28px; }
+    h2 .num { font-size: 12px; }
+    .card-grid { grid-template-columns: 1fr; }
+    .topnav a { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="topnav">
+    <span class="brand">mix</span>
+    <a href="DOCS.html">Home</a>
+    <a href="overview.html" style="color:var(--accent3)">Reference</a>
+    <a href="#hello">Hello</a>
+    <a href="#variables">Variables</a>
+    <a href="#functions">Functions</a>
+    <a href="#control-flow">Flow</a>
+    <a href="#strings">Strings</a>
+    <a href="#lists">Lists</a>
+    <a href="#shapes">Shapes</a>
+    <a href="#errors">Errors</a>
+    <a href="#generics">Generics</a>
+    <a href="#concurrency">Concurrency</a>
+    <a href="#c-interop">C Interop</a>
+</div>
+
+<!-- ========== PAGE HEADER ========== -->
+<div class="page-header">
+    <h1>Tutorials</h1>
+    <p class="subtitle">Learn MIX step by step</p>
+</div>
+
+<div class="container">
+
+<!-- ========== 01 HELLO WORLD ========== -->
+<section id="hello">
+<h2><span class="num">01</span>Hello World</h2>
+
+<p>Every MIX program starts with a <code>main()</code> function. There is no <code>fn</code> keyword -- just
+write the function name, parentheses for parameters, and indent the body with 4 spaces.
+MIX uses indentation to define blocks, similar to Python.</p>
+
+<p>Use the built-in <code>print()</code> function to write text to the console. String literals are
+enclosed in double quotes. There are no semicolons in MIX.</p>
+
+<pre><code><span class="fn">main</span>()
+    <span class="fn">print</span>(<span class="str">"Hello, world!"</span>)</code><span class="label">mix</span></pre>
+
+<p>Save this as <code>hello.mix</code> and compile it:</p>
+
+<pre><code><span class="cm"># Compile and run in one step</span>
+mix run hello.mix
+
+<span class="cm"># Or compile only, then run separately</span>
+mix build hello.mix
+./hello</code><span class="label">shell</span></pre>
+
+<p>The <code>mix run</code> command compiles your program and immediately executes it.
+The <code>mix build</code> command compiles to a native binary without running it. The output
+binary name is derived from the source filename by default, or you can specify one with <code>-o</code>.</p>
+
+</section>
+
+<!-- ========== 02 VARIABLES AND TYPES ========== -->
+<section id="variables">
+<h2><span class="num">02</span>Variables and Types</h2>
+
+<p>Variables in MIX are immutable by default. Use <code>=</code> for immutable bindings and
+<code>!</code> after the name for mutable variables. This makes it immediately visible which
+values can change, improving readability and preventing accidental mutation.</p>
+
+<p>MIX has four primitive types: <code>int</code>, <code>float</code>, <code>str</code>, and <code>bool</code>.
+Types are inferred from the assigned value, but you can add an explicit type annotation
+with a colon when you want to be specific.</p>
+
+<pre><code><span class="fn">main</span>()
+    <span class="cm">// Immutable variables (default)</span>
+    name = <span class="str">"Alice"</span>
+    age = <span class="num">30</span>
+    pi = <span class="num">3.14159</span>
+    active = <span class="kw">true</span>
+
+    <span class="cm">// Mutable variables (note the ! after the name)</span>
+    count<span class="op">!</span> = <span class="num">0</span>
+    count = count + <span class="num">1</span>
+
+    <span class="cm">// Explicit type annotation</span>
+    score: <span class="ty">float</span> = <span class="num">99.5</span>
+    label: <span class="ty">str</span> = <span class="str">"player"</span>
+
+    <span class="cm">// Compound assignment on mutable variables</span>
+    total<span class="op">!</span> = <span class="num">10</span>
+    total += <span class="num">5</span>      <span class="cm">// total is now 15</span>
+    total -= <span class="num">3</span>      <span class="cm">// total is now 12</span>
+
+    <span class="fn">print</span>(<span class="str">"{name} is {age} years old"</span>)
+    <span class="fn">print</span>(<span class="str">"count = {count}, total = {total}"</span>)</code><span class="label">mix</span></pre>
+
+<p>The <code>!</code> suffix is a core MIX convention: it marks anything that mutates state. You will
+see it on variables, method names like <code>push!()</code>, and parameters that get modified.</p>
+
+</section>
+
+<!-- ========== 03 FUNCTIONS ========== -->
+<section id="functions">
+<h2><span class="num">03</span>Functions</h2>
+
+<p>Functions are defined by writing the name, parameters in parentheses, and an optional
+return type after <code>-&gt;</code>. The body is indented. There is no <code>fn</code> or <code>def</code> keyword.
+The last expression in the body is implicitly returned.</p>
+
+<p>Use <code>done</code> for early return from a function. Functions that perform side effects
+(I/O, mutation, printing) should be marked with <code>~</code> before the parentheses to
+signal to callers that the function has effects beyond its return value.</p>
+
+<pre><code><span class="cm">// Simple function with return type</span>
+<span class="fn">square</span>(x: <span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span>
+    x * x
+
+<span class="cm">// Multiple parameters</span>
+<span class="fn">add</span>(a: <span class="ty">float</span>, b: <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span>
+    a + b
+
+<span class="cm">// Early return with done</span>
+<span class="fn">abs_val</span>(n: <span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span>
+    <span class="kw">if</span> n >= <span class="num">0</span>
+        <span class="kw">done</span> n
+    -n
+
+<span class="cm">// Side-effect marker ~ (this function prints)</span>
+<span class="fn">greet</span><span class="op">~</span>(name: <span class="ty">str</span>)
+    <span class="fn">print</span>(<span class="str">"Hello, {name}!"</span>)
+
+<span class="fn">main</span>()
+    result = <span class="fn">square</span>(<span class="num">5</span>)
+    <span class="fn">print</span>(<span class="str">"5 squared = {result}"</span>)
+
+    sum = <span class="fn">add</span>(<span class="num">2.5</span>, <span class="num">3.7</span>)
+    <span class="fn">print</span>(<span class="str">"sum = {sum}"</span>)
+
+    <span class="fn">greet</span>(<span class="str">"MIX"</span>)</code><span class="label">mix</span></pre>
+
+<p>Functions without a <code>-&gt;</code> return type implicitly return nothing (void). The implicit
+return of the last expression means you rarely need <code>done</code> -- it is mainly useful
+for early exits in conditional logic.</p>
+
+</section>
+
+<!-- ========== 04 CONTROL FLOW ========== -->
+<section id="control-flow">
+<h2><span class="num">04</span>Control Flow</h2>
+
+<p>MIX provides <code>if</code>/<code>else</code> for conditionals, <code>while</code> for condition-based loops,
+<code>for</code> with ranges for counted loops, and <code>for</code>-each for iterating over collections.
+All blocks use indentation -- there are no braces or <code>end</code> keywords.</p>
+
+<p>Ranges use <code>..</code> for exclusive upper bound and <code>..=</code> for inclusive. The <code>match</code>
+expression handles pattern matching with <code>_</code> as the wildcard catch-all.</p>
+
+<pre><code><span class="fn">main</span>()
+    <span class="cm">// if / else</span>
+    x = <span class="num">42</span>
+    <span class="kw">if</span> x > <span class="num">100</span>
+        <span class="fn">print</span>(<span class="str">"big"</span>)
+    <span class="kw">else</span> <span class="kw">if</span> x > <span class="num">10</span>
+        <span class="fn">print</span>(<span class="str">"medium"</span>)
+    <span class="kw">else</span>
+        <span class="fn">print</span>(<span class="str">"small"</span>)
+
+    <span class="cm">// while loop</span>
+    count<span class="op">!</span> = <span class="num">0</span>
+    <span class="kw">while</span> count < <span class="num">5</span>
+        <span class="fn">print</span>(<span class="str">"count = {count}"</span>)
+        count += <span class="num">1</span>
+
+    <span class="cm">// for with exclusive range (0, 1, 2, 3, 4)</span>
+    <span class="kw">for</span> i <span class="kw">in</span> <span class="num">0</span>..<span class="num">5</span>
+        <span class="fn">print</span>(<span class="str">"i = {i}"</span>)
+
+    <span class="cm">// for with inclusive range (1, 2, 3, 4, 5)</span>
+    <span class="kw">for</span> n <span class="kw">in</span> <span class="num">1</span>..=<span class="num">5</span>
+        <span class="fn">print</span>(<span class="str">"n = {n}"</span>)
+
+    <span class="cm">// for-each over a list</span>
+    colors = [<span class="str">"red"</span>, <span class="str">"green"</span>, <span class="str">"blue"</span>]
+    <span class="kw">for</span> c <span class="kw">in</span> colors
+        <span class="fn">print</span>(<span class="str">"color: {c}"</span>)
+
+    <span class="cm">// match with wildcard</span>
+    day = <span class="str">"Monday"</span>
+    <span class="kw">match</span> day
+        <span class="str">"Saturday"</span>, <span class="str">"Sunday"</span> <span class="op">=></span> <span class="fn">print</span>(<span class="str">"weekend"</span>)
+        <span class="kw">_</span> <span class="op">=></span> <span class="fn">print</span>(<span class="str">"weekday"</span>)</code><span class="label">mix</span></pre>
+
+<p>You can also use <code>break</code> and <code>continue</code> inside loops just like in C or Python.
+The <code>repeat</code> keyword creates an infinite loop that runs until a <code>break</code>.</p>
+
+</section>
+
+<!-- ========== 05 STRINGS ========== -->
+<section id="strings">
+<h2><span class="num">05</span>Strings</h2>
+
+<p>Strings in MIX are enclosed in double quotes. They support interpolation with
+<code>{}</code> braces -- any expression inside braces is evaluated and converted to its string
+representation. Concatenation uses the <code>+</code> operator.</p>
+
+<p>MIX strings come with a rich set of built-in methods. Methods that mutate the
+string in place are suffixed with <code>!</code>. Use <code>to_string()</code> to convert other types
+to their string representation.</p>
+
+<pre><code><span class="fn">main</span>()
+    <span class="cm">// Literals and interpolation</span>
+    name = <span class="str">"MIX"</span>
+    greeting = <span class="str">"Hello, {name}!"</span>
+    <span class="fn">print</span>(greeting)  <span class="cm">// Hello, MIX!</span>
+
+    <span class="cm">// Concatenation</span>
+    full = <span class="str">"Hello"</span> + <span class="str">" "</span> + <span class="str">"World"</span>
+
+    <span class="cm">// String methods</span>
+    s = <span class="str">"  Hello, World!  "</span>
+    <span class="fn">print</span>(s.<span class="fn">len</span>)                <span class="cm">// 17</span>
+    <span class="fn">print</span>(s.<span class="fn">trim</span>)               <span class="cm">// "Hello, World!"</span>
+    <span class="fn">print</span>(s.<span class="fn">upper</span>)              <span class="cm">// "  HELLO, WORLD!  "</span>
+    <span class="fn">print</span>(s.<span class="fn">lower</span>)              <span class="cm">// "  hello, world!  "</span>
+
+    msg = <span class="str">"hello world"</span>
+    <span class="fn">print</span>(msg.<span class="fn">contains</span>(<span class="str">"world"</span>))    <span class="cm">// true</span>
+    <span class="fn">print</span>(msg.<span class="fn">starts_with</span>(<span class="str">"hello"</span>)) <span class="cm">// true</span>
+    <span class="fn">print</span>(msg.<span class="fn">ends_with</span>(<span class="str">"world"</span>))   <span class="cm">// true</span>
+    <span class="fn">print</span>(msg.<span class="fn">index_of</span>(<span class="str">"world"</span>))    <span class="cm">// 6</span>
+
+    <span class="cm">// split, replace, slice</span>
+    csv = <span class="str">"a,b,c,d"</span>
+    parts = csv.<span class="fn">split</span>(<span class="str">","</span>)       <span class="cm">// ["a", "b", "c", "d"]</span>
+
+    fixed = msg.<span class="fn">replace</span>(<span class="str">"world"</span>, <span class="str">"MIX"</span>)
+    <span class="fn">print</span>(fixed)                    <span class="cm">// "hello MIX"</span>
+
+    <span class="fn">print</span>(msg.<span class="fn">char_at</span>(<span class="num">0</span>))           <span class="cm">// "h"</span>
+    <span class="fn">print</span>(msg.<span class="fn">slice</span>(<span class="num">0</span>, <span class="num">5</span>))          <span class="cm">// "hello"</span>
+    <span class="fn">print</span>(msg.<span class="fn">repeat</span>(<span class="num">2</span>))            <span class="cm">// "hello worldhello world"</span>
+    <span class="fn">print</span>(msg.<span class="fn">reverse</span>)              <span class="cm">// "dlrow olleh"</span>
+
+    <span class="cm">// Convert other types to string</span>
+    n = <span class="num">42</span>
+    s2 = <span class="fn">to_string</span>(n)              <span class="cm">// "42"</span></code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 06 LISTS ========== -->
+<section id="lists">
+<h2><span class="num">06</span>Lists</h2>
+
+<p>Lists are ordered, dynamically-sized collections written with square brackets.
+They are typed -- all elements must be the same type. Access elements by index
+(zero-based) and use <code>.len</code> to get the count.</p>
+
+<p>Mutation methods end with <code>!</code> to make it clear they modify the list in place.
+List comprehensions let you build new lists with a concise <code>for</code>/<code>if</code> syntax
+inside brackets.</p>
+
+<pre><code><span class="fn">main</span>()
+    <span class="cm">// Create a list</span>
+    nums<span class="op">!</span> = [<span class="num">10</span>, <span class="num">20</span>, <span class="num">30</span>, <span class="num">40</span>, <span class="num">50</span>]
+    <span class="fn">print</span>(nums.<span class="fn">len</span>)        <span class="cm">// 5</span>
+    <span class="fn">print</span>(nums[<span class="num">0</span>])         <span class="cm">// 10</span>
+    <span class="fn">print</span>(nums[<span class="num">4</span>])         <span class="cm">// 50</span>
+
+    <span class="cm">// Mutating methods (note the !)</span>
+    nums.<span class="fn">push!</span>(<span class="num">60</span>)         <span class="cm">// [10, 20, 30, 40, 50, 60]</span>
+    last = nums.<span class="fn">pop!</span>()     <span class="cm">// last = 60, list shrinks</span>
+    nums.<span class="fn">insert!</span>(<span class="num">0</span>, <span class="num">5</span>)     <span class="cm">// [5, 10, 20, 30, 40, 50]</span>
+    nums.<span class="fn">remove!</span>(<span class="num">0</span>)        <span class="cm">// [10, 20, 30, 40, 50]</span>
+    nums.<span class="fn">sort!</span>()            <span class="cm">// sort in place</span>
+    nums.<span class="fn">reverse!</span>()         <span class="cm">// reverse in place</span>
+
+    <span class="cm">// Non-mutating methods</span>
+    <span class="fn">print</span>(nums.<span class="fn">contains</span>(<span class="num">30</span>))  <span class="cm">// true</span>
+    <span class="fn">print</span>(nums.<span class="fn">index_of</span>(<span class="num">30</span>))  <span class="cm">// 2</span>
+
+    <span class="cm">// Join list of strings</span>
+    words = [<span class="str">"hello"</span>, <span class="str">"world"</span>]
+    <span class="fn">print</span>(words.<span class="fn">join</span>(<span class="str">", "</span>))   <span class="cm">// "hello, world"</span>
+
+    <span class="cm">// Slicing (creates a new list)</span>
+    mid = nums[<span class="num">1</span>..<span class="num">3</span>]       <span class="cm">// elements at index 1, 2</span>
+
+    <span class="cm">// List comprehension</span>
+    squares = [x * x <span class="kw">for</span> x <span class="kw">in</span> <span class="num">1</span>..<span class="num">6</span>]
+    <span class="fn">print</span>(squares)           <span class="cm">// [1, 4, 9, 16, 25]</span>
+
+    <span class="cm">// Filtered comprehension</span>
+    evens = [x <span class="kw">for</span> x <span class="kw">in</span> <span class="num">1</span>..<span class="num">11</span> <span class="kw">if</span> x % <span class="num">2</span> == <span class="num">0</span>]
+    <span class="fn">print</span>(evens)             <span class="cm">// [2, 4, 6, 8, 10]</span>
+
+    <span class="cm">// Iterate</span>
+    <span class="kw">for</span> n <span class="kw">in</span> nums
+        <span class="fn">print</span>(<span class="str">"item: {n}"</span>)</code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 07 MAPS ========== -->
+<section id="maps">
+<h2><span class="num">07</span>Maps</h2>
+
+<p>Maps are key-value collections written with curly braces. Keys are strings and
+values can be any consistent type. Access values by key using bracket notation, and
+use <code>.has()</code> to check for key existence before accessing.</p>
+
+<p>Iterate over maps with <code>for k, v in map</code> to get both keys and values.
+The <code>.keys</code> and <code>.values</code> properties give you lists of all keys or values.</p>
+
+<pre><code><span class="fn">main</span>()
+    <span class="cm">// Create a map</span>
+    scores<span class="op">!</span> = {<span class="str">"alice"</span>: <span class="num">95</span>, <span class="str">"bob"</span>: <span class="num">87</span>, <span class="str">"carol"</span>: <span class="num">92</span>}
+
+    <span class="cm">// Access by key</span>
+    <span class="fn">print</span>(scores[<span class="str">"alice"</span>])   <span class="cm">// 95</span>
+    <span class="fn">print</span>(scores.<span class="fn">len</span>)        <span class="cm">// 3</span>
+
+    <span class="cm">// Check for key</span>
+    <span class="kw">if</span> scores.<span class="fn">has</span>(<span class="str">"bob"</span>)
+        <span class="fn">print</span>(<span class="str">"Bob's score: {scores["bob"]}"</span>)
+
+    <span class="cm">// Add / update</span>
+    scores[<span class="str">"dave"</span>] = <span class="num">88</span>
+
+    <span class="cm">// Remove</span>
+    scores.<span class="fn">remove!</span>(<span class="str">"bob"</span>)
+
+    <span class="cm">// Get all keys and values</span>
+    <span class="fn">print</span>(scores.<span class="fn">keys</span>)       <span class="cm">// ["alice", "carol", "dave"]</span>
+    <span class="fn">print</span>(scores.<span class="fn">values</span>)     <span class="cm">// [95, 92, 88]</span>
+
+    <span class="cm">// Iterate over key-value pairs</span>
+    <span class="kw">for</span> name, score <span class="kw">in</span> scores
+        <span class="fn">print</span>(<span class="str">"{name}: {score}"</span>)</code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 08 SETS ========== -->
+<section id="sets">
+<h2><span class="num">08</span>Sets</h2>
+
+<p>Sets are unordered collections of unique values. Create them with the <code>set{}</code>
+syntax. Sets support the classic mathematical operations: union, intersection,
+and difference.</p>
+
+<p>Like lists, mutation methods use the <code>!</code> suffix. Use <code>.has()</code> for membership
+testing and <code>.values</code> to get the elements as a list.</p>
+
+<pre><code><span class="fn">main</span>()
+    <span class="cm">// Create a set</span>
+    fruits<span class="op">!</span> = <span class="kw">set</span>{<span class="str">"apple"</span>, <span class="str">"banana"</span>, <span class="str">"cherry"</span>}
+    empty = <span class="kw">set</span>{}
+
+    <span class="cm">// Add and remove</span>
+    fruits.<span class="fn">add!</span>(<span class="str">"date"</span>)
+    fruits.<span class="fn">remove!</span>(<span class="str">"banana"</span>)
+
+    <span class="cm">// Check membership</span>
+    <span class="fn">print</span>(fruits.<span class="fn">has</span>(<span class="str">"apple"</span>))    <span class="cm">// true</span>
+    <span class="fn">print</span>(fruits.<span class="fn">has</span>(<span class="str">"banana"</span>))   <span class="cm">// false</span>
+    <span class="fn">print</span>(fruits.<span class="fn">len</span>)             <span class="cm">// 3</span>
+
+    <span class="cm">// Get all values as a list</span>
+    <span class="fn">print</span>(fruits.<span class="fn">values</span>)
+
+    <span class="cm">// Set operations</span>
+    a = <span class="kw">set</span>{<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>}
+    b = <span class="kw">set</span>{<span class="num">3</span>, <span class="num">4</span>, <span class="num">5</span>, <span class="num">6</span>}
+
+    both = a.<span class="fn">union</span>(b)            <span class="cm">// {1, 2, 3, 4, 5, 6}</span>
+    common = a.<span class="fn">intersect</span>(b)       <span class="cm">// {3, 4}</span>
+    only_a = a.<span class="fn">diff</span>(b)            <span class="cm">// {1, 2}</span>
+
+    <span class="cm">// Iterate over a set</span>
+    <span class="kw">for</span> item <span class="kw">in</span> fruits
+        <span class="fn">print</span>(<span class="str">"fruit: {item}"</span>)</code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 09 SHAPES ========== -->
+<section id="shapes">
+<h2><span class="num">09</span>Shapes</h2>
+
+<p>Shapes are MIX's structured data types, similar to structs or classes.
+They have fields, methods, and computed properties. Define a shape with the
+<code>shape</code> keyword, then list fields and methods indented beneath it.</p>
+
+<p>Construct a shape using named arguments <code>Shape(field: value)</code> or positional
+arguments <code>Shape(val1, val2)</code>. Methods have implicit access to <code>self</code> fields --
+just use the field name directly. Computed fields are zero-parameter methods
+that can be called without parentheses.</p>
+
+<pre><code><span class="kw">shape</span> <span class="ty">Player</span>
+    name: <span class="ty">str</span>
+    health: <span class="ty">int</span>
+    max_health: <span class="ty">int</span>
+
+    <span class="cm">// Computed field (no parens needed to call)</span>
+    <span class="fn">is_alive</span>() <span class="op">-></span> <span class="ty">bool</span>
+        health > <span class="num">0</span>
+
+    <span class="cm">// Method with parameter</span>
+    <span class="fn">take_damage</span>(amount: <span class="ty">int</span>) <span class="op">-></span> <span class="ty">Player</span>
+        new_hp = health - amount
+        <span class="kw">if</span> new_hp < <span class="num">0</span>
+            new_hp = <span class="num">0</span>
+        <span class="ty">Player</span>(name: name, health: new_hp, max_health: max_health)
+
+    <span class="cm">// Computed field for display</span>
+    <span class="fn">status</span>() <span class="op">-></span> <span class="ty">str</span>
+        <span class="str">"{name}: {health}/{max_health} HP"</span>
+
+<span class="fn">main</span>()
+    <span class="cm">// Named construction</span>
+    p = <span class="ty">Player</span>(name: <span class="str">"Hero"</span>, health: <span class="num">100</span>, max_health: <span class="num">100</span>)
+
+    <span class="cm">// Field access</span>
+    <span class="fn">print</span>(p.name)           <span class="cm">// "Hero"</span>
+    <span class="fn">print</span>(p.health)         <span class="cm">// 100</span>
+
+    <span class="cm">// Computed field (no parens)</span>
+    <span class="fn">print</span>(p.<span class="fn">is_alive</span>)       <span class="cm">// true</span>
+    <span class="fn">print</span>(p.<span class="fn">status</span>)         <span class="cm">// "Hero: 100/100 HP"</span>
+
+    <span class="cm">// Methods return new shapes (immutable by default)</span>
+    p2 = p.<span class="fn">take_damage</span>(<span class="num">35</span>)
+    <span class="fn">print</span>(p2.<span class="fn">status</span>)        <span class="cm">// "Hero: 65/100 HP"</span>
+
+    <span class="cm">// Positional construction</span>
+    p3 = <span class="ty">Player</span>(<span class="str">"Mage"</span>, <span class="num">80</span>, <span class="num">80</span>)
+    <span class="fn">print</span>(p3.<span class="fn">status</span>)        <span class="cm">// "Mage: 80/80 HP"</span></code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 10 OPERATOR OVERLOADING ========== -->
+<section id="operators">
+<h2><span class="num">10</span>Operator Overloading</h2>
+
+<p>Shapes can define custom behavior for arithmetic and comparison operators.
+Define a method named after the operator (<code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>%</code>, <code>==</code>, <code>!=</code>)
+that takes one parameter (the right-hand operand) and returns the result type.</p>
+
+<p>This makes mathematical types like vectors, matrices, and complex numbers feel
+natural to use with standard operator syntax.</p>
+
+<pre><code><span class="kw">shape</span> <span class="ty">Vec2</span>
+    x, y: <span class="ty">float</span>
+
+    <span class="op">+</span>(other: <span class="ty">Vec2</span>) <span class="op">-></span> <span class="ty">Vec2</span>
+        <span class="ty">Vec2</span>(x: x + other.x, y: y + other.y)
+
+    <span class="op">-</span>(other: <span class="ty">Vec2</span>) <span class="op">-></span> <span class="ty">Vec2</span>
+        <span class="ty">Vec2</span>(x: x - other.x, y: y - other.y)
+
+    <span class="op">*</span>(scalar: <span class="ty">float</span>) <span class="op">-></span> <span class="ty">Vec2</span>
+        <span class="ty">Vec2</span>(x: x * scalar, y: y * scalar)
+
+    <span class="op">==</span>(other: <span class="ty">Vec2</span>) <span class="op">-></span> <span class="ty">bool</span>
+        x == other.x <span class="kw">and</span> y == other.y
+
+    <span class="fn">length_sq</span>() <span class="op">-></span> <span class="ty">float</span>
+        x * x + y * y
+
+    <span class="fn">to_string</span>() <span class="op">-></span> <span class="ty">str</span>
+        <span class="str">"({x}, {y})"</span>
+
+<span class="fn">main</span>()
+    a = <span class="ty">Vec2</span>(x: <span class="num">3.0</span>, y: <span class="num">4.0</span>)
+    b = <span class="ty">Vec2</span>(x: <span class="num">1.0</span>, y: <span class="num">2.0</span>)
+
+    c = a + b
+    <span class="fn">print</span>(<span class="str">"a + b = {c}"</span>)       <span class="cm">// (4.0, 6.0)</span>
+
+    d = a - b
+    <span class="fn">print</span>(<span class="str">"a - b = {d}"</span>)       <span class="cm">// (2.0, 2.0)</span>
+
+    e = a * <span class="num">2.0</span>
+    <span class="fn">print</span>(<span class="str">"a * 2 = {e}"</span>)       <span class="cm">// (6.0, 8.0)</span>
+
+    <span class="fn">print</span>(<span class="str">"a == b: {a == b}"</span>) <span class="cm">// false</span>
+    <span class="fn">print</span>(<span class="str">"length^2 = {a.length_sq}"</span>)</code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 11 TAGGED UNIONS ========== -->
+<section id="tagged-unions">
+<h2><span class="num">11</span>Tagged Unions</h2>
+
+<p>Tagged unions let a shape hold one of several named variants, each with
+different data. Define variants inside a shape as indented alternatives.
+This is MIX's approach to algebraic data types / sum types.</p>
+
+<p>Construct variants using <code>ShapeName.Variant(data)</code> and destructure them
+with <code>match</code> to extract the inner values safely.</p>
+
+<pre><code><span class="kw">shape</span> <span class="ty">Expr</span>
+    <span class="ty">Num</span>(value: <span class="ty">int</span>)
+    <span class="ty">Add</span>(left: <span class="ty">Expr</span>, right: <span class="ty">Expr</span>)
+    <span class="ty">Neg</span>(inner: <span class="ty">Expr</span>)
+
+<span class="fn">eval</span>(e: <span class="ty">Expr</span>) <span class="op">-></span> <span class="ty">int</span>
+    <span class="kw">match</span> e
+        <span class="ty">Num</span>(value) <span class="op">=></span> value
+        <span class="ty">Add</span>(left, right) <span class="op">=></span> <span class="fn">eval</span>(left) + <span class="fn">eval</span>(right)
+        <span class="ty">Neg</span>(inner) <span class="op">=></span> -<span class="fn">eval</span>(inner)
+
+<span class="fn">main</span>()
+    <span class="cm">// Build: -(3 + 4)</span>
+    expr = <span class="ty">Expr</span>.<span class="ty">Neg</span>(<span class="ty">Expr</span>.<span class="ty">Add</span>(
+        <span class="ty">Expr</span>.<span class="ty">Num</span>(<span class="num">3</span>),
+        <span class="ty">Expr</span>.<span class="ty">Num</span>(<span class="num">4</span>)
+    ))
+
+    result = <span class="fn">eval</span>(expr)
+    <span class="fn">print</span>(<span class="str">"result = {result}"</span>)  <span class="cm">// result = -7</span></code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 12 MATCH EXPRESSIONS ========== -->
+<section id="match-expr">
+<h2><span class="num">12</span>Match Expressions</h2>
+
+<p>In addition to being used as a statement (for branching), <code>match</code> can be used
+as an expression that produces a value. When used as an expression, each arm
+evaluates to a value and the result of the matching arm is returned.</p>
+
+<p>This is useful for assigning the result of pattern matching to a variable
+or returning it from a function. The wildcard <code>_</code> catches any unmatched value.</p>
+
+<pre><code><span class="fn">describe</span>(n: <span class="ty">int</span>) <span class="op">-></span> <span class="ty">str</span>
+    <span class="kw">match</span> n
+        <span class="num">0</span> <span class="op">=></span> <span class="str">"zero"</span>
+        <span class="num">1</span> <span class="op">=></span> <span class="str">"one"</span>
+        <span class="num">2</span> <span class="op">=></span> <span class="str">"two"</span>
+        <span class="kw">_</span> <span class="op">=></span> <span class="str">"many"</span>
+
+<span class="fn">classify</span>(score: <span class="ty">int</span>) <span class="op">-></span> <span class="ty">str</span>
+    <span class="kw">match</span> score
+        <span class="num">90</span> <span class="op">=></span> <span class="str">"A"</span>
+        <span class="num">80</span> <span class="op">=></span> <span class="str">"B"</span>
+        <span class="num">70</span> <span class="op">=></span> <span class="str">"C"</span>
+        <span class="kw">_</span> <span class="op">=></span> <span class="str">"F"</span>
+
+<span class="fn">main</span>()
+    <span class="cm">// Match as expression (assign result to variable)</span>
+    x = <span class="num">42</span>
+    label = <span class="kw">match</span> x
+        <span class="num">0</span> <span class="op">=></span> <span class="str">"nothing"</span>
+        <span class="num">42</span> <span class="op">=></span> <span class="str">"the answer"</span>
+        <span class="kw">_</span> <span class="op">=></span> <span class="str">"something else"</span>
+
+    <span class="fn">print</span>(label)  <span class="cm">// "the answer"</span>
+
+    <span class="cm">// Match as last expression in function</span>
+    <span class="fn">print</span>(<span class="fn">describe</span>(<span class="num">1</span>))    <span class="cm">// "one"</span>
+    <span class="fn">print</span>(<span class="fn">describe</span>(<span class="num">99</span>))   <span class="cm">// "many"</span>
+    <span class="fn">print</span>(<span class="fn">classify</span>(<span class="num">90</span>))   <span class="cm">// "A"</span></code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 13 ERROR HANDLING ========== -->
+<section id="errors">
+<h2><span class="num">13</span>Error Handling</h2>
+
+<p>MIX uses result types for error handling instead of exceptions. A function that
+can fail uses <code>fail "message"</code> to signal an error and <code>done value</code> to return
+success. Functions with <code>~</code> and <code>fail</code> are automatically wrapped in a result type.</p>
+
+<p>Callers handle errors with <code>else</code> for a fallback value, or <code>?</code> to propagate
+the error upward. This makes the error path explicit and visible at every call site.</p>
+
+<pre><code><span class="cm">// A function that can fail</span>
+<span class="fn">divide</span><span class="op">~</span>(a: <span class="ty">float</span>, b: <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span>
+    <span class="kw">if</span> b == <span class="num">0.0</span>
+        <span class="kw">fail</span> <span class="str">"division by zero"</span>
+    <span class="kw">done</span> a / b
+
+<span class="cm">// Parse an integer from a string</span>
+<span class="fn">parse_positive</span><span class="op">~</span>(s: <span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span>
+    n = <span class="fn">parse_int</span>(s)<span class="op">?</span>          <span class="cm">// propagate parse error with ?</span>
+    <span class="kw">if</span> n <= <span class="num">0</span>
+        <span class="kw">fail</span> <span class="str">"must be positive"</span>
+    <span class="kw">done</span> n
+
+<span class="fn">main</span>()
+    <span class="cm">// Use else for fallback value</span>
+    result = <span class="fn">divide</span>(<span class="num">10.0</span>, <span class="num">3.0</span>) <span class="kw">else</span> <span class="num">0.0</span>
+    <span class="fn">print</span>(<span class="str">"10 / 3 = {result}"</span>)
+
+    <span class="cm">// Fallback on error</span>
+    bad = <span class="fn">divide</span>(<span class="num">10.0</span>, <span class="num">0.0</span>) <span class="kw">else</span> <span class="num">-1.0</span>
+    <span class="fn">print</span>(<span class="str">"10 / 0 = {bad}"</span>)     <span class="cm">// 10 / 0 = -1.0</span>
+
+    <span class="cm">// Parse with fallback</span>
+    age = <span class="fn">parse_positive</span>(<span class="str">"25"</span>) <span class="kw">else</span> <span class="num">0</span>
+    <span class="fn">print</span>(<span class="str">"age = {age}"</span>)         <span class="cm">// age = 25</span></code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 14 OPTIONALS ========== -->
+<section id="optionals">
+<h2><span class="num">14</span>Optionals</h2>
+
+<p>Optional types represent values that may or may not exist. Declare an optional
+with <code>T?</code> (e.g., <code>int?</code>, <code>str?</code>). The special value <code>none</code> represents the absence
+of a value.</p>
+
+<p>Unwrap an optional with <code>else</code> to provide a default, or use <code>match</code> to handle
+both cases. This prevents null pointer errors at compile time.</p>
+
+<pre><code><span class="cm">// A function that might not find a result</span>
+<span class="fn">find_index</span>(items: [<span class="ty">str</span>], target: <span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span><span class="op">?</span>
+    <span class="kw">for</span> i <span class="kw">in</span> <span class="num">0</span>..items.<span class="fn">len</span>
+        <span class="kw">if</span> items[i] == target
+            <span class="kw">done</span> i
+    <span class="kw">none</span>
+
+<span class="fn">main</span>()
+    names = [<span class="str">"alice"</span>, <span class="str">"bob"</span>, <span class="str">"carol"</span>]
+
+    <span class="cm">// Unwrap with else fallback</span>
+    idx = <span class="fn">find_index</span>(names, <span class="str">"bob"</span>) <span class="kw">else</span> -<span class="num">1</span>
+    <span class="fn">print</span>(<span class="str">"bob at index: {idx}"</span>)    <span class="cm">// bob at index: 1</span>
+
+    <span class="cm">// Not found -- falls back to default</span>
+    idx2 = <span class="fn">find_index</span>(names, <span class="str">"dave"</span>) <span class="kw">else</span> -<span class="num">1</span>
+    <span class="fn">print</span>(<span class="str">"dave at index: {idx2}"</span>)   <span class="cm">// dave at index: -1</span>
+
+    <span class="cm">// Use in conditional</span>
+    result = <span class="fn">find_index</span>(names, <span class="str">"carol"</span>)
+    <span class="kw">if</span> result <span class="op">!=</span> <span class="kw">none</span>
+        <span class="fn">print</span>(<span class="str">"found carol"</span>)</code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 15 GENERICS ========== -->
+<section id="generics">
+<h2><span class="num">15</span>Generics</h2>
+
+<p>Generics let you write functions and shapes that work with any type. Use
+<code>@T</code> to declare a type parameter. You can have multiple type parameters and
+constrain them with <code>has</code> to require specific capabilities.</p>
+
+<p>Generic shapes work the same way -- the type parameter is resolved when you
+construct an instance.</p>
+
+<pre><code><span class="cm">// Generic identity function</span>
+<span class="fn">identity</span>(<span class="op">@</span><span class="ty">T</span>)(value: <span class="ty">T</span>) <span class="op">-></span> <span class="ty">T</span>
+    value
+
+<span class="cm">// Generic pair</span>
+<span class="kw">shape</span> <span class="ty">Pair</span>(<span class="op">@</span><span class="ty">T</span>)
+    first: <span class="ty">T</span>
+    second: <span class="ty">T</span>
+
+    <span class="fn">swap</span>() <span class="op">-></span> <span class="ty">Pair</span>(<span class="ty">T</span>)
+        <span class="ty">Pair</span>(first: second, second: first)
+
+<span class="cm">// Generic stack with constraint</span>
+<span class="kw">shape</span> <span class="ty">Stack</span>(<span class="op">@</span><span class="ty">T</span>)
+    items: [<span class="ty">T</span>]
+
+    <span class="fn">push!</span>(item: <span class="ty">T</span>)
+        items.<span class="fn">push!</span>(item)
+
+    <span class="fn">pop!</span>() <span class="op">-></span> <span class="ty">T</span>
+        items.<span class="fn">pop!</span>()
+
+    <span class="fn">is_empty</span>() <span class="op">-></span> <span class="ty">bool</span>
+        items.<span class="fn">len</span> == <span class="num">0</span>
+
+<span class="fn">main</span>()
+    <span class="cm">// Generic function</span>
+    x = <span class="fn">identity</span>(<span class="num">42</span>)
+    s = <span class="fn">identity</span>(<span class="str">"hello"</span>)
+
+    <span class="cm">// Generic shape</span>
+    p = <span class="ty">Pair</span>(first: <span class="num">1</span>, second: <span class="num">2</span>)
+    p2 = p.<span class="fn">swap</span>()
+    <span class="fn">print</span>(<span class="str">"{p2.first}, {p2.second}"</span>)  <span class="cm">// 2, 1</span>
+
+    <span class="cm">// Generic stack</span>
+    stack<span class="op">!</span> = <span class="ty">Stack</span>(items: [<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>])
+    stack.<span class="fn">push!</span>(<span class="num">4</span>)
+    top = stack.<span class="fn">pop!</span>()
+    <span class="fn">print</span>(<span class="str">"top = {top}"</span>)  <span class="cm">// top = 4</span></code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 16 MODULES ========== -->
+<section id="modules">
+<h2><span class="num">16</span>Modules</h2>
+
+<p>In MIX, each file is a module. Use <code>pub</code> to export functions and shapes from
+a module, and <code>use</code> to import them in another file. The module name is derived
+from the filename.</p>
+
+<p>Only items marked <code>pub</code> are visible outside the module. Everything else is
+private by default, giving you clean encapsulation without boilerplate.</p>
+
+<h4>math_utils.mix</h4>
+<pre><code><span class="cm">// Export with pub</span>
+<span class="kw">pub</span> <span class="fn">clamp</span>(val: <span class="ty">int</span>, lo: <span class="ty">int</span>, hi: <span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span>
+    <span class="kw">if</span> val < lo
+        <span class="kw">done</span> lo
+    <span class="kw">if</span> val > hi
+        <span class="kw">done</span> hi
+    val
+
+<span class="kw">pub</span> <span class="fn">lerp</span>(a: <span class="ty">float</span>, b: <span class="ty">float</span>, t: <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span>
+    a + (b - a) * t
+
+<span class="kw">pub</span> <span class="kw">shape</span> <span class="ty">Rect</span>
+    x, y, w, h: <span class="ty">float</span>
+
+    <span class="fn">area</span>() <span class="op">-></span> <span class="ty">float</span>
+        w * h</code><span class="label">math_utils.mix</span></pre>
+
+<h4>main.mix</h4>
+<pre><code><span class="kw">use</span> math_utils
+
+<span class="fn">main</span>()
+    <span class="cm">// Use imported functions</span>
+    val = math_utils.<span class="fn">clamp</span>(<span class="num">150</span>, <span class="num">0</span>, <span class="num">100</span>)
+    <span class="fn">print</span>(<span class="str">"clamped: {val}"</span>)    <span class="cm">// clamped: 100</span>
+
+    t = math_utils.<span class="fn">lerp</span>(<span class="num">0.0</span>, <span class="num">10.0</span>, <span class="num">0.5</span>)
+    <span class="fn">print</span>(<span class="str">"lerp: {t}"</span>)         <span class="cm">// lerp: 5.0</span>
+
+    <span class="cm">// Use imported shape</span>
+    r = math_utils.<span class="ty">Rect</span>(x: <span class="num">0.0</span>, y: <span class="num">0.0</span>, w: <span class="num">10.0</span>, h: <span class="num">5.0</span>)
+    <span class="fn">print</span>(<span class="str">"area = {r.area}"</span>)   <span class="cm">// area = 50.0</span></code><span class="label">main.mix</span></pre>
+
+</section>
+
+<!-- ========== 17 STANDARD LIBRARY ========== -->
+<section id="stdlib">
+<h2><span class="num">17</span>Standard Library</h2>
+
+<p>MIX ships with a small standard library organized into modules. Import them
+with <code>use std.module_name</code>. The standard library focuses on common operations
+that every program needs.</p>
+
+<p>Available modules include <code>std.math</code> for mathematical constants and functions,
+<code>std.string</code> for advanced string operations, and <code>std.collections</code> for data
+structures like stacks and queues.</p>
+
+<pre><code><span class="kw">use</span> std.math
+<span class="kw">use</span> std.string
+<span class="kw">use</span> std.collections
+
+<span class="fn">main</span>()
+    <span class="cm">// std.math -- constants and functions</span>
+    <span class="fn">print</span>(math.<span class="fn">PI</span>)                  <span class="cm">// 3.14159...</span>
+    <span class="fn">print</span>(math.<span class="fn">hypot</span>(<span class="num">3.0</span>, <span class="num">4.0</span>))    <span class="cm">// 5.0</span>
+    <span class="fn">print</span>(math.<span class="fn">sign</span>(-<span class="num">42.0</span>))        <span class="cm">// -1.0</span>
+
+    <span class="cm">// std.string -- extra string utilities</span>
+    <span class="fn">print</span>(string.<span class="fn">capitalize</span>(<span class="str">"hello"</span>))  <span class="cm">// "Hello"</span>
+    <span class="fn">print</span>(string.<span class="fn">reverse</span>(<span class="str">"abc"</span>))      <span class="cm">// "cba"</span>
+    <span class="fn">print</span>(string.<span class="fn">pad_left</span>(<span class="str">"42"</span>, <span class="num">5</span>, <span class="str">"0"</span>)) <span class="cm">// "00042"</span>
+
+    <span class="cm">// std.collections -- Stack</span>
+    s<span class="op">!</span> = collections.<span class="ty">Stack</span>(items: [<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>])
+    s.<span class="fn">push!</span>(<span class="num">4</span>)
+    top = s.<span class="fn">pop!</span>()
+    <span class="fn">print</span>(<span class="str">"top = {top}"</span>)             <span class="cm">// top = 4</span>
+
+    <span class="cm">// std.collections -- Queue</span>
+    q<span class="op">!</span> = collections.<span class="ty">Queue</span>(items: [<span class="str">"a"</span>, <span class="str">"b"</span>])
+    q.<span class="fn">push!</span>(<span class="str">"c"</span>)
+    front = q.<span class="fn">pop!</span>()
+    <span class="fn">print</span>(<span class="str">"front = {front}"</span>)         <span class="cm">// front = "a"</span></code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 18 CONCURRENCY ========== -->
+<section id="concurrency">
+<h2><span class="num">18</span>Concurrency</h2>
+
+<p>MIX provides lightweight concurrency with <code>go</code> for spawning tasks and <code>wait</code>
+for collecting results. Shared state is managed with the <code>shared</code> keyword, which
+wraps a value in a thread-safe container.</p>
+
+<p>Read shared values with <code>.read()</code> and mutate them with <code>.update!()</code>. The runtime
+handles locking automatically. This design prevents data races by making shared
+access explicit.</p>
+
+<pre><code><span class="fn">compute</span>(n: <span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span>
+    n * n
+
+<span class="fn">main</span>()
+    <span class="cm">// Shared mutable counter</span>
+    counter = <span class="kw">shared</span> <span class="ty">int</span>(<span class="num">0</span>)
+
+    <span class="cm">// Spawn concurrent tasks</span>
+    t1 = <span class="kw">go</span> <span class="fn">compute</span>(<span class="num">10</span>)
+    t2 = <span class="kw">go</span> <span class="fn">compute</span>(<span class="num">20</span>)
+    t3 = <span class="kw">go</span> <span class="fn">compute</span>(<span class="num">30</span>)
+
+    <span class="cm">// Wait for results</span>
+    r1 = <span class="kw">wait</span> t1
+    r2 = <span class="kw">wait</span> t2
+    r3 = <span class="kw">wait</span> t3
+
+    <span class="fn">print</span>(<span class="str">"results: {r1}, {r2}, {r3}"</span>)
+    <span class="cm">// results: 100, 400, 900</span>
+
+    <span class="cm">// Update shared state</span>
+    counter.<span class="fn">update!</span>(r1 + r2 + r3)
+    <span class="fn">print</span>(<span class="str">"total = {counter.read()}"</span>)
+    <span class="cm">// total = 1400</span></code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 19 MEMORY MANAGEMENT ========== -->
+<section id="memory">
+<h2><span class="num">19</span>Memory Management</h2>
+
+<p>MIX provides three tools for precise memory control: <code>defer</code> for automatic
+cleanup, <code>unsafe</code> for raw pointer operations, and <code>zone</code> for scoped arena
+allocation.</p>
+
+<p>The <code>defer</code> keyword schedules a function to run when the current scope exits,
+regardless of how it exits. This is ideal for closing files and releasing resources.
+The <code>unsafe</code> block disables safety checks for low-level pointer work.
+The <code>zone</code> block creates a memory arena that is freed all at once when the block ends.</p>
+
+<pre><code><span class="fn">main</span>()
+    <span class="cm">// defer -- cleanup runs at scope exit</span>
+    handle = <span class="fn">file_open</span>(<span class="str">"data.txt"</span>)
+    <span class="kw">defer</span> <span class="fn">file_close</span>(handle)
+    <span class="cm">// ... use handle ... file_close runs automatically</span>
+
+    <span class="cm">// Multiple defers run in reverse order (LIFO)</span>
+    <span class="kw">defer</span> <span class="fn">print</span>(<span class="str">"first defer"</span>)
+    <span class="kw">defer</span> <span class="fn">print</span>(<span class="str">"second defer"</span>)
+    <span class="cm">// prints "second defer" then "first defer"</span>
+
+    <span class="cm">// unsafe -- raw pointer operations</span>
+    <span class="kw">unsafe</span>
+        ptr = <span class="fn">malloc</span>(<span class="num">64</span>)
+        <span class="cm">// ... work with raw memory ...</span>
+        <span class="fn">free</span>(ptr)
+
+    <span class="cm">// zone -- scoped arena allocation</span>
+    <span class="kw">zone</span>
+        <span class="cm">// all allocations in this block use arena</span>
+        data = [<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>, <span class="num">5</span>]
+        <span class="fn">print</span>(<span class="str">"zone data: {data}"</span>)
+    <span class="cm">// arena freed here -- all zone allocations gone</span></code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 20 C INTEROP ========== -->
+<section id="c-interop">
+<h2><span class="num">20</span>C Interop</h2>
+
+<p>MIX can call C functions directly using <code>extern</code> declarations. Declare the
+C function signature with MIX types, and the compiler handles the ABI bridging
+automatically. Link against C libraries using the Project build system or
+compiler flags.</p>
+
+<p>For larger C libraries, use <code>--bind</code> to auto-generate MIX bindings from C
+header files. This saves you from manually declaring every function.</p>
+
+<pre><code><span class="cm">// Declare external C functions</span>
+<span class="kw">extern</span> <span class="str">"libc"</span>
+    <span class="fn">puts</span>(s: <span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span>
+    <span class="fn">getenv</span>(name: <span class="ty">str</span>) <span class="op">-></span> <span class="ty">str</span>
+    <span class="fn">abs</span>(n: <span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span>
+
+<span class="fn">main</span>()
+    <span class="cm">// Call C functions directly</span>
+    <span class="fn">puts</span>(<span class="str">"Hello from C!"</span>)
+
+    home = <span class="fn">getenv</span>(<span class="str">"HOME"</span>)
+    <span class="fn">print</span>(<span class="str">"home = {home}"</span>)
+
+    <span class="fn">print</span>(<span class="str">"abs(-42) = {abs(-42)}"</span>)</code><span class="label">mix</span></pre>
+
+<p>For a complete C library like SDL3, use the binding generator:</p>
+
+<pre><code><span class="cm"># Generate MIX bindings from a C header</span>
+mix --bind SDL3/SDL.h -o sdl3.mix</code><span class="label">shell</span></pre>
+
+<p>Then import and use the generated bindings in your program:</p>
+
+<pre><code><span class="kw">use</span> sdl3
+
+<span class="fn">main</span>()
+    sdl3.<span class="fn">SDL_Init</span>(sdl3.<span class="fn">SDL_INIT_VIDEO</span>)
+    <span class="cm">// ... create window, render, etc.</span>
+    sdl3.<span class="fn">SDL_Quit</span>()</code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 21 LAMBDAS ========== -->
+<section id="lambdas">
+<h2><span class="num">21</span>Lambdas</h2>
+
+<p>Lambdas are anonymous functions defined inline with the <code>=&gt;</code> arrow syntax.
+Single-parameter lambdas use <code>x =&gt; expr</code>, and multi-parameter lambdas use
+<code>(a, b) =&gt; expr</code>. Lambdas can be passed as arguments to higher-order functions.</p>
+
+<p>This makes functional patterns like map, filter, and reduce concise and readable.</p>
+
+<pre><code><span class="cm">// Higher-order function that takes a function argument</span>
+<span class="fn">apply_twice</span>(x: <span class="ty">int</span>, f: (<span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span>
+    <span class="fn">f</span>(<span class="fn">f</span>(x))
+
+<span class="fn">transform</span>(items: [<span class="ty">int</span>], f: (<span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span>) <span class="op">-></span> [<span class="ty">int</span>]
+    [<span class="fn">f</span>(x) <span class="kw">for</span> x <span class="kw">in</span> items]
+
+<span class="fn">main</span>()
+    <span class="cm">// Single-parameter lambda</span>
+    doubled = <span class="fn">apply_twice</span>(<span class="num">3</span>, x <span class="op">=></span> x * <span class="num">2</span>)
+    <span class="fn">print</span>(<span class="str">"doubled: {doubled}"</span>)  <span class="cm">// doubled: 12</span>
+
+    <span class="cm">// Multi-parameter lambda</span>
+    add = (a, b) <span class="op">=></span> a + b
+    <span class="fn">print</span>(<span class="str">"sum: {add(3, 4)}"</span>)    <span class="cm">// sum: 7</span>
+
+    <span class="cm">// Lambda with higher-order function</span>
+    nums = [<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>, <span class="num">5</span>]
+    squares = <span class="fn">transform</span>(nums, x <span class="op">=></span> x * x)
+    <span class="fn">print</span>(squares)   <span class="cm">// [1, 4, 9, 16, 25]</span>
+
+    <span class="cm">// Inline filter with comprehension</span>
+    big = [x <span class="kw">for</span> x <span class="kw">in</span> nums <span class="kw">if</span> x > <span class="num">3</span>]
+    <span class="fn">print</span>(big)       <span class="cm">// [4, 5]</span></code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 22 COMPILE-TIME FEATURES ========== -->
+<section id="compile-time">
+<h2><span class="num">22</span>Compile-Time Features</h2>
+
+<p>MIX supports compile-time constants and platform detection using the <code>@</code> prefix.
+Use <code>@const</code> to define values evaluated at compile time. The <code>@os</code> and <code>@arch</code>
+directives let you write platform-specific code that is resolved during compilation.</p>
+
+<p>Dead branches (where the compile-time condition is false) are eliminated from the
+final binary entirely, with no runtime cost.</p>
+
+<pre><code><span class="cm">// Compile-time constant</span>
+<span class="op">@</span><span class="kw">const</span> MAX_PLAYERS = <span class="num">64</span>
+<span class="op">@</span><span class="kw">const</span> VERSION = <span class="str">"1.0.0"</span>
+
+<span class="fn">main</span>()
+    <span class="fn">print</span>(<span class="str">"version {VERSION}"</span>)
+    <span class="fn">print</span>(<span class="str">"max players: {MAX_PLAYERS}"</span>)
+
+    <span class="cm">// Platform detection</span>
+    <span class="kw">if</span> <span class="op">@</span>os == <span class="str">"macos"</span>
+        <span class="fn">print</span>(<span class="str">"Running on macOS"</span>)
+    <span class="kw">else</span> <span class="kw">if</span> <span class="op">@</span>os == <span class="str">"linux"</span>
+        <span class="fn">print</span>(<span class="str">"Running on Linux"</span>)
+
+    <span class="cm">// Architecture detection</span>
+    <span class="kw">if</span> <span class="op">@</span>arch == <span class="str">"aarch64"</span>
+        <span class="fn">print</span>(<span class="str">"ARM 64-bit"</span>)
+    <span class="kw">else</span> <span class="kw">if</span> <span class="op">@</span>arch == <span class="str">"x86_64"</span>
+        <span class="fn">print</span>(<span class="str">"x86 64-bit"</span>)</code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 23 FILE I/O ========== -->
+<section id="file-io">
+<h2><span class="num">23</span>File I/O</h2>
+
+<p>MIX provides built-in functions for reading and writing files. Use
+<code>file_read_all</code> and <code>file_write_all</code> for simple one-shot operations.
+For more control, use <code>file_open</code>, <code>file_write</code>, and <code>file_close</code> with
+<code>defer</code> for automatic cleanup.</p>
+
+<p>Check for file existence with <code>file_exists</code> before reading. These functions
+work with the result type, so use <code>else</code> or <code>?</code> for error handling.</p>
+
+<pre><code><span class="fn">main</span>()
+    <span class="cm">// Write a file (one-shot)</span>
+    <span class="fn">file_write_all</span>(<span class="str">"hello.txt"</span>, <span class="str">"Hello, world!\n"</span>)
+
+    <span class="cm">// Check if file exists</span>
+    <span class="kw">if</span> <span class="fn">file_exists</span>(<span class="str">"hello.txt"</span>)
+        <span class="fn">print</span>(<span class="str">"file exists"</span>)
+
+    <span class="cm">// Read entire file</span>
+    content = <span class="fn">file_read_all</span>(<span class="str">"hello.txt"</span>) <span class="kw">else</span> <span class="str">""</span>
+    <span class="fn">print</span>(<span class="str">"content: {content}"</span>)
+
+    <span class="cm">// File handle with defer for cleanup</span>
+    f = <span class="fn">file_open</span>(<span class="str">"log.txt"</span>)
+    <span class="kw">defer</span> <span class="fn">file_close</span>(f)
+
+    <span class="fn">file_write</span>(f, <span class="str">"line 1\n"</span>)
+    <span class="fn">file_write</span>(f, <span class="str">"line 2\n"</span>)
+    <span class="fn">file_write</span>(f, <span class="str">"line 3\n"</span>)
+    <span class="cm">// file_close runs automatically via defer</span></code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 24 OS AND SYSTEM ========== -->
+<section id="os">
+<h2><span class="num">24</span>OS and System</h2>
+
+<p>MIX includes built-in functions for interacting with the operating system.
+Run shell commands, read environment variables, work with the filesystem,
+and handle command-line arguments -- all without importing any modules.</p>
+
+<p>These functions are available globally. Use <code>shell()</code> to run commands and
+get the exit code, or <code>shell_output()</code> to capture stdout as a string.</p>
+
+<pre><code><span class="fn">main</span>()
+    <span class="cm">// Run a shell command (returns exit code)</span>
+    code = <span class="fn">shell</span>(<span class="str">"echo 'hello from shell'"</span>)
+    <span class="fn">print</span>(<span class="str">"exit code: {code}"</span>)
+
+    <span class="cm">// Capture command output</span>
+    output = <span class="fn">shell_output</span>(<span class="str">"uname -m"</span>)
+    <span class="fn">print</span>(<span class="str">"arch: {output}"</span>)
+
+    <span class="cm">// Environment variables</span>
+    home = <span class="fn">env</span>(<span class="str">"HOME"</span>)
+    <span class="fn">print</span>(<span class="str">"home: {home}"</span>)
+
+    <span class="cm">// Current working directory</span>
+    cwd = <span class="fn">getcwd</span>()
+    <span class="fn">print</span>(<span class="str">"cwd: {cwd}"</span>)
+
+    <span class="cm">// Create directory (recursive, like mkdir -p)</span>
+    <span class="fn">mkdir</span>(<span class="str">"output/logs"</span>)
+
+    <span class="cm">// List directory contents</span>
+    files = <span class="fn">list_dir</span>(<span class="str">"."</span>)
+    <span class="kw">for</span> f <span class="kw">in</span> files
+        <span class="fn">print</span>(<span class="str">"  {f}"</span>)
+
+    <span class="cm">// Check file existence</span>
+    <span class="kw">if</span> <span class="fn">file_exists</span>(<span class="str">"build.mix"</span>)
+        <span class="fn">print</span>(<span class="str">"build.mix found"</span>)
+
+    <span class="cm">// Command-line arguments</span>
+    argv = <span class="fn">args</span>()
+    <span class="kw">for</span> arg <span class="kw">in</span> argv
+        <span class="fn">print</span>(<span class="str">"arg: {arg}"</span>)
+
+    <span class="cm">// Exit with code</span>
+    <span class="fn">exit</span>(<span class="num">0</span>)</code><span class="label">mix</span></pre>
+
+</section>
+
+<!-- ========== 25 BUILD SYSTEM ========== -->
+<section id="build">
+<h2><span class="num">25</span>Build System</h2>
+
+<p>MIX has a built-in build system based on the <code>Project</code> shape. Create a
+<code>build.mix</code> file in your project root that defines a Project with your build
+configuration. Running <code>mix build</code> (with no file argument) automatically finds
+and executes <code>build.mix</code>.</p>
+
+<p>The Project shape supports fields for the entry file, output binary name,
+C libraries to link, library search paths, include paths, compiler flags,
+and a debug mode toggle. The <code>.build()</code> method compiles the project using
+these settings.</p>
+
+<pre><code><span class="cm">// build.mix -- project build configuration</span>
+
+<span class="fn">main</span>()
+    project = <span class="ty">Project</span>(
+        name: <span class="str">"my_game"</span>,
+        entry: <span class="str">"src/game.mix"</span>,
+        output: <span class="str">"game"</span>,
+        libs: [<span class="str">"SDL3"</span>, <span class="str">"m"</span>],
+        lib_paths: [<span class="str">"/usr/local/lib"</span>],
+        include_paths: [<span class="str">"/usr/local/include"</span>],
+        flags: [<span class="str">"-O2"</span>],
+        debug: <span class="kw">false</span>
+    )
+
+    project.<span class="fn">build</span>()</code><span class="label">build.mix</span></pre>
+
+<p>Then build and run your project from the command line:</p>
+
+<pre><code><span class="cm"># Run build.mix to compile the project</span>
+mix build
+
+<span class="cm"># Or compile and run in one step</span>
+mix run
+
+<span class="cm"># The output binary is placed in the current directory</span>
+./game</code><span class="label">shell</span></pre>
+
+<p>Default values for missing fields: string fields default to <code>""</code>, list fields
+default to <code>[]</code>, and <code>debug</code> defaults to <code>false</code>. You only need to specify the
+fields relevant to your project.</p>
+
+<pre><code><span class="cm">// Minimal build.mix -- just entry and output</span>
+
+<span class="fn">main</span>()
+    project = <span class="ty">Project</span>(
+        name: <span class="str">"hello"</span>,
+        entry: <span class="str">"hello.mix"</span>,
+        output: <span class="str">"hello"</span>
+    )
+
+    project.<span class="fn">build</span>()</code><span class="label">build.mix</span></pre>
+
+</section>
+
+</div><!-- /container -->
+
+<footer>
+    <em>mix</em> Tutorials &mdash; <a href="DOCS.html">Back to main docs</a>
+</footer>
+
+</body>
+</html>

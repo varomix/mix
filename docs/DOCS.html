@@ -418,10 +418,13 @@ footer em { color: var(--text); }
     <a href="#shapes-sec">Shapes</a>
     <a href="#collections">Collections</a>
     <a href="#concurrency-sec">Concurrency</a>
+    <a href="#stdlib-sec">Stdlib</a>
     <a href="#interop">C Interop</a>
     <a href="#tooling-sec">Tooling</a>
     <a href="#tutorial">Tutorial</a>
     <a href="#report">Report</a>
+    <a href="overview.html" style="color:var(--accent3)">Reference</a>
+    <a href="tutorials.html" style="color:var(--accent2)">Tutorials</a>
 </div>
 
 <!-- ========== HERO ========== -->
@@ -431,11 +434,12 @@ footer em { color: var(--text); }
     <p class="tagline">"Fast to run, fast to write, fast to read."</p>
     <p class="hero-sub">A systems language with the footprint of C and the clarity of Python. Compiles to native arm64 via QBE. Built for graphics, games, and real-time systems.</p>
     <div class="hero-badges">
-        <span class="badge g">43/43 tests passing</span>
+        <span class="badge g">49/49 tests passing</span>
         <span class="badge b">QBE backend</span>
         <span class="badge p">arm64 native</span>
         <span class="badge o">SDL3 verified</span>
         <span class="badge r">pthreads concurrency</span>
+        <span class="badge g">standard library</span>
     </div>
     <div class="scroll-hint">scroll <span>&darr;</span></div>
 </div>
@@ -669,7 +673,27 @@ greeting = <span class="str">"Hello"</span> + <span class="str">" "</span> + <sp
 
 <span class="cm">// Convert to string</span>
 s = <span class="fn">to_string</span>(<span class="num">42</span>)         <span class="cm">// "42"</span></code><span class="label">mix</span></pre>
-<p class="dim">String methods: <code>.len</code>, <code>.upper()</code>, <code>.lower()</code>, <code>.trim()</code>, <code>.split()</code>, <code>.contains()</code>, <code>.starts_with()</code>, <code>.ends_with()</code>, <code>.replace()</code>, <code>.char_at()</code>. Concatenation: <code>str + str</code>. Conversion: <code>to_string()</code>.</p>
+<p class="dim">String methods: <code>.len</code>, <code>.upper()</code>, <code>.lower()</code>, <code>.trim()</code>, <code>.split()</code>, <code>.contains()</code>, <code>.starts_with()</code>, <code>.ends_with()</code>, <code>.replace()</code>, <code>.char_at()</code>, <code>.slice()</code>, <code>.repeat()</code>, <code>.reverse()</code>, <code>.index_of()</code>. Concatenation: <code>str + str</code>. Conversion: <code>to_string()</code>.</p>
+
+<h3>Sets</h3>
+<pre><code>colors<span class="op">!</span> = <span class="kw">set</span>{<span class="str">"red"</span>, <span class="str">"green"</span>, <span class="str">"blue"</span>}
+<span class="fn">print</span>(colors.<span class="fn">has</span>(<span class="str">"red"</span>))    <span class="cm">// true</span>
+<span class="fn">print</span>(colors.len)           <span class="cm">// 3</span>
+
+colors.<span class="fn">add!</span>(<span class="str">"yellow"</span>)
+colors.<span class="fn">remove!</span>(<span class="str">"green"</span>)
+
+<span class="cm">// Set operations</span>
+a = <span class="kw">set</span>{<span class="str">"x"</span>, <span class="str">"y"</span>}
+b = <span class="kw">set</span>{<span class="str">"y"</span>, <span class="str">"z"</span>}
+u = a.<span class="fn">union</span>(b)              <span class="cm">// {"x", "y", "z"}</span>
+ix = a.<span class="fn">intersect</span>(b)          <span class="cm">// {"y"}</span>
+d = a.<span class="fn">diff</span>(b)                <span class="cm">// {"x"}</span>
+
+<span class="cm">// Iteration</span>
+<span class="kw">for</span> item <span class="kw">in</span> colors
+    <span class="fn">print</span>(item)</code><span class="label">mix</span></pre>
+<p class="dim">Set methods: <code>.add!()</code>, <code>.remove!()</code>, <code>.has()</code>, <code>.union()</code>, <code>.intersect()</code>, <code>.diff()</code>. Properties: <code>.len</code>, <code>.values</code>. Type: <code>set[str]</code>. Empty set: <code>set{}</code>.</p>
 
 <h3>Optionals</h3>
 <pre><code><span class="fn">find</span>(items: [<span class="ty">int</span>], target: <span class="ty">int</span>) -> <span class="ty">int?</span>
@@ -740,6 +764,49 @@ counter.<span class="fn">update!</span>(v => v + <span class="num">1</span>)
 </div>
 </div>
 <p class="dim"><code>pub</code> marks exports. <code>use math.vec</code> resolves to <code>math/vec.mix</code>. Each module compiles separately, linked together.</p>
+</section>
+
+<!-- ========== STANDARD LIBRARY ========== -->
+<section id="stdlib-sec">
+<h2><span class="num">06b</span>Standard Library</h2>
+<p>MIX ships with a standard library found automatically relative to the compiler binary. Import with <code>use std.*</code>.</p>
+
+<div class="card-grid">
+<div class="card">
+<h4>std.math</h4>
+<pre><code><span class="kw">use</span> std.math
+
+<span class="fn">print</span>(<span class="fn">PI</span>())            <span class="cm">// 3.14159</span>
+<span class="fn">print</span>(<span class="fn">deg_to_rad</span>(<span class="num">180.0</span>)) <span class="cm">// 3.14159</span>
+<span class="fn">print</span>(<span class="fn">hypot</span>(<span class="num">3.0</span>, <span class="num">4.0</span>))  <span class="cm">// 5</span>
+<span class="fn">print</span>(<span class="fn">sign</span>(<span class="num">-5.0</span>))       <span class="cm">// -1</span></code></pre>
+<p class="dim"><code>PI()</code>, <code>E()</code>, <code>TAU()</code>, <code>deg_to_rad</code>, <code>rad_to_deg</code>, <code>hypot</code>, <code>sign</code>, <code>fmod</code></p>
+</div>
+<div class="card">
+<h4>std.string</h4>
+<pre><code><span class="kw">use</span> std.string
+
+<span class="fn">print</span>(<span class="fn">capitalize</span>(<span class="str">"hello"</span>)) <span class="cm">// Hello</span>
+<span class="fn">print</span>(<span class="fn">reverse</span>(<span class="str">"abcde"</span>))    <span class="cm">// edcba</span>
+<span class="fn">print</span>(<span class="fn">pad_left</span>(<span class="str">"42"</span>, <span class="num">5</span>, <span class="str">"0"</span>)) <span class="cm">// 00042</span>
+<span class="fn">print</span>(<span class="fn">count</span>(<span class="str">"aaa"</span>, <span class="str">"a"</span>))    <span class="cm">// 3</span></code></pre>
+<p class="dim"><code>is_empty</code>, <code>capitalize</code>, <code>reverse</code>, <code>count</code>, <code>pad_left</code>, <code>pad_right</code></p>
+</div>
+<div class="card">
+<h4>std.collections</h4>
+<pre><code><span class="kw">use</span> std.collections
+
+s<span class="op">!</span> = <span class="ty">Stack</span>(items: [])
+s.<span class="fn">push!</span>(<span class="num">10</span>)
+s.<span class="fn">push!</span>(<span class="num">20</span>)
+<span class="fn">print</span>(s.<span class="fn">pop!</span>())   <span class="cm">// 20</span>
+
+q<span class="op">!</span> = <span class="ty">Queue</span>(items: [])
+q.<span class="fn">enqueue!</span>(<span class="num">1</span>)
+<span class="fn">print</span>(q.<span class="fn">dequeue!</span>()) <span class="cm">// 1</span></code></pre>
+<p class="dim"><code>Stack</code>: push!/pop!/peek/is_empty/size. <code>Queue</code>: enqueue!/dequeue!/peek/is_empty/size.</p>
+</div>
+</div>
 </section>
 
 <!-- ========== C INTEROP ========== -->
@@ -836,13 +903,20 @@ app.<span class="fn">build</span>()</code></pre>
 <h2><span class="num">09</span>Tooling</h2>
 
 <h3>C Header Bindings (<code>--bind</code>)</h3>
-<p>Auto-generate MIX extern blocks from C headers. No more manual typing for SDL3, Raylib, or any C library.</p>
+<p>Auto-generate MIX extern blocks from C headers. Handles SDL3 (1,400+ functions), Raylib (580+ functions), and any C library. Shows progress for directory mode.</p>
 
-<pre><code><span class="cm"># Single header</span>
+<pre><code><span class="cm"># Single header — completes in ~0.1s even for SDL3</span>
 ./build/mix --bind /opt/homebrew/include/SDL3/SDL.h -o sdl3.mix --lib SDL3
 
-<span class="cm"># Entire directory of headers</span>
-./build/mix --bind /opt/homebrew/include/SDL3/ -o sdl3.mix --lib SDL3</code></pre>
+<span class="cm"># Entire directory with progress output</span>
+./build/mix --bind /opt/homebrew/include/SDL3/ -o sdl3.mix --lib SDL3
+<span class="cm"># mix: [1/86] SDL_tray.h</span>
+<span class="cm"># mix: [2/86] SDL_misc.h</span>
+<span class="cm"># ...</span>
+<span class="cm"># mix: wrote 2129 functions, 4096 constants</span>
+
+<span class="cm"># Check version</span>
+./build/mix --version  <span class="cm"># mix 0.1.0 (2026-03-04)</span></code></pre>
 
 <p>Given a C header like:</p>
 <pre><code><span class="ty">int</span> <span class="fn">SDL_Init</span>(<span class="ty">uint32_t</span> flags);
@@ -1108,8 +1182,8 @@ vim.api.nvim_create_autocmd(<span class="str">"FileType"</span>, {
 <h2><span class="num">12</span>Implementation Report</h2>
 
 <div class="stats">
-    <div class="stat"><div class="val">45</div><div class="lbl">Tests Passing</div></div>
-    <div class="stat"><div class="val">11</div><div class="lbl">Phases Complete</div></div>
+    <div class="stat"><div class="val">49</div><div class="lbl">Tests Passing</div></div>
+    <div class="stat"><div class="val">12</div><div class="lbl">Phases Complete</div></div>
     <div class="stat"><div class="val">15</div><div class="lbl">Source Files</div></div>
     <div class="stat"><div class="val">arm64</div><div class="lbl">Native Binary</div></div>
 </div>
@@ -1209,6 +1283,10 @@ vim.api.nvim_create_autocmd(<span class="str">"FileType"</span>, {
 <tr><td>042</td><td>error_propagation</td><td>? operator, error propagation</td><td class="test-pass">PASS</td></tr>
 <tr><td>043</td><td>build_builtins</td><td>OS builtins: shell, file_exists, env, getcwd, args</td><td class="test-pass">PASS</td></tr>
 <tr><td>044</td><td>match_expr</td><td>Match as expression, implicit return</td><td class="test-pass">PASS</td></tr>
+<tr><td>045</td><td>sets</td><td>Set type: literals, add, remove, has, union, intersect, diff</td><td class="test-pass">PASS</td></tr>
+<tr><td>046</td><td>std_math</td><td>Standard library: math (PI, hypot, sign, fmod)</td><td class="test-pass">PASS</td></tr>
+<tr><td>047</td><td>std_string</td><td>Standard library: string (capitalize, reverse, pad, count)</td><td class="test-pass">PASS</td></tr>
+<tr><td>048</td><td>std_collections</td><td>Standard library: Stack and Queue shapes</td><td class="test-pass">PASS</td></tr>
 </table>
 
 <h3>Remaining from Spec</h3>

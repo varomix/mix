@@ -107,6 +107,11 @@ void docstore_close(DocumentStore *store, const char *uri) {
     }
 }
 
+// No-op diagnostic callback to silently discard sema errors
+static void discard_diagnostic(DiagSeverity sev, SrcLoc loc, const char *msg, void *ud) {
+    (void)sev; (void)loc; (void)msg; (void)ud;
+}
+
 void document_analyze(LspDocument *doc) {
     // Destroy old arena, create fresh
     arena_destroy(&doc->doc_arena);
@@ -142,14 +147,23 @@ void document_analyze(LspDocument *doc) {
     doc->ast = parser_parse(&parser);
 
     // Sema — try even with parse errors for best-effort type info
+    // Note: sema runs without module context, so it will report false errors
+    // for imported functions. We capture the error count before sema and only
+    // keep parse errors (before sema) as diagnostics.
     if (doc->ast && doc->ast->kind == NODE_PROGRAM) {
-        int errs_before = mix_error_count();
+        int parse_diag_count = doc->diagnostics.count;
         Sema sema = sema_create(&doc->doc_arena);
-        sema_analyze(&sema, doc->ast);
-        (void)errs_before;
 
-        // Build symbol index from analyzed AST
-        symbol_index_build(&doc->symbols, doc->ast);
+        // Suppress sema error output — we only want it for type info
+        errors_set_callback(discard_diagnostic, NULL);
+        sema_analyze(&sema, doc->ast);
+
+        // Restore callback and trim diagnostics to parse-only errors
+        errors_set_callback(lsp_diagnostic_callback, &doc->diagnostics);
+        doc->diagnostics.count = parse_diag_count;
+
+        // Build symbol index from analyzed AST (includes imported modules)
+        symbol_index_build_with_imports(&doc->symbols, doc->ast, doc->filepath);
     }
 
     // Restore default error behavior

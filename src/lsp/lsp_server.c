@@ -2,6 +2,7 @@
 #include "lsp_transport.h"
 #include "lsp_position.h"
 #include "lsp_hover.h"
+#include <ctype.h>
 
 void lsp_server_init(LspServer *server) {
     memset(server, 0, sizeof(LspServer));
@@ -52,6 +53,16 @@ static void handle_initialize(LspServer *server, int64_t id, JsonValue *params) 
           jw_key(&w, "triggerCharacters");
           jw_array_start(&w);
             jw_string(&w, ".");
+          jw_array_end(&w);
+        jw_object_end(&w);
+
+        // Signature Help
+        jw_key(&w, "signatureHelpProvider");
+        jw_object_start(&w);
+          jw_key(&w, "triggerCharacters");
+          jw_array_start(&w);
+            jw_string(&w, "(");
+            jw_string(&w, ",");
           jw_array_end(&w);
         jw_object_end(&w);
 
@@ -492,6 +503,176 @@ static void handle_completion_request(LspServer *server, int64_t id, JsonValue *
     jw_free(&w);
 }
 
+// --- Signature Help ---
+
+static void handle_signature_help(LspServer *server, int64_t id, JsonValue *params) {
+    const char *uri = json_get_string(json_get(params, "textDocument"), "uri");
+    JsonValue *pos = json_get(params, "position");
+    int line = (int)json_get_int(pos, "line") + 1;
+    int col = (int)json_get_int(pos, "character") + 1;
+
+    LspDocument *doc = docstore_find(&server->documents, uri);
+    if (!doc || !doc->source) {
+        lsp_send_response(id, "null");
+        return;
+    }
+
+    // Find the line in source
+    const char *src = doc->source;
+    int cur_line = 1;
+    while (*src && cur_line < line) {
+        if (*src == '\n') cur_line++;
+        src++;
+    }
+
+    // Get the text up to cursor position
+    int cursor = col - 1;
+    char line_buf[1024];
+    int lb = 0;
+    while (src[lb] && src[lb] != '\n' && lb < cursor && lb < 1023) {
+        line_buf[lb] = src[lb];
+        lb++;
+    }
+    line_buf[lb] = '\0';
+
+    // Scan backwards from cursor to find the function name and count commas for active param
+    int paren_depth = 0;
+    int comma_count = 0;
+    int func_end = -1;
+
+    for (int i = lb - 1; i >= 0; i--) {
+        char c = line_buf[i];
+        if (c == ')') paren_depth++;
+        else if (c == '(') {
+            if (paren_depth > 0) {
+                paren_depth--;
+            } else {
+                // Found the opening paren — function name is before it
+                func_end = i;
+                break;
+            }
+        } else if (c == ',' && paren_depth == 0) {
+            comma_count++;
+        }
+    }
+
+    if (func_end < 0) {
+        lsp_send_response(id, "null");
+        return;
+    }
+
+    // Extract function name (scan back from func_end)
+    int name_end = func_end - 1;
+    while (name_end >= 0 && (line_buf[name_end] == ' ' || line_buf[name_end] == '\t')) name_end--;
+    if (name_end < 0) {
+        lsp_send_response(id, "null");
+        return;
+    }
+
+    // Check for method call: obj.method(
+    int name_start = name_end;
+    while (name_start > 0 && (isalnum((unsigned char)line_buf[name_start - 1]) || line_buf[name_start - 1] == '_' || line_buf[name_start - 1] == '!'))
+        name_start--;
+
+    char func_name[256];
+    int nlen = name_end - name_start + 1;
+    if (nlen <= 0 || nlen > 255) {
+        lsp_send_response(id, "null");
+        return;
+    }
+    memcpy(func_name, line_buf + name_start, nlen);
+    func_name[nlen] = '\0';
+
+    // Strip trailing ! from method names for lookup
+    int fnl = (int)strlen(func_name);
+    if (fnl > 0 && func_name[fnl - 1] == '!') func_name[fnl - 1] = '\0';
+
+    // Look up the function
+    SymbolEntry *entry = symbol_index_lookup(&doc->symbols, func_name);
+    if (!entry) {
+        lsp_send_response(id, "null");
+        return;
+    }
+
+    MixType *ft = (entry->type && entry->type->kind == TYPE_FUNC) ? entry->type : NULL;
+    int pc = ft ? ft->func.param_count : entry->param_name_count;
+
+    if (pc == 0 && !ft) {
+        // No type info and no param names — can't show signature
+        lsp_send_response(id, "null");
+        return;
+    }
+
+    // Build the signature label: "func_name(param1: type1, param2: type2) -> ret"
+    char sig_label[1024];
+    int off = snprintf(sig_label, sizeof(sig_label), "%s(", entry->name);
+
+    // Track parameter label offsets for highlighting
+    int param_offsets[64][2]; // [start, end] for each param
+
+    for (int i = 0; i < pc && i < 64; i++) {
+        if (i > 0) off += snprintf(sig_label + off, sizeof(sig_label) - off, ", ");
+        int pstart = off;
+
+        const char *pname = (i < entry->param_name_count && entry->param_names[i])
+            ? entry->param_names[i] : "p";
+
+        // Prefer AST-derived type strings (always accurate), fall back to MixType
+        if (entry->param_type_strs && i < entry->param_name_count && entry->param_type_strs[i]) {
+            off += snprintf(sig_label + off, sizeof(sig_label) - off, "%s: %s", pname, entry->param_type_strs[i]);
+        } else if (ft && i < ft->func.param_count && ft->func.param_types[i]) {
+            char type_str[128];
+            mix_type_to_string(ft->func.param_types[i], type_str, sizeof(type_str));
+            off += snprintf(sig_label + off, sizeof(sig_label) - off, "%s: %s", pname, type_str);
+        } else {
+            off += snprintf(sig_label + off, sizeof(sig_label) - off, "%s", pname);
+        }
+
+        param_offsets[i][0] = pstart;
+        param_offsets[i][1] = off;
+    }
+
+    off += snprintf(sig_label + off, sizeof(sig_label) - off, ")");
+
+    // Prefer AST-derived return type string
+    if (entry->return_type_str) {
+        off += snprintf(sig_label + off, sizeof(sig_label) - off, " -> %s", entry->return_type_str);
+    } else if (ft && ft->func.return_type && ft->func.return_type->kind != TYPE_VOID) {
+        char ret_str[128];
+        mix_type_to_string(ft->func.return_type, ret_str, sizeof(ret_str));
+        off += snprintf(sig_label + off, sizeof(sig_label) - off, " -> %s", ret_str);
+    }
+
+    // Build JSON response
+    JsonWriter w;
+    jw_init(&w);
+    jw_object_start(&w);
+      jw_key(&w, "signatures");
+      jw_array_start(&w);
+        jw_object_start(&w);
+          jw_key(&w, "label"); jw_string(&w, sig_label);
+          jw_key(&w, "parameters");
+          jw_array_start(&w);
+            for (int i = 0; i < pc && i < 64; i++) {
+                jw_object_start(&w);
+                  jw_key(&w, "label");
+                  jw_array_start(&w);
+                    jw_int(&w, param_offsets[i][0]);
+                    jw_int(&w, param_offsets[i][1]);
+                  jw_array_end(&w);
+                jw_object_end(&w);
+            }
+          jw_array_end(&w);
+        jw_object_end(&w);
+      jw_array_end(&w);
+      jw_key(&w, "activeSignature"); jw_int(&w, 0);
+      jw_key(&w, "activeParameter"); jw_int(&w, comma_count < pc ? comma_count : pc - 1);
+    jw_object_end(&w);
+
+    lsp_send_response(id, w.buf);
+    jw_free(&w);
+}
+
 // --- Dispatch ---
 
 void lsp_server_dispatch(LspServer *server, JsonValue *msg, Arena *scratch) {
@@ -535,6 +716,8 @@ void lsp_server_dispatch(LspServer *server, JsonValue *msg, Arena *scratch) {
         handle_goto_definition(server, id, params);
     } else if (strcmp(method, "textDocument/completion") == 0) {
         handle_completion_request(server, id, params);
+    } else if (strcmp(method, "textDocument/signatureHelp") == 0) {
+        handle_signature_help(server, id, params);
     }
     // Unknown
     else {

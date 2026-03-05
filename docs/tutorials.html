@@ -321,7 +321,7 @@ with a colon when you want to be specific.</p>
 
     <span class="cm">// Mutable variables (note the ! after the name)</span>
     count<span class="op">!</span> = <span class="num">0</span>
-    count = count + <span class="num">1</span>
+    count<span class="op">!</span> = count + <span class="num">1</span>
 
     <span class="cm">// Explicit type annotation</span>
     score: <span class="ty">float</span> = <span class="num">99.5</span>
@@ -329,8 +329,8 @@ with a colon when you want to be specific.</p>
 
     <span class="cm">// Compound assignment on mutable variables</span>
     total<span class="op">!</span> = <span class="num">10</span>
-    total += <span class="num">5</span>      <span class="cm">// total is now 15</span>
-    total -= <span class="num">3</span>      <span class="cm">// total is now 12</span>
+    total<span class="op">!</span> += <span class="num">5</span>      <span class="cm">// total is now 15</span>
+    total<span class="op">!</span> -= <span class="num">3</span>      <span class="cm">// total is now 12</span>
 
     <span class="fn">print</span>(<span class="str">"{name} is {age} years old"</span>)
     <span class="fn">print</span>(<span class="str">"count = {count}, total = {total}"</span>)</code><span class="label">mix</span></pre>
@@ -349,7 +349,7 @@ return type after <code>-&gt;</code>. The body is indented. There is no <code>fn
 The last expression in the body is implicitly returned.</p>
 
 <p>Use <code>done</code> for early return from a function. Functions that perform side effects
-(I/O, mutation, printing) should be marked with <code>~</code> before the parentheses to
+(I/O, mutation, printing) should be marked with <code>~</code> after the closing parenthesis to
 signal to callers that the function has effects beyond its return value.</p>
 
 <pre><code><span class="cm">// Simple function with return type</span>
@@ -367,7 +367,7 @@ signal to callers that the function has effects beyond its return value.</p>
     -n
 
 <span class="cm">// Side-effect marker ~ (this function prints)</span>
-<span class="fn">greet</span><span class="op">~</span>(name: <span class="ty">str</span>)
+<span class="fn">greet</span>(name: <span class="ty">str</span>) <span class="op">~</span>
     <span class="fn">print</span>(<span class="str">"Hello, {name}!"</span>)
 
 <span class="fn">main</span>()
@@ -410,7 +410,7 @@ expression handles pattern matching with <code>_</code> as the wildcard catch-al
     count<span class="op">!</span> = <span class="num">0</span>
     <span class="kw">while</span> count < <span class="num">5</span>
         <span class="fn">print</span>(<span class="str">"count = {count}"</span>)
-        count += <span class="num">1</span>
+        count<span class="op">!</span> += <span class="num">1</span>
 
     <span class="cm">// for with exclusive range (0, 1, 2, 3, 4)</span>
     <span class="kw">for</span> i <span class="kw">in</span> <span class="num">0</span>..<span class="num">5</span>
@@ -814,13 +814,13 @@ success. Functions with <code>~</code> and <code>fail</code> are automatically w
 the error upward. This makes the error path explicit and visible at every call site.</p>
 
 <pre><code><span class="cm">// A function that can fail</span>
-<span class="fn">divide</span><span class="op">~</span>(a: <span class="ty">float</span>, b: <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span>
+<span class="fn">divide</span>(a: <span class="ty">float</span>, b: <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span> <span class="op">~</span>
     <span class="kw">if</span> b == <span class="num">0.0</span>
         <span class="kw">fail</span> <span class="str">"division by zero"</span>
     <span class="kw">done</span> a / b
 
 <span class="cm">// Parse an integer from a string</span>
-<span class="fn">parse_positive</span><span class="op">~</span>(s: <span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span>
+<span class="fn">parse_positive</span>(s: <span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span> <span class="op">~</span>
     n = <span class="fn">parse_int</span>(s)<span class="op">?</span>          <span class="cm">// propagate parse error with ?</span>
     <span class="kw">if</span> n <= <span class="num">0</span>
         <span class="kw">fail</span> <span class="str">"must be positive"</span>

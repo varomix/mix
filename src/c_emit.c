@@ -60,6 +60,9 @@ static void c_escape_string(FILE *out, const char *str, int len) {
 static void emit_runtime_decls(CEmitter *emit) {
     fprintf(emit->out,
         "/* Runtime */\n"
+        "#include <string.h>\n"
+        "static inline int64_t mix_double_to_bits(double d) { int64_t i; memcpy(&i, &d, 8); return i; }\n"
+        "static inline double mix_bits_to_double(int64_t i) { double d; memcpy(&d, &i, 8); return d; }\n"
         "extern void mix_set_args(int32_t, char **);\n"
         "extern void mix_print_int(int64_t);\n"
         "extern void mix_print_float(double);\n"
@@ -475,7 +478,11 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             ind(emit); fprintf(emit->out, "void *t%d = mix_list_new();\n", list_t);
             for (int i = 0; i < expr->list_lit.element_count; i++) {
                 int val = emit_expr(emit, expr->list_lit.elements[i]);
-                ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", list_t, val);
+                MixType *etype = expr->list_lit.elements[i]->resolved_type;
+                if (etype && type_is_float(etype))
+                    { ind(emit); fprintf(emit->out, "mix_list_push(t%d, mix_double_to_bits(t%d));\n", list_t, val); }
+                else
+                    { ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", list_t, val); }
             }
             return list_t;
         }
@@ -561,8 +568,14 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 ind(emit); fprintf(emit->out, "int64_t t%d = mix_map_get(t%d, (const char *)t%d);\n",
                         t, obj, idx);
             } else {
-                ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_get(t%d, (int64_t)t%d);\n",
-                        t, obj, idx);
+                MixType *elem = (obj_type && obj_type->kind == TYPE_LIST) ? obj_type->list.elem_type : NULL;
+                if (elem && type_is_float(elem)) {
+                    ind(emit); fprintf(emit->out, "double t%d = mix_bits_to_double(mix_list_get(t%d, (int64_t)t%d));\n",
+                            t, obj, idx);
+                } else {
+                    ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_get(t%d, (int64_t)t%d);\n",
+                            t, obj, idx);
+                }
             }
             return t;
         }
@@ -603,12 +616,20 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 ind(emit); fprintf(emit->out, "if (t%d) {\n", cond_val);
                 emit->indent++;
                 int val = emit_expr(emit, expr->list_comp.expr);
-                ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", result_list, val);
+                MixType *comp_etype = expr->list_comp.expr->resolved_type;
+                if (comp_etype && type_is_float(comp_etype))
+                    { ind(emit); fprintf(emit->out, "mix_list_push(t%d, mix_double_to_bits(t%d));\n", result_list, val); }
+                else
+                    { ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", result_list, val); }
                 emit->indent--;
                 ind(emit); fprintf(emit->out, "}\n");
             } else {
                 int val = emit_expr(emit, expr->list_comp.expr);
-                ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", result_list, val);
+                MixType *comp_etype = expr->list_comp.expr->resolved_type;
+                if (comp_etype && type_is_float(comp_etype))
+                    { ind(emit); fprintf(emit->out, "mix_list_push(t%d, mix_double_to_bits(t%d));\n", result_list, val); }
+                else
+                    { ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", result_list, val); }
             }
             emit->indent--;
             ind(emit); fprintf(emit->out, "}\n");
@@ -1133,7 +1154,11 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 const char *m = expr->method_call.method_name;
                 int t = next_temp(emit);
                 if (strcmp(m, "push") == 0 && expr->method_call.arg_count == 1) {
-                    ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", obj_temp, arg_temps2[0]);
+                    MixType *elem = obj_type->list.elem_type;
+                    if (elem && type_is_float(elem))
+                        { ind(emit); fprintf(emit->out, "mix_list_push(t%d, mix_double_to_bits(t%d));\n", obj_temp, arg_temps2[0]); }
+                    else
+                        { ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", obj_temp, arg_temps2[0]); }
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 } else if (strcmp(m, "pop") == 0) {
                     ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_pop(t%d);\n", t, obj_temp);
@@ -1642,8 +1667,14 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                 ind(emit); fprintf(emit->out, "for (int64_t _idx_%d = 0; _idx_%d < t%d; _idx_%d++) {\n",
                         idx_id, idx_id, len_t, idx_id);
                 emit->indent++;
-                ind(emit); fprintf(emit->out, "int64_t v_%s = mix_list_get(t%d, _idx_%d);\n",
-                        stmt->for_stmt.var_name, list_ptr, idx_id);
+                MixType *elem = iter_type->list.elem_type;
+                if (elem && type_is_float(elem)) {
+                    ind(emit); fprintf(emit->out, "double v_%s = mix_bits_to_double(mix_list_get(t%d, _idx_%d));\n",
+                            stmt->for_stmt.var_name, list_ptr, idx_id);
+                } else {
+                    ind(emit); fprintf(emit->out, "int64_t v_%s = mix_list_get(t%d, _idx_%d);\n",
+                            stmt->for_stmt.var_name, list_ptr, idx_id);
+                }
                 if (stmt->for_stmt.index_name) {
                     ind(emit); fprintf(emit->out, "int64_t v_%s = _idx_%d;\n",
                             stmt->for_stmt.index_name, idx_id);
@@ -1874,8 +1905,11 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                 ind(emit); fprintf(emit->out, "mix_map_set(t%d, (const char *)t%d, (int64_t)t%d);\n",
                         obj, idx, val);
             } else {
-                ind(emit); fprintf(emit->out, "mix_list_set(t%d, (int64_t)t%d, (int64_t)t%d);\n",
-                        obj, idx, val);
+                MixType *elem = (obj_type && obj_type->kind == TYPE_LIST) ? obj_type->list.elem_type : NULL;
+                if (elem && type_is_float(elem))
+                    { ind(emit); fprintf(emit->out, "mix_list_set(t%d, (int64_t)t%d, mix_double_to_bits(t%d));\n", obj, idx, val); }
+                else
+                    { ind(emit); fprintf(emit->out, "mix_list_set(t%d, (int64_t)t%d, (int64_t)t%d);\n", obj, idx, val); }
             }
             break;
         }

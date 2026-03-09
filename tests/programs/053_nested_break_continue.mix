@@ -1,0 +1,46 @@
+// Test break and continue in nested loops
+main()
+    // break in inner while only exits inner loop
+    i! = 0
+    while i < 3
+        j! = 0
+        while j < 10
+            if j == 2
+                break
+            print("{i}:{j}")
+            j! += 1
+        i! += 1
+
+    // continue in inner while only skips inner iteration
+    i! = 0
+    while i < 2
+        j! = 0
+        while j < 4
+            j! += 1
+            if j == 2
+                continue
+            print("{i}-{j}")
+        i! += 1
+
+    // break in nested for-range
+    for a in 0..3
+        for b in 0..10
+            if b == 2
+                break
+            print("{a},{b}")
+
+    // continue in nested for-range
+    for a in 0..2
+        for b in 0..4
+            if b == 1
+                continue
+            print("{a};{b}")
+
+    // break inner loop, outer loop continues
+    count! = 0
+    for x in 0..3
+        for y in 0..100
+            if y == 3
+                break
+            count! += 1
+    print(count)

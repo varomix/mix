@@ -1704,11 +1704,13 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             int l_end = next_label(emit);
 
             // Push loop labels for break/continue
-            if (emit->loop_depth < 32) {
-                emit->break_labels[emit->loop_depth] = l_end;
-                emit->continue_labels[emit->loop_depth] = l_cond;
-                emit->loop_depth++;
+            if (emit->loop_depth >= 32) {
+                mix_error(stmt->loc, "too many nested loops (max 32)");
+                break;
             }
+            emit->break_labels[emit->loop_depth] = l_end;
+            emit->continue_labels[emit->loop_depth] = l_cond;
+            emit->loop_depth++;
 
             fprintf(emit->out, "@L%d\n", l_cond);
             int cond = emit_expr(emit, stmt->while_stmt.condition);
@@ -1760,11 +1762,13 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 int l_inc = next_label(emit);
 
                 // Push loop labels for break/continue
-                if (emit->loop_depth < 32) {
-                    emit->break_labels[emit->loop_depth] = l_end2;
-                    emit->continue_labels[emit->loop_depth] = l_inc;
-                    emit->loop_depth++;
+                if (emit->loop_depth >= 32) {
+                    mix_error(stmt->loc, "too many nested loops (max 32)");
+                    break;
                 }
+                emit->break_labels[emit->loop_depth] = l_end2;
+                emit->continue_labels[emit->loop_depth] = l_inc;
+                emit->loop_depth++;
 
                 fprintf(emit->out, "@L%d\n", l_cond);
                 int ci = next_temp(emit);
@@ -1821,11 +1825,13 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 int l_inc = next_label(emit);
 
                 // Push loop labels for break/continue
-                if (emit->loop_depth < 32) {
-                    emit->break_labels[emit->loop_depth] = l_end2;
-                    emit->continue_labels[emit->loop_depth] = l_inc;
-                    emit->loop_depth++;
+                if (emit->loop_depth >= 32) {
+                    mix_error(stmt->loc, "too many nested loops (max 32)");
+                    break;
                 }
+                emit->break_labels[emit->loop_depth] = l_end2;
+                emit->continue_labels[emit->loop_depth] = l_inc;
+                emit->loop_depth++;
 
                 fprintf(emit->out, "@L%d\n", l_cond);
                 int ci = next_temp(emit);
@@ -1881,11 +1887,13 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 int l_inc = next_label(emit);
 
                 // Push loop labels for break/continue
-                if (emit->loop_depth < 32) {
-                    emit->break_labels[emit->loop_depth] = l_end2;
-                    emit->continue_labels[emit->loop_depth] = l_inc;
-                    emit->loop_depth++;
+                if (emit->loop_depth >= 32) {
+                    mix_error(stmt->loc, "too many nested loops (max 32)");
+                    break;
                 }
+                emit->break_labels[emit->loop_depth] = l_end2;
+                emit->continue_labels[emit->loop_depth] = l_inc;
+                emit->loop_depth++;
 
                 fprintf(emit->out, "@L%d\n", l_cond);
                 int ci = next_temp(emit);
@@ -1935,11 +1943,13 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 int l_inc = next_label(emit);
 
                 // Push loop labels for break/continue
-                if (emit->loop_depth < 32) {
-                    emit->break_labels[emit->loop_depth] = l_end2;
-                    emit->continue_labels[emit->loop_depth] = l_inc;
-                    emit->loop_depth++;
+                if (emit->loop_depth >= 32) {
+                    mix_error(stmt->loc, "too many nested loops (max 32)");
+                    break;
                 }
+                emit->break_labels[emit->loop_depth] = l_end2;
+                emit->continue_labels[emit->loop_depth] = l_inc;
+                emit->loop_depth++;
 
                 fprintf(emit->out, "@L%d\n", l_cond);
                 int cur = next_temp(emit);

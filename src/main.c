@@ -716,6 +716,12 @@ int main(int argc, char **argv) {
         fclose(ssa_out);
     }
 
+    if (mix_error_count() > 0) {
+        fprintf(stderr, "mix: %d error(s) during code generation\n", mix_error_count());
+        arena_destroy(&arena); free(source); free(lexer.tokens);
+        return 1;
+    }
+
     if (emit_ir_only) {
         if (verbose) fprintf(stderr, "mix: wrote %s\n", gen_path);
         arena_destroy(&arena); free(source); free(lexer.tokens);

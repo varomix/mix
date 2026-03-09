@@ -315,9 +315,15 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
         case NODE_SET_LIT: {
             int set_t = next_temp(emit);
             fprintf(emit->out, "\t%%t%d =l call $mix_set_new()\n", set_t);
+            MixType *set_elem = expr->resolved_type ? expr->resolved_type->set.elem_type : NULL;
+            bool int_set = set_elem && type_is_integer(set_elem);
             for (int i = 0; i < expr->set_lit.element_count; i++) {
                 int elem = emit_expr(emit, expr->set_lit.elements[i]);
-                fprintf(emit->out, "\tcall $mix_set_add(l %%t%d, l %%t%d)\n", set_t, elem);
+                if (int_set) {
+                    fprintf(emit->out, "\tcall $mix_set_add_int(l %%t%d, l %%t%d)\n", set_t, elem);
+                } else {
+                    fprintf(emit->out, "\tcall $mix_set_add(l %%t%d, l %%t%d)\n", set_t, elem);
+                }
             }
             return set_t;
         }
@@ -720,11 +726,30 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 } else if (atype && atype->kind == TYPE_BOOL) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_print_bool(w %%t%d)\n", t, arg_temps[0]);
                 } else if (atype && atype->kind == TYPE_LIST) {
-                    fprintf(emit->out, "\t%%t%d =l call $mix_print_list_int(l %%t%d)\n", t, arg_temps[0]);
+                    MixType *elem = atype->list.elem_type;
+                    if (elem && elem->kind == TYPE_STR) {
+                        fprintf(emit->out, "\t%%t%d =l call $mix_print_list_str(l %%t%d)\n", t, arg_temps[0]);
+                    } else if (elem && type_is_float(elem)) {
+                        fprintf(emit->out, "\t%%t%d =l call $mix_print_list_float(l %%t%d)\n", t, arg_temps[0]);
+                    } else if (elem && elem->kind == TYPE_BOOL) {
+                        fprintf(emit->out, "\t%%t%d =l call $mix_print_list_bool(l %%t%d)\n", t, arg_temps[0]);
+                    } else {
+                        fprintf(emit->out, "\t%%t%d =l call $mix_print_list_int(l %%t%d)\n", t, arg_temps[0]);
+                    }
                 } else if (atype && atype->kind == TYPE_MAP) {
-                    fprintf(emit->out, "\t%%t%d =l call $mix_print_map(l %%t%d)\n", t, arg_temps[0]);
+                    MixType *val_elem = atype->map.val_type;
+                    if (val_elem && val_elem->kind == TYPE_STR) {
+                        fprintf(emit->out, "\t%%t%d =l call $mix_print_map_str(l %%t%d)\n", t, arg_temps[0]);
+                    } else {
+                        fprintf(emit->out, "\t%%t%d =l call $mix_print_map(l %%t%d)\n", t, arg_temps[0]);
+                    }
                 } else if (atype && atype->kind == TYPE_SET) {
-                    fprintf(emit->out, "\t%%t%d =l call $mix_print_set(l %%t%d)\n", t, arg_temps[0]);
+                    MixType *selem = atype->set.elem_type;
+                    if (selem && type_is_integer(selem)) {
+                        fprintf(emit->out, "\t%%t%d =l call $mix_print_set_int(l %%t%d)\n", t, arg_temps[0]);
+                    } else {
+                        fprintf(emit->out, "\t%%t%d =l call $mix_print_set(l %%t%d)\n", t, arg_temps[0]);
+                    }
                 } else {
                     // For small integer types (w), extend to l before printing
                     int arg_t = arg_temps[0];
@@ -918,8 +943,15 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
 
             // to_set(list) -> set
             if (strcmp(expr->call.name, "to_set") == 0 && expr->call.arg_count == 1) {
-                fprintf(emit->out, "\t%%t%d =l call $mix_set_from_list(l %%t%d)\n",
-                        t, arg_temps[0]);
+                MixType *atype = expr->call.args[0]->resolved_type;
+                MixType *elem = (atype && atype->kind == TYPE_LIST) ? atype->list.elem_type : NULL;
+                if (elem && elem->kind == TYPE_STR) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_set_from_list(l %%t%d)\n",
+                            t, arg_temps[0]);
+                } else {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_set_from_list_int(l %%t%d)\n",
+                            t, arg_temps[0]);
+                }
                 return t;
             }
 
@@ -1113,15 +1145,32 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             if (obj_type && obj_type->kind == TYPE_SET) {
                 const char *m = expr->method_call.method_name;
                 int t = next_temp(emit);
+                MixType *selem = obj_type->set.elem_type;
+                bool is_int_set = selem && type_is_integer(selem);
                 if (strcmp(m, "has") == 0 && expr->method_call.arg_count == 1) {
-                    fprintf(emit->out, "\t%%t%d =w call $mix_set_has(l %%t%d, l %%t%d)\n",
-                            t, obj_temp, arg_temps2[0]);
+                    if (is_int_set) {
+                        fprintf(emit->out, "\t%%t%d =w call $mix_set_has_int(l %%t%d, l %%t%d)\n",
+                                t, obj_temp, arg_temps2[0]);
+                    } else {
+                        fprintf(emit->out, "\t%%t%d =w call $mix_set_has(l %%t%d, l %%t%d)\n",
+                                t, obj_temp, arg_temps2[0]);
+                    }
                 } else if (strcmp(m, "add") == 0 && expr->method_call.arg_count == 1) {
-                    fprintf(emit->out, "\tcall $mix_set_add(l %%t%d, l %%t%d)\n",
-                            obj_temp, arg_temps2[0]);
+                    if (is_int_set) {
+                        fprintf(emit->out, "\tcall $mix_set_add_int(l %%t%d, l %%t%d)\n",
+                                obj_temp, arg_temps2[0]);
+                    } else {
+                        fprintf(emit->out, "\tcall $mix_set_add(l %%t%d, l %%t%d)\n",
+                                obj_temp, arg_temps2[0]);
+                    }
                 } else if (strcmp(m, "remove") == 0 && expr->method_call.arg_count == 1) {
-                    fprintf(emit->out, "\tcall $mix_set_remove(l %%t%d, l %%t%d)\n",
-                            obj_temp, arg_temps2[0]);
+                    if (is_int_set) {
+                        fprintf(emit->out, "\tcall $mix_set_remove_int(l %%t%d, l %%t%d)\n",
+                                obj_temp, arg_temps2[0]);
+                    } else {
+                        fprintf(emit->out, "\tcall $mix_set_remove(l %%t%d, l %%t%d)\n",
+                                obj_temp, arg_temps2[0]);
+                    }
                 } else if (strcmp(m, "union") == 0 && expr->method_call.arg_count == 1) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_set_union(l %%t%d, l %%t%d)\n",
                             t, obj_temp, arg_temps2[0]);
@@ -1265,10 +1314,16 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             if (obj_type && obj_type->kind == TYPE_SET) {
                 const char *fn = expr->field_expr.field_name;
                 int t = next_temp(emit);
+                MixType *selem = obj_type->set.elem_type;
+                bool is_int_set = selem && type_is_integer(selem);
                 if (strcmp(fn, "len") == 0) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_set_len(l %%t%d)\n", t, obj);
                 } else if (strcmp(fn, "values") == 0) {
-                    fprintf(emit->out, "\t%%t%d =l call $mix_set_values(l %%t%d)\n", t, obj);
+                    if (is_int_set) {
+                        fprintf(emit->out, "\t%%t%d =l call $mix_set_values_int(l %%t%d)\n", t, obj);
+                    } else {
+                        fprintf(emit->out, "\t%%t%d =l call $mix_set_values(l %%t%d)\n", t, obj);
+                    }
                 }
                 return t;
             }
@@ -1615,7 +1670,13 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 // for item in set → convert to list via mix_set_values, then list iterate
                 int set_ptr = emit_expr(emit, iter);
                 int list_ptr = next_temp(emit);
-                fprintf(emit->out, "\t%%t%d =l call $mix_set_values(l %%t%d)\n", list_ptr, set_ptr);
+                MixType *selem = iter_type->set.elem_type;
+                bool is_int_set = selem && type_is_integer(selem);
+                if (is_int_set) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_set_values_int(l %%t%d)\n", list_ptr, set_ptr);
+                } else {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_set_values(l %%t%d)\n", list_ptr, set_ptr);
+                }
                 int len_t = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l call $mix_list_len(l %%t%d)\n", len_t, list_ptr);
 

@@ -1,0 +1,29 @@
+encode(strs: [str]) -> str
+    res! = ""
+    for s in strs
+        res! = res + to_string(s.len) + "#" + s
+    res
+
+decode(s: str) -> [str]
+    res! = []
+    i! = 0
+    while i < s.len
+        // find the '#' delimiter starting from position i
+        rest = s.slice(i, s.len)
+        hash_pos = rest.index_of("#")
+        j = i + hash_pos
+        length = to_int(s.slice(i, j))
+        res.push!(s.slice(j + 1, j + 1 + length))
+        i! = j + 1 + length
+    res
+
+main()
+    dummy_input = ["Hello", "World"]
+    for word in dummy_input
+        print("the word is: {word} and {word.len}")
+
+    encoded_msg = encode(dummy_input)
+    print("encoded: {encoded_msg}")
+    decoded_string = decode(encoded_msg)
+    print(decoded_string)
+

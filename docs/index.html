@@ -990,19 +990,34 @@ ln -sf "$(pwd)" ~/.vscode/extensions/mix-lang
 }</code></pre>
 
 <h3>Neovim Setup</h3>
-<p>Add to your <code>init.lua</code> (requires Neovim 0.8+ with built-in LSP):</p>
+<p>MIX includes a Neovim plugin with <strong>syntax highlighting</strong> and <strong>LSP integration</strong>. Requires Neovim 0.8+.</p>
 
-<pre><code><span class="cm">-- Source the MIX LSP config</span>
-dofile(<span class="str">"/path/to/mix_lang/editors/nvim/mix.lua"</span>)
+<h4>Option A: Add to runtimepath (recommended)</h4>
+<p>Add these two lines to your <code>init.lua</code>:</p>
+<pre><code><span class="cm">-- Add MIX plugin to runtimepath (syntax highlighting + filetype detection)</span>
+vim.opt.rtp:prepend(<span class="str">"/path/to/mix_lang/editors/nvim"</span>)
 
-<span class="cm">-- Or if mix-lsp is on your PATH, just add:</span>
-vim.filetype.add({ extension = { mix = <span class="str">"mix"</span> } })
-vim.api.nvim_create_autocmd(<span class="str">"FileType"</span>, {
-    pattern = <span class="str">"mix"</span>,
-    callback = <span class="kw">function</span>()
-        vim.lsp.start({ name = <span class="str">"mix-lsp"</span>, cmd = { <span class="str">"mix-lsp"</span> } })
-    <span class="kw">end</span>,
-})</code><span class="label">lua</span></pre>
+<span class="cm">-- Load LSP + editor settings</span>
+dofile(<span class="str">"/path/to/mix_lang/editors/nvim/mix.lua"</span>)</code><span class="label">lua</span></pre>
+
+<h4>Option B: Symlink as a plugin</h4>
+<pre><code><span class="cm"># Symlink into Neovim's plugin directory</span>
+mkdir -p ~/.local/share/nvim/site/pack/mix/start
+ln -s /path/to/mix_lang/editors/nvim ~/.local/share/nvim/site/pack/mix/start/mix
+
+<span class="cm"># Then add to init.lua:</span>
+dofile(<span class="str">"/path/to/mix_lang/editors/nvim/mix.lua"</span>)</code><span class="label">shell</span></pre>
+
+<h4>What you get</h4>
+<table>
+<tr><th>Feature</th><th>Source</th></tr>
+<tr><td>Syntax highlighting (keywords, types, strings, interpolation, shapes, operators, directives)</td><td><code>syntax/mix.vim</code></td></tr>
+<tr><td>Filetype detection (<code>.mix</code> files)</td><td><code>ftdetect/mix.vim</code></td></tr>
+<tr><td>4-space indent, <code>//</code> comment string</td><td><code>mix.lua</code></td></tr>
+<tr><td>LSP (diagnostics, hover, go-to-def, completion)</td><td><code>mix.lua</code> + <code>mix-lsp</code></td></tr>
+</table>
+
+<p class="dim">If <code>mix-lsp</code> is not on your <code>PATH</code>, edit the <code>cmd</code> line in <code>mix.lua</code> to point to your <code>build/mix-lsp</code> binary.</p>
 
 <h3>LSP Features</h3>
 <table>

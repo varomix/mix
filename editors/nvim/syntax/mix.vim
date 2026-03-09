@@ -10,7 +10,7 @@ endif
 let s:cpo_save = &cpo
 set cpo&vim
 
-" ── Comments ──
+" ── Comments (highest priority — must come last or use priority) ──
 syn match mixComment    '//.*$' contains=mixTodo
 syn keyword mixTodo     TODO FIXME XXX HACK NOTE contained
 
@@ -48,10 +48,20 @@ syn match mixInteger    '\<0b[01]\+\>'
 syn match mixFloat      '\<\d\+\.\d*\>'
 syn match mixFloat      '\<\d*\.\d\+\>'
 
+" ── Identifiers inside interpolation (contained items) ──
+syn match mixInterpIdent    '\<\a\w*\>' contained
+syn match mixInterpField    '\.\a\w*' contained
+syn match mixInterpMethod   '\.\a\w*!\?\ze\s*(' contained
+
 " ── String literals ──
-syn region mixString    start='"' skip='\\"' end='"' contains=mixEscape,mixInterp
+" Interpolation uses a specific contains list (NOT contains=TOP) to avoid
+" string regions nesting inside {}, which breaks highlighting.
+syn region mixString    start='"' skip='\\"' end='"'
+            \ contains=mixEscape,mixInterp
 syn match  mixEscape    '\\[nrt\\0"]' contained
-syn region mixInterp    start='{' end='}' contained contains=TOP
+syn region mixInterp    start='{' end='}' contained
+            \ contains=mixInterpIdent,mixInterpField,mixInterpMethod,
+            \mixInteger,mixFloat,mixBoolean,mixOperator,mixBuiltin
 
 " ── Operators ──
 syn match mixOperator   '[+\-*/%]'
@@ -61,31 +71,30 @@ syn match mixOperator   '->'
 syn match mixOperator   '=>'
 syn match mixOperator   '\.\.'
 syn match mixOperator   '\.\.='
-syn match mixOperator   '[&|?~!]'
+syn match mixOperator   '[&|?~]'
 
-" ── Delimiters ──
-syn match mixDelimiter  '[(){}\[\]:,.]'
+" ── Delimiters (exclude {} from global match to avoid interfering with interp) ──
+syn match mixDelimiter  '[()\[\]:,]'
 
 " ── Side effects marker (~) and mutation marker (!) ──
-syn match mixMarker     '\~' contained
-syn match mixMarker     '!' contained
+syn match mixMutMark    '!\ze\s*[=)]'
+syn match mixMutMark    '\~\ze\s*('
 
 " ── Function definitions: name followed by ( ──
-syn match mixFuncDef    '\<\a\w*\>\ze\s*('
-syn match mixFuncDef    '\<\a\w*[~!]\?\>\ze\s*(' contains=mixMarker
+syn match mixFuncDef    '\<\a\w*\ze\s*('
+syn match mixFuncDef    '\<\a\w*[~!]\ze\s*('
 
 " ── Method calls: .name( ──
-syn match mixMethod     '\.\a\w*[~!]\?\ze\s*(' contains=mixMarker
+syn match mixMethod     '\.\a\w*!\?\ze\s*('
 
-" ── Shape name (after 'shape' keyword) ──
+" ── Shape name (capitalized identifiers) ──
 syn match mixShapeName  '\<\u\w*\>'
 
 " ── Field access: .name (not followed by paren) ──
-syn match mixField      '\.\a\w*\>\ze[^(]'
+syn match mixField      '\.\a\w*\>'
 
-" ── Assignment markers ──
-syn match mixAssign     '\<\a\w*!\s*=' contains=mixMutVar
-syn match mixMutVar     '\<\a\w*!\>' contained
+" ── Mutable variable declarations: name! ──
+syn match mixMutVar     '\<\a\w*!\s*='
 
 " ── Built-in functions ──
 syn keyword mixBuiltin  print sqrt abs sin cos tan log floor ceil round pow
@@ -96,28 +105,30 @@ syn keyword mixBuiltin  shell shell_output env exit getcwd mkdir args
 syn keyword mixBuiltin  str_reverse str_count
 
 " ── Linking ──
-hi def link mixComment      Comment
-hi def link mixTodo         Todo
-hi def link mixKeyword      Keyword
-hi def link mixDirective    PreProc
-hi def link mixBoolean      Boolean
-hi def link mixNone         Constant
-hi def link mixType         Type
-hi def link mixInteger      Number
-hi def link mixFloat        Float
-hi def link mixString       String
-hi def link mixEscape       SpecialChar
-hi def link mixInterp       Special
-hi def link mixOperator     Operator
-hi def link mixDelimiter    Delimiter
-hi def link mixFuncDef      Function
-hi def link mixMethod       Function
-hi def link mixShapeName    Structure
-hi def link mixField        Identifier
-hi def link mixMutVar       Identifier
-hi def link mixMarker       Special
-hi def link mixAssign       Identifier
-hi def link mixBuiltin      Function
+hi def link mixComment       Comment
+hi def link mixTodo          Todo
+hi def link mixKeyword       Keyword
+hi def link mixDirective     PreProc
+hi def link mixBoolean       Boolean
+hi def link mixNone          Constant
+hi def link mixType          Type
+hi def link mixInteger       Number
+hi def link mixFloat         Float
+hi def link mixString        String
+hi def link mixEscape        SpecialChar
+hi def link mixInterp        Special
+hi def link mixInterpIdent   Special
+hi def link mixInterpField   Special
+hi def link mixInterpMethod  Special
+hi def link mixOperator      Operator
+hi def link mixDelimiter     Delimiter
+hi def link mixFuncDef       Function
+hi def link mixMethod        Function
+hi def link mixShapeName     Structure
+hi def link mixField         Identifier
+hi def link mixMutVar        Identifier
+hi def link mixMutMark       Special
+hi def link mixBuiltin       Function
 
 let b:current_syntax = "mix"
 

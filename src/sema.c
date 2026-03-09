@@ -63,8 +63,8 @@ static MixType *resolve_type_node(Sema *sema, AstNode *type_node) {
         if (tk == TOK_IDENT && sema->generic_param_count > 0) {
             for (int i = 0; i < sema->generic_param_count; i++) {
                 if (strcmp(sema->generic_params[i], type_node->type_name.name) == 0) {
-                    // Generic type param — resolve as int (all values are 64-bit)
-                    return make_type(sema->arena, TYPE_INT);
+                    // Generic type param — passes any type check
+                    return make_type(sema->arena, TYPE_GENERIC);
                 }
             }
         }
@@ -349,8 +349,17 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
             if (!sym) {
                 mix_error(expr->loc, "undefined function '%s'", expr->call.name);
                 expr->resolved_type = make_type(sema->arena, TYPE_INT);
+                for (int i = 0; i < expr->call.arg_count; i++) {
+                    resolve_expr(sema, expr->call.args[i]);
+                }
+                return expr->resolved_type;
             } else if (sym->type && sym->type->kind == TYPE_SHAPE) {
                 // Positional shape construction: Name(val, val, ...)
+                // Resolve arguments before rewriting the node, since the
+                // rewrite overwrites the call union fields.
+                for (int i = 0; i < expr->call.arg_count; i++) {
+                    resolve_expr(sema, expr->call.args[i]);
+                }
                 // Rewrite NODE_CALL_EXPR → NODE_SHAPE_LIT in-place
                 char *shape_name = expr->call.name;
                 AstNode **args = expr->call.args;
@@ -364,13 +373,20 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
 
                 // Fall through to NODE_SHAPE_LIT handling
                 goto handle_shape_lit;
-            } else if (sym->type->kind == TYPE_FUNC) {
+            } else if (sym->type && sym->type->kind == TYPE_FUNC) {
                 expr->resolved_type = sym->type->func.return_type;
             } else {
                 expr->resolved_type = make_type(sema->arena, TYPE_INT);
             }
             for (int i = 0; i < expr->call.arg_count; i++) {
                 resolve_expr(sema, expr->call.args[i]);
+            }
+            // to_set: infer set element type from list argument
+            if (strcmp(expr->call.name, "to_set") == 0 && expr->call.arg_count == 1) {
+                MixType *arg_type = expr->call.args[0]->resolved_type;
+                if (arg_type && arg_type->kind == TYPE_LIST && arg_type->list.elem_type) {
+                    expr->resolved_type = make_set_type(sema->arena, arg_type->list.elem_type);
+                }
             }
             return expr->resolved_type;
         }
@@ -710,11 +726,15 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
             MixType *type;
             if (stmt->var_decl.type_ann) {
                 type = resolve_type_node(sema, stmt->var_decl.type_ann);
-            } else {
+            } else if (stmt->var_decl.init_expr) {
                 type = resolve_expr(sema, stmt->var_decl.init_expr);
+            } else {
+                type = make_type(sema->arena, TYPE_VOID);
             }
             stmt->resolved_type = type;
-            if (stmt->var_decl.init_expr && !stmt->var_decl.type_ann) {
+            // When there's a type annotation, still resolve the init expression
+            // so it gets type-checked and its resolved_type is set.
+            if (stmt->var_decl.type_ann && stmt->var_decl.init_expr) {
                 resolve_expr(sema, stmt->var_decl.init_expr);
             }
             symtab_insert(&sema->symtab, stmt->var_decl.name, type, stmt->var_decl.is_mutable);

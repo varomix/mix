@@ -66,8 +66,13 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void mix_print_str(const char *);\n"
         "extern void mix_print_bool(int);\n"
         "extern void mix_print_list_int(const void *);\n"
+        "extern void mix_print_list_str(const void *);\n"
+        "extern void mix_print_list_float(const void *);\n"
+        "extern void mix_print_list_bool(const void *);\n"
         "extern void mix_print_map(const void *);\n"
+        "extern void mix_print_map_str(const void *);\n"
         "extern void mix_print_set(const void *);\n"
+        "extern void mix_print_set_int(const void *);\n"
         "extern void mix_write_int(int64_t);\n"
         "extern void mix_write_float(double);\n"
         "extern void mix_write_str(const char *);\n"
@@ -99,13 +104,18 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void *mix_set_new(void);\n"
         "extern int64_t mix_set_len(const void *);\n"
         "extern void mix_set_add(void *, const char *);\n"
+        "extern void mix_set_add_int(void *, int64_t);\n"
         "extern void mix_set_remove(void *, const char *);\n"
+        "extern void mix_set_remove_int(void *, int64_t);\n"
         "extern int32_t mix_set_has(const void *, const char *);\n"
+        "extern int32_t mix_set_has_int(const void *, int64_t);\n"
         "extern void *mix_set_values(const void *);\n"
+        "extern void *mix_set_values_int(const void *);\n"
         "extern void *mix_set_union(const void *, const void *);\n"
         "extern void *mix_set_intersect(const void *, const void *);\n"
         "extern void *mix_set_diff(const void *, const void *);\n"
         "extern void *mix_set_from_list(const void *);\n"
+        "extern void *mix_set_from_list_int(const void *);\n"
         "extern int64_t mix_str_len(const char *);\n"
         "extern char *mix_str_upper(const char *);\n"
         "extern char *mix_str_lower(const char *);\n"
@@ -446,9 +456,15 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
         case NODE_SET_LIT: {
             int set_t = next_temp(emit);
             ind(emit); fprintf(emit->out, "void *t%d = mix_set_new();\n", set_t);
+            MixType *set_elem = expr->resolved_type ? expr->resolved_type->set.elem_type : NULL;
+            bool int_set = set_elem && type_is_integer(set_elem);
             for (int i = 0; i < expr->set_lit.element_count; i++) {
                 int elem = emit_expr(emit, expr->set_lit.elements[i]);
-                ind(emit); fprintf(emit->out, "mix_set_add(t%d, (const char *)t%d);\n", set_t, elem);
+                if (int_set) {
+                    ind(emit); fprintf(emit->out, "mix_set_add_int(t%d, (int64_t)t%d);\n", set_t, elem);
+                } else {
+                    ind(emit); fprintf(emit->out, "mix_set_add(t%d, (const char *)t%d);\n", set_t, elem);
+                }
             }
             return set_t;
         }
@@ -744,11 +760,30 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 } else if (atype && atype->kind == TYPE_BOOL) {
                     ind(emit); fprintf(emit->out, "mix_print_bool((int)t%d);\n", arg_temps[0]);
                 } else if (atype && atype->kind == TYPE_LIST) {
-                    ind(emit); fprintf(emit->out, "mix_print_list_int(t%d);\n", arg_temps[0]);
+                    MixType *elem = atype->list.elem_type;
+                    if (elem && elem->kind == TYPE_STR) {
+                        ind(emit); fprintf(emit->out, "mix_print_list_str(t%d);\n", arg_temps[0]);
+                    } else if (elem && type_is_float(elem)) {
+                        ind(emit); fprintf(emit->out, "mix_print_list_float(t%d);\n", arg_temps[0]);
+                    } else if (elem && elem->kind == TYPE_BOOL) {
+                        ind(emit); fprintf(emit->out, "mix_print_list_bool(t%d);\n", arg_temps[0]);
+                    } else {
+                        ind(emit); fprintf(emit->out, "mix_print_list_int(t%d);\n", arg_temps[0]);
+                    }
                 } else if (atype && atype->kind == TYPE_MAP) {
-                    ind(emit); fprintf(emit->out, "mix_print_map(t%d);\n", arg_temps[0]);
+                    MixType *val_elem = atype->map.val_type;
+                    if (val_elem && val_elem->kind == TYPE_STR) {
+                        ind(emit); fprintf(emit->out, "mix_print_map_str(t%d);\n", arg_temps[0]);
+                    } else {
+                        ind(emit); fprintf(emit->out, "mix_print_map(t%d);\n", arg_temps[0]);
+                    }
                 } else if (atype && atype->kind == TYPE_SET) {
-                    ind(emit); fprintf(emit->out, "mix_print_set(t%d);\n", arg_temps[0]);
+                    MixType *selem = atype->set.elem_type;
+                    if (selem && type_is_integer(selem)) {
+                        ind(emit); fprintf(emit->out, "mix_print_set_int(t%d);\n", arg_temps[0]);
+                    } else {
+                        ind(emit); fprintf(emit->out, "mix_print_set(t%d);\n", arg_temps[0]);
+                    }
                 } else {
                     ind(emit); fprintf(emit->out, "mix_print_int((int64_t)t%d);\n", arg_temps[0]);
                 }
@@ -921,7 +956,13 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
 
             /* to_set */
             if (strcmp(expr->call.name, "to_set") == 0 && expr->call.arg_count == 1) {
-                ind(emit); fprintf(emit->out, "void *t%d = mix_set_from_list(t%d);\n", t, arg_temps[0]);
+                MixType *atype = expr->call.args[0]->resolved_type;
+                MixType *elem = (atype && atype->kind == TYPE_LIST) ? atype->list.elem_type : NULL;
+                if (elem && elem->kind == TYPE_STR) {
+                    ind(emit); fprintf(emit->out, "void *t%d = mix_set_from_list(t%d);\n", t, arg_temps[0]);
+                } else {
+                    ind(emit); fprintf(emit->out, "void *t%d = mix_set_from_list_int(t%d);\n", t, arg_temps[0]);
+                }
                 return t;
             }
 
@@ -1121,14 +1162,29 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             if (obj_type && obj_type->kind == TYPE_SET) {
                 const char *m = expr->method_call.method_name;
                 int t = next_temp(emit);
+                MixType *selem = obj_type->set.elem_type;
+                bool is_int_set = selem && type_is_integer(selem);
                 if (strcmp(m, "has") == 0 && expr->method_call.arg_count == 1) {
-                    ind(emit); fprintf(emit->out, "int32_t t%d = mix_set_has(t%d, (const char *)t%d);\n",
-                            t, obj_temp, arg_temps2[0]);
+                    if (is_int_set) {
+                        ind(emit); fprintf(emit->out, "int32_t t%d = mix_set_has_int(t%d, (int64_t)t%d);\n",
+                                t, obj_temp, arg_temps2[0]);
+                    } else {
+                        ind(emit); fprintf(emit->out, "int32_t t%d = mix_set_has(t%d, (const char *)t%d);\n",
+                                t, obj_temp, arg_temps2[0]);
+                    }
                 } else if (strcmp(m, "add") == 0 && expr->method_call.arg_count == 1) {
-                    ind(emit); fprintf(emit->out, "mix_set_add(t%d, (const char *)t%d);\n", obj_temp, arg_temps2[0]);
+                    if (is_int_set) {
+                        ind(emit); fprintf(emit->out, "mix_set_add_int(t%d, (int64_t)t%d);\n", obj_temp, arg_temps2[0]);
+                    } else {
+                        ind(emit); fprintf(emit->out, "mix_set_add(t%d, (const char *)t%d);\n", obj_temp, arg_temps2[0]);
+                    }
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 } else if (strcmp(m, "remove") == 0 && expr->method_call.arg_count == 1) {
-                    ind(emit); fprintf(emit->out, "mix_set_remove(t%d, (const char *)t%d);\n", obj_temp, arg_temps2[0]);
+                    if (is_int_set) {
+                        ind(emit); fprintf(emit->out, "mix_set_remove_int(t%d, (int64_t)t%d);\n", obj_temp, arg_temps2[0]);
+                    } else {
+                        ind(emit); fprintf(emit->out, "mix_set_remove(t%d, (const char *)t%d);\n", obj_temp, arg_temps2[0]);
+                    }
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 } else if (strcmp(m, "union") == 0 && expr->method_call.arg_count == 1) {
                     ind(emit); fprintf(emit->out, "void *t%d = mix_set_union(t%d, t%d);\n", t, obj_temp, arg_temps2[0]);
@@ -1276,10 +1332,16 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             if (obj_type && obj_type->kind == TYPE_SET) {
                 const char *fn = expr->field_expr.field_name;
                 int t = next_temp(emit);
+                MixType *selem = obj_type->set.elem_type;
+                bool is_int_set = selem && type_is_integer(selem);
                 if (strcmp(fn, "len") == 0) {
                     ind(emit); fprintf(emit->out, "int64_t t%d = mix_set_len(t%d);\n", t, obj);
                 } else if (strcmp(fn, "values") == 0) {
-                    ind(emit); fprintf(emit->out, "void *t%d = mix_set_values(t%d);\n", t, obj);
+                    if (is_int_set) {
+                        ind(emit); fprintf(emit->out, "void *t%d = mix_set_values_int(t%d);\n", t, obj);
+                    } else {
+                        ind(emit); fprintf(emit->out, "void *t%d = mix_set_values(t%d);\n", t, obj);
+                    }
                 } else {
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 }
@@ -1516,7 +1578,13 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
             } else if (is_set) {
                 int set_ptr = emit_expr(emit, iter);
                 int list_ptr = next_temp(emit);
-                ind(emit); fprintf(emit->out, "void *t%d = mix_set_values(t%d);\n", list_ptr, set_ptr);
+                MixType *selem = iter_type->set.elem_type;
+                bool is_int_set = selem && type_is_integer(selem);
+                if (is_int_set) {
+                    ind(emit); fprintf(emit->out, "void *t%d = mix_set_values_int(t%d);\n", list_ptr, set_ptr);
+                } else {
+                    ind(emit); fprintf(emit->out, "void *t%d = mix_set_values(t%d);\n", list_ptr, set_ptr);
+                }
                 int len_t = next_temp(emit);
                 ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_len(t%d);\n", len_t, list_ptr);
                 int idx_id = next_label(emit);

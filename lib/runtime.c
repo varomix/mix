@@ -605,6 +605,20 @@ char *mix_str_reverse(const char *s) {
     return result;
 }
 
+static int cmp_char(const void *a, const void *b) {
+    return *(const unsigned char *)a - *(const unsigned char *)b;
+}
+
+char *mix_str_sort(const char *s) {
+    if (!s) s = "";
+    int64_t len = strlen(s);
+    char *result = malloc(len + 1);
+    if (!result) mix_panic("out of memory");
+    memcpy(result, s, len + 1);
+    qsort(result, len, 1, cmp_char);
+    return result;
+}
+
 int64_t mix_str_count(const char *s, const char *sub) {
     if (!s || !sub) return 0;
     int64_t count = 0;

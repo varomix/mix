@@ -743,7 +743,8 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                 if (strcmp(m, "upper") == 0 || strcmp(m, "lower") == 0 ||
                     strcmp(m, "trim") == 0 || strcmp(m, "replace") == 0 ||
                     strcmp(m, "char_at") == 0 || strcmp(m, "slice") == 0 ||
-                    strcmp(m, "repeat") == 0 || strcmp(m, "reverse") == 0) {
+                    strcmp(m, "repeat") == 0 || strcmp(m, "reverse") == 0 ||
+                    strcmp(m, "sort") == 0) {
                     expr->resolved_type = make_type(sema->arena, TYPE_STR);
                 } else if (strcmp(m, "split") == 0) {
                     expr->resolved_type = make_list_type(sema->arena, make_type(sema->arena, TYPE_STR));

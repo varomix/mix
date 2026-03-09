@@ -1224,6 +1224,9 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 } else if (strcmp(m, "code") == 0 && expr->method_call.arg_count == 0) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_ord(l %%t%d)\n",
                             t, obj_temp);
+                } else if (strcmp(m, "sort") == 0 && expr->method_call.arg_count == 0) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_str_sort(l %%t%d)\n",
+                            t, obj_temp);
                 }
                 return t;
             }

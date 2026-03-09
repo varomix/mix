@@ -142,6 +142,7 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern char *mix_str_char_at(const char *, int64_t);\n"
         "extern char *mix_str_join(const void *, const char *);\n"
         "extern char *mix_str_reverse(const char *);\n"
+        "extern char *mix_str_sort(const char *);\n"
         "extern int64_t mix_str_count(const char *, const char *);\n"
         "extern int64_t mix_ord(const char *);\n"
         "extern const char *mix_chr(int64_t);\n"
@@ -1237,6 +1238,8 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                             t, obj_temp, arg_temps2[0]);
                 } else if (strcmp(m, "code") == 0) {
                     ind(emit); fprintf(emit->out, "int64_t t%d = mix_ord((const char *)t%d);\n", t, obj_temp);
+                } else if (strcmp(m, "sort") == 0) {
+                    ind(emit); fprintf(emit->out, "const char *t%d = mix_str_sort((const char *)t%d);\n", t, obj_temp);
                 } else {
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 }

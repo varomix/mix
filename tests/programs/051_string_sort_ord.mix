@@ -1,0 +1,47 @@
+// Test string sorting, string comparison, ord/chr, .code()
+main()
+    // String comparison operators
+    print("apple" < "banana")
+    print("hello" == "hello")
+    print("hello" != "world")
+    print("xyz" > "abc")
+    print("abc" <= "abc")
+    print("abc" >= "abc")
+    print("a" < "b")
+    print("b" > "a")
+
+    // String list sorting (alphabetical)
+    names! = ["charlie", "alice", "bob", "dave"]
+    names.sort()
+    print(names)
+
+    // Int list sorting still works
+    nums! = [5, 3, 1, 4, 2]
+    nums.sort()
+    print(nums)
+
+    // ord() builtin
+    print(ord("A"))
+    print(ord("a"))
+    print(ord("0"))
+    print(ord(" "))
+
+    // chr() builtin
+    print(chr(65))
+    print(chr(97))
+    print(chr(48))
+    print(chr(32))
+
+    // .code() string method
+    print("A".code())
+    print("z".code())
+
+    // Round-trip: chr(ord(x)) == x
+    print(chr(ord("X")))
+    print(chr(ord("!")))
+
+    // Comparison with char_at
+    s = "Hello"
+    ch = s.char_at(0)
+    print(ch == "H")
+    print(ch.code())

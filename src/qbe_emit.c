@@ -624,6 +624,27 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 return t;
             }
 
+            // String comparison: use strcmp
+            if (ltype && ltype->kind == TYPE_STR) {
+                const char *cmp_op = NULL;
+                switch (expr->binary.op) {
+                    case TOK_EQEQ: cmp_op = "ceqw"; break;
+                    case TOK_NEQ:  cmp_op = "cnew"; break;
+                    case TOK_LT:   cmp_op = "csltw"; break;
+                    case TOK_GT:   cmp_op = "csgtw"; break;
+                    case TOK_LTE:  cmp_op = "cslew"; break;
+                    case TOK_GTE:  cmp_op = "csgew"; break;
+                    default: break;
+                }
+                if (cmp_op) {
+                    int cmp = next_temp(emit);
+                    fprintf(emit->out, "\t%%t%d =w call $strcmp(l %%t%d, l %%t%d)\n",
+                            cmp, left, right);
+                    fprintf(emit->out, "\t%%t%d =w %s %%t%d, 0\n", t, cmp_op, cmp);
+                    return t;
+                }
+            }
+
             // Check for operator overloading on shapes
             if (ltype && ltype->kind == TYPE_SHAPE) {
                 const char *op_method = NULL;
@@ -998,6 +1019,20 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 return t;
             }
 
+            // ord(s) -> int (Unicode code point)
+            if (strcmp(expr->call.name, "ord") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_ord(l %%t%d)\n",
+                        t, arg_temps[0]);
+                return t;
+            }
+
+            // chr(n) -> str (code point to character)
+            if (strcmp(expr->call.name, "chr") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_chr(l %%t%d)\n",
+                        t, arg_temps[0]);
+                return t;
+            }
+
             // Regular function call
             // Check if this is a direct function call or an indirect call (lambda/function pointer)
             Symbol *fn_sym = symtab_lookup(emit->symtab, expr->call.name);
@@ -1116,7 +1151,13 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     return t;
                 } else if (strcmp(m, "sort") == 0 && expr->method_call.arg_count == 0) {
                     int t = next_temp(emit);
-                    fprintf(emit->out, "\tcall $mix_list_sort(l %%t%d)\n", obj_temp);
+                    MixType *elem = obj_type->list.elem_type;
+                    if (elem && elem->kind == TYPE_STR)
+                        fprintf(emit->out, "\tcall $mix_list_sort_str(l %%t%d)\n", obj_temp);
+                    else if (elem && type_is_float(elem))
+                        fprintf(emit->out, "\tcall $mix_list_sort_float(l %%t%d)\n", obj_temp);
+                    else
+                        fprintf(emit->out, "\tcall $mix_list_sort(l %%t%d)\n", obj_temp);
                     return t;
                 } else if (strcmp(m, "reverse") == 0 && expr->method_call.arg_count == 0) {
                     int t = next_temp(emit);
@@ -1180,6 +1221,9 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 } else if (strcmp(m, "index_of") == 0 && expr->method_call.arg_count == 1) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_str_index_of(l %%t%d, l %%t%d)\n",
                             t, obj_temp, arg_temps2[0]);
+                } else if (strcmp(m, "code") == 0 && expr->method_call.arg_count == 0) {
+                    fprintf(emit->out, "\t%%t%d =l call $mix_ord(l %%t%d)\n",
+                            t, obj_temp);
                 }
                 return t;
             }

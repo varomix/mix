@@ -246,6 +246,31 @@ void mix_list_sort(void *list_ptr) {
     qsort(list->data, list->len, sizeof(int64_t), cmp_int64);
 }
 
+static int cmp_str(const void *a, const void *b) {
+    const char *sa = (const char *)*(const int64_t *)a;
+    const char *sb = (const char *)*(const int64_t *)b;
+    return strcmp(sa, sb);
+}
+
+void mix_list_sort_str(void *list_ptr) {
+    MixList *list = list_ptr;
+    qsort(list->data, list->len, sizeof(int64_t), cmp_str);
+}
+
+static int cmp_float(const void *a, const void *b) {
+    double da, db;
+    memcpy(&da, a, sizeof(double));
+    memcpy(&db, b, sizeof(double));
+    if (da < db) return -1;
+    if (da > db) return 1;
+    return 0;
+}
+
+void mix_list_sort_float(void *list_ptr) {
+    MixList *list = list_ptr;
+    qsort(list->data, list->len, sizeof(int64_t), cmp_float);
+}
+
 void mix_list_reverse(void *list_ptr) {
     MixList *list = list_ptr;
     for (int64_t i = 0, j = list->len - 1; i < j; i++, j--) {
@@ -1445,4 +1470,48 @@ void mix_project_build(void *self) {
         fprintf(stderr, "mix: build failed for '%s' (exit %d)\n", name, ret);
         exit(1);
     }
+}
+
+// --- Unicode ord/chr ---
+
+// Decode the first UTF-8 character from s and return its Unicode code point.
+int64_t mix_ord(const char *s) {
+    if (!s || !*s) return 0;
+    unsigned char c = (unsigned char)s[0];
+    if (c < 0x80) return c;
+    if ((c & 0xE0) == 0xC0 && s[1]) {
+        return ((c & 0x1F) << 6) | (s[1] & 0x3F);
+    }
+    if ((c & 0xF0) == 0xE0 && s[1] && s[2]) {
+        return ((c & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+    }
+    if ((c & 0xF8) == 0xF0 && s[1] && s[2] && s[3]) {
+        return ((c & 0x07) << 18) | ((s[1] & 0x3F) << 12) | ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+    }
+    return c; // fallback: return byte value
+}
+
+// Encode a Unicode code point as a UTF-8 string. Returns a heap-allocated string.
+const char *mix_chr(int64_t cp) {
+    char *buf = mix_alloc(5); // max 4 UTF-8 bytes + null
+    if (cp < 0x80) {
+        buf[0] = (char)cp;
+        buf[1] = '\0';
+    } else if (cp < 0x800) {
+        buf[0] = (char)(0xC0 | (cp >> 6));
+        buf[1] = (char)(0x80 | (cp & 0x3F));
+        buf[2] = '\0';
+    } else if (cp < 0x10000) {
+        buf[0] = (char)(0xE0 | (cp >> 12));
+        buf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[2] = (char)(0x80 | (cp & 0x3F));
+        buf[3] = '\0';
+    } else {
+        buf[0] = (char)(0xF0 | (cp >> 18));
+        buf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        buf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[3] = (char)(0x80 | (cp & 0x3F));
+        buf[4] = '\0';
+    }
+    return buf;
 }

@@ -1,0 +1,24 @@
+true
+true
+true
+true
+true
+true
+true
+true
+["alice", "bob", "charlie", "dave"]
+[1, 2, 3, 4, 5]
+65
+97
+48
+32
+A
+a
+0
+ 
+65
+122
+X
+!
+true
+72

@@ -98,6 +98,8 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void mix_list_remove(void *, int64_t);\n"
         "extern void mix_list_insert(void *, int64_t, int64_t);\n"
         "extern void mix_list_sort(void *);\n"
+        "extern void mix_list_sort_str(void *);\n"
+        "extern void mix_list_sort_float(void *);\n"
         "extern void mix_list_reverse(void *);\n"
         "extern int32_t mix_list_contains(const void *, int64_t);\n"
         "extern int64_t mix_list_index_of(const void *, int64_t);\n"
@@ -138,6 +140,8 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern char *mix_str_join(const void *, const char *);\n"
         "extern char *mix_str_reverse(const char *);\n"
         "extern int64_t mix_str_count(const char *, const char *);\n"
+        "extern int64_t mix_ord(const char *);\n"
+        "extern const char *mix_chr(int64_t);\n"
         "extern char *mix_str_slice(const char *, int64_t, int64_t);\n"
         "extern char *mix_str_repeat(const char *, int64_t);\n"
         "extern int64_t mix_str_index_of(const char *, const char *);\n"
@@ -675,6 +679,25 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 return t;
             }
 
+            /* String comparison via strcmp */
+            if (ltype && ltype->kind == TYPE_STR) {
+                const char *cmp_op = NULL;
+                switch (expr->binary.op) {
+                    case TOK_EQEQ: cmp_op = "== 0"; break;
+                    case TOK_NEQ:  cmp_op = "!= 0"; break;
+                    case TOK_LT:   cmp_op = "< 0"; break;
+                    case TOK_GT:   cmp_op = "> 0"; break;
+                    case TOK_LTE:  cmp_op = "<= 0"; break;
+                    case TOK_GTE:  cmp_op = ">= 0"; break;
+                    default: break;
+                }
+                if (cmp_op) {
+                    ind(emit); fprintf(emit->out, "int32_t t%d = (strcmp((const char *)t%d, (const char *)t%d) %s);\n",
+                            t, left, right, cmp_op);
+                    return t;
+                }
+            }
+
             /* Shape operator overloading */
             if (ltype && ltype->kind == TYPE_SHAPE) {
                 const char *op_method = NULL;
@@ -999,6 +1022,18 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 return t;
             }
 
+            /* ord(s) -> int */
+            if (strcmp(expr->call.name, "ord") == 0 && expr->call.arg_count == 1) {
+                ind(emit); fprintf(emit->out, "int64_t t%d = mix_ord((const char *)t%d);\n", t, arg_temps[0]);
+                return t;
+            }
+
+            /* chr(n) -> str */
+            if (strcmp(expr->call.name, "chr") == 0 && expr->call.arg_count == 1) {
+                ind(emit); fprintf(emit->out, "const char *t%d = mix_chr((int64_t)t%d);\n", t, arg_temps[0]);
+                return t;
+            }
+
             /* Regular / indirect function call */
             Symbol *fn_sym = symtab_lookup(emit->symtab, expr->call.name);
             MixType *fn_type = (fn_sym && fn_sym->type && fn_sym->type->kind == TYPE_FUNC)
@@ -1110,7 +1145,13 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                             obj_temp, arg_temps2[0], arg_temps2[1]);
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 } else if (strcmp(m, "sort") == 0) {
-                    ind(emit); fprintf(emit->out, "mix_list_sort(t%d);\n", obj_temp);
+                    MixType *elem = obj_type->list.elem_type;
+                    if (elem && elem->kind == TYPE_STR)
+                        { ind(emit); fprintf(emit->out, "mix_list_sort_str(t%d);\n", obj_temp); }
+                    else if (elem && type_is_float(elem))
+                        { ind(emit); fprintf(emit->out, "mix_list_sort_float(t%d);\n", obj_temp); }
+                    else
+                        { ind(emit); fprintf(emit->out, "mix_list_sort(t%d);\n", obj_temp); }
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 } else if (strcmp(m, "reverse") == 0) {
                     ind(emit); fprintf(emit->out, "mix_list_reverse(t%d);\n", obj_temp);
@@ -1169,6 +1210,8 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 } else if (strcmp(m, "index_of") == 0 && expr->method_call.arg_count == 1) {
                     ind(emit); fprintf(emit->out, "int64_t t%d = mix_str_index_of((const char *)t%d, (const char *)t%d);\n",
                             t, obj_temp, arg_temps2[0]);
+                } else if (strcmp(m, "code") == 0) {
+                    ind(emit); fprintf(emit->out, "int64_t t%d = mix_ord((const char *)t%d);\n", t, obj_temp);
                 } else {
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 }
@@ -2246,7 +2289,8 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                     "floor","ceil","round","pow","min","max","to_string","to_int",
                     "to_float","to_set","str_reverse","str_count","file_open","file_read",
                     "file_write","file_close","file_read_all","file_write_all","file_exists",
-                    "list_dir","shell","shell_output","env","exit","getcwd","mkdir","args",NULL};
+                    "list_dir","shell","shell_output","env","exit","getcwd","mkdir","args",
+                    "ord","chr",NULL};
                 for (int b = 0; builtins[b]; b++) {
                     if (strcmp(sym->name, builtins[b]) == 0) { is_local = true; break; }
                 }

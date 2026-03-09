@@ -750,7 +750,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                 } else if (strcmp(m, "contains") == 0 || strcmp(m, "starts_with") == 0 ||
                            strcmp(m, "ends_with") == 0) {
                     expr->resolved_type = make_type(sema->arena, TYPE_BOOL);
-                } else if (strcmp(m, "index_of") == 0) {
+                } else if (strcmp(m, "index_of") == 0 || strcmp(m, "code") == 0) {
                     expr->resolved_type = make_type(sema->arena, TYPE_INT);
                 } else if (strcmp(m, "join") == 0) {
                     // Actually join is on lists, but we handle "str".join() as a possible pattern too
@@ -1418,6 +1418,26 @@ void sema_analyze(Sema *sema, AstNode *program) {
         ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
         ft->func.param_types[0] = make_list_type(sema->arena, make_type(sema->arena, TYPE_INFER));
         symtab_insert(&sema->symtab, "to_set", ft, false);
+    }
+
+    // ord(s: str) -> int  (Unicode code point of first character)
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_INT);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_STR);
+        symtab_insert(&sema->symtab, "ord", ft, false);
+    }
+
+    // chr(n: int) -> str  (Unicode code point to character string)
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_STR);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_INT);
+        symtab_insert(&sema->symtab, "chr", ft, false);
     }
 
     // str_reverse(s: str) -> str

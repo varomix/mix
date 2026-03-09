@@ -19,6 +19,7 @@
 #endif
 
 typedef enum {
+    MODE_NONE,
     MODE_BUILD,
     MODE_RUN,
 } RunMode;
@@ -429,7 +430,7 @@ int main(int argc, char **argv) {
     bool verbose = false;
     bool debug_mode = false;
     const char *backend = "qbe";  /* "qbe" or "c" */
-    RunMode mode = MODE_BUILD;
+    RunMode mode = MODE_NONE;
     bool output_set = false;
 
     #define MAX_LINK_FLAGS 64
@@ -447,6 +448,7 @@ int main(int argc, char **argv) {
             arg_start = 2;
         }
         // Otherwise it's a filename — legacy mode, arg_start stays 1
+        mode = MODE_BUILD;
     }
 
     for (int i = arg_start; i < argc; i++) {
@@ -506,6 +508,9 @@ int main(int argc, char **argv) {
 
     // Auto-discover if no input file specified
     if (!input_file) {
+        if (mode == MODE_NONE) {
+            usage();
+        }
         // Check for build.mix in CWD when in build mode
         if (mode == MODE_BUILD) {
             FILE *bf = fopen("build.mix", "r");

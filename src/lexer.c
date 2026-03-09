@@ -330,7 +330,8 @@ static void scan_string(Lexer *lex) {
     while (peek(lex) != '"' && peek(lex) != '\0') {
         if (peek(lex) == '\\') {
             advance(lex); // skip backslash
-            advance(lex); // skip escaped char
+            if (peek(lex) != '\0')
+                advance(lex); // skip escaped char
         } else {
             if (peek(lex) == '\n') {
                 lex->line++;

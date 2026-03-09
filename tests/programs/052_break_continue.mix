@@ -1,0 +1,29 @@
+// Test break and continue in loops
+main()
+    // break in while loop
+    i! = 0
+    while i < 10
+        if i == 3
+            break
+        print(i)
+        i! += 1
+
+    // continue in while loop
+    j! = 0
+    while j < 6
+        j! += 1
+        if j == 3
+            continue
+        print(j)
+
+    // break in for loop
+    for k in 0..10
+        if k == 4
+            break
+        print(k)
+
+    // continue in for loop
+    for m in 0..6
+        if m == 2
+            continue
+        print(m)

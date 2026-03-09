@@ -23,7 +23,7 @@ void mix_print_float(double val) {
 }
 
 void mix_print_str(const char *val) {
-    printf("%s\n", val);
+    printf("%s\n", val ? val : "");
 }
 
 void mix_print_bool(int val) {
@@ -465,6 +465,18 @@ void *mix_str_split(const char *s, const char *delim) {
     if (!s) return list;
     if (!delim) delim = "";
     int64_t dlen = strlen(delim);
+    if (dlen == 0) {
+        // Split into individual characters
+        const char *p = s;
+        while (*p) {
+            char *ch = malloc(2);
+            ch[0] = *p;
+            ch[1] = '\0';
+            mix_list_push(list, (int64_t)ch);
+            p++;
+        }
+        return list;
+    }
     const char *p = s;
     while (*p) {
         const char *found = strstr(p, delim);
@@ -658,6 +670,9 @@ char *mix_str_repeat(const char *s, int64_t n) {
         return r;
     }
     int64_t slen = strlen(s);
+    if (slen > 0 && n > INT64_MAX / slen) {
+        mix_panic("string repeat: size overflow");
+    }
     int64_t total = slen * n;
     char *r = malloc(total + 1);
     if (!r) mix_panic("out of memory");
@@ -719,13 +734,20 @@ int64_t mix_file_open(const char *path, const char *mode) {
 char *mix_file_read(int64_t handle) {
     FILE *f = (FILE *)handle;
     if (!f) return "";
-    char buf[4096];
-    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
-    buf[n] = '\0';
-    char *result = malloc(n + 1);
-    if (!result) mix_panic("out of memory");
-    memcpy(result, buf, n + 1);
-    return result;
+    size_t cap = 4096, len = 0;
+    char *buf = malloc(cap);
+    if (!buf) mix_panic("out of memory");
+    size_t n;
+    while ((n = fread(buf + len, 1, cap - len - 1, f)) > 0) {
+        len += n;
+        if (len + 1 >= cap) {
+            cap *= 2;
+            buf = realloc(buf, cap);
+            if (!buf) mix_panic("out of memory");
+        }
+    }
+    buf[len] = '\0';
+    return buf;
 }
 
 void mix_file_write(int64_t handle, const char *data) {
@@ -1050,16 +1072,20 @@ void *mix_set_from_list(const void *list_ptr) {
 void mix_set_add_int(void *set_ptr, int64_t val) {
     char *s = mix_to_string_int(val);
     mix_map_set(set_ptr, s, val);
+    free(s);
 }
 
 void mix_set_remove_int(void *set_ptr, int64_t val) {
     char *s = mix_to_string_int(val);
     mix_map_remove(set_ptr, s);
+    free(s);
 }
 
 int32_t mix_set_has_int(const void *set_ptr, int64_t val) {
     char *s = mix_to_string_int(val);
-    return mix_map_has(set_ptr, s);
+    int32_t result = mix_map_has(set_ptr, s);
+    free(s);
+    return result;
 }
 
 void *mix_set_values_int(const void *set_ptr) {

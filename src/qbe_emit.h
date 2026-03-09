@@ -39,6 +39,10 @@ typedef struct {
     int dbg_line;
     // Match expression result temp (for implicit return)
     int last_match_temp;
+    // Loop label stack for break/continue
+    int break_labels[32];
+    int continue_labels[32];
+    int loop_depth;
 } QbeEmitter;
 
 QbeEmitter qbe_emitter_create(FILE *out, Arena *arena, SymTab *symtab, bool debug);

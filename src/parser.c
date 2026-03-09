@@ -255,6 +255,7 @@ static AstNode *parse_primary(Parser *p) {
                         lexer_tokenize(&sub_lex);
                         Parser sub_parser = parser_create(sub_lex.tokens, sub_lex.token_count, a, p->filename);
                         AstNode *expr2 = parse_expr(&sub_parser);
+                        free(sub_lex.tokens);
 
                         if (expr_count >= expr_cap) {
                             expr_cap = expr_cap ? expr_cap * 2 : 8;

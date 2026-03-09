@@ -464,6 +464,13 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 fprintf(emit->out, "\t%%t%d =l call $mix_map_get(l %%t%d, l %%t%d)\n", t, obj, idx);
             } else {
                 fprintf(emit->out, "\t%%t%d =l call $mix_list_get(l %%t%d, l %%t%d)\n", t, obj, idx);
+                // Float list elements need bit-unpunning
+                MixType *elem = (obj_type && obj_type->kind == TYPE_LIST) ? obj_type->list.elem_type : NULL;
+                if (elem && type_is_float(elem)) {
+                    int cast_t = next_temp(emit);
+                    fprintf(emit->out, "\t%%t%d =d cast %%t%d\n", cast_t, t);
+                    return cast_t;
+                }
             }
             return t;
         }
@@ -534,11 +541,23 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 fprintf(emit->out, "\tjnz %%t%d, @L%d, @L%d\n", cond_val, l_push, l_skip);
                 fprintf(emit->out, "@L%d\n", l_push);
                 int val = emit_expr(emit, expr->list_comp.expr);
+                MixType *comp_etype = expr->list_comp.expr->resolved_type;
+                if (comp_etype && type_is_float(comp_etype)) {
+                    int cast_t = next_temp(emit);
+                    fprintf(emit->out, "\t%%t%d =l cast %%t%d\n", cast_t, val);
+                    val = cast_t;
+                }
                 fprintf(emit->out, "\tcall $mix_list_push(l %%t%d, l %%t%d)\n", result_list, val);
                 fprintf(emit->out, "\tjmp @L%d\n", l_skip);
                 fprintf(emit->out, "@L%d\n", l_skip);
             } else {
                 int val = emit_expr(emit, expr->list_comp.expr);
+                MixType *comp_etype = expr->list_comp.expr->resolved_type;
+                if (comp_etype && type_is_float(comp_etype)) {
+                    int cast_t = next_temp(emit);
+                    fprintf(emit->out, "\t%%t%d =l cast %%t%d\n", cast_t, val);
+                    val = cast_t;
+                }
                 fprintf(emit->out, "\tcall $mix_list_push(l %%t%d, l %%t%d)\n", result_list, val);
             }
 
@@ -609,6 +628,36 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     fprintf(emit->out, "\t%%t%d =d copy d_%a\n", t, result);
                     return t;
                 }
+            }
+
+            // Short-circuit evaluation for and/or
+            if (expr->binary.op == TOK_AND) {
+                int left = emit_expr(emit, expr->binary.left);
+                int t = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =w copy 0\n", t);
+                int l_right = next_label(emit);
+                int l_end = next_label(emit);
+                fprintf(emit->out, "\tjnz %%t%d, @L%d, @L%d\n", left, l_right, l_end);
+                fprintf(emit->out, "@L%d\n", l_right);
+                int right = emit_expr(emit, expr->binary.right);
+                fprintf(emit->out, "\t%%t%d =w copy %%t%d\n", t, right);
+                fprintf(emit->out, "\tjmp @L%d\n", l_end);
+                fprintf(emit->out, "@L%d\n", l_end);
+                return t;
+            }
+            if (expr->binary.op == TOK_OR) {
+                int left = emit_expr(emit, expr->binary.left);
+                int t = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =w copy 1\n", t);
+                int l_right = next_label(emit);
+                int l_end = next_label(emit);
+                fprintf(emit->out, "\tjnz %%t%d, @L%d, @L%d\n", left, l_end, l_right);
+                fprintf(emit->out, "@L%d\n", l_right);
+                int right = emit_expr(emit, expr->binary.right);
+                fprintf(emit->out, "\t%%t%d =w copy %%t%d\n", t, right);
+                fprintf(emit->out, "\tjmp @L%d\n", l_end);
+                fprintf(emit->out, "@L%d\n", l_end);
+                return t;
             }
 
             int left = emit_expr(emit, expr->binary.left);
@@ -733,12 +782,6 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     else
                         fprintf(emit->out, "\t%%t%d =w csge%s %%t%d, %%t%d\n", t, ty, left, right);
                     break;
-                case TOK_AND:
-                    fprintf(emit->out, "\t%%t%d =w and %%t%d, %%t%d\n", t, left, right);
-                    break;
-                case TOK_OR:
-                    fprintf(emit->out, "\t%%t%d =w or %%t%d, %%t%d\n", t, left, right);
-                    break;
                 default:
                     mix_error(expr->loc, "unsupported binary operator '%s' in codegen", token_kind_name(expr->binary.op));
                     break;
@@ -761,6 +804,10 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
         }
         case NODE_CALL_EXPR: {
             // Emit arguments first
+            if (expr->call.arg_count > 64) {
+                mix_error(expr->loc, "too many function arguments (max 64)");
+                return -1;
+            }
             int arg_temps[64];
             for (int i = 0; i < expr->call.arg_count; i++) {
                 arg_temps[i] = emit_expr(emit, expr->call.args[i]);
@@ -1071,7 +1118,7 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 if (param_type && type_is_float(param_type) &&
                     arg_type && type_is_integer(arg_type)) {
                     int conv = next_temp(emit);
-                    fprintf(emit->out, "\t%%t%d =d swtof %%t%d\n", conv, arg_temps[i]);
+                    fprintf(emit->out, "\t%%t%d =d sltof %%t%d\n", conv, arg_temps[i]);
                     arg_temps[i] = conv;
                 }
             }
@@ -1132,8 +1179,15 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 const char *m = expr->method_call.method_name;
                 if (strcmp(m, "push") == 0 && expr->method_call.arg_count == 1) {
                     int t = next_temp(emit);
+                    MixType *elem = obj_type->list.elem_type;
+                    int push_val = arg_temps2[0];
+                    if (elem && type_is_float(elem)) {
+                        int cast_t = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =l cast %%t%d\n", cast_t, push_val);
+                        push_val = cast_t;
+                    }
                     fprintf(emit->out, "\tcall $mix_list_push(l %%t%d, l %%t%d)\n",
-                            obj_temp, arg_temps2[0]);
+                            obj_temp, push_val);
                     return t;
                 } else if (strcmp(m, "pop") == 0 && expr->method_call.arg_count == 0) {
                     int t = next_temp(emit);
@@ -1649,6 +1703,13 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             int l_body = next_label(emit);
             int l_end = next_label(emit);
 
+            // Push loop labels for break/continue
+            if (emit->loop_depth < 32) {
+                emit->break_labels[emit->loop_depth] = l_end;
+                emit->continue_labels[emit->loop_depth] = l_cond;
+                emit->loop_depth++;
+            }
+
             fprintf(emit->out, "@L%d\n", l_cond);
             int cond = emit_expr(emit, stmt->while_stmt.condition);
             fprintf(emit->out, "\tjnz %%t%d, @L%d, @L%d\n", cond, l_body, l_end);
@@ -1658,6 +1719,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             fprintf(emit->out, "\tjmp @L%d\n", l_cond);
 
             fprintf(emit->out, "@L%d\n", l_end);
+            emit->loop_depth--;
             break;
         }
         case NODE_FOR_STMT: {
@@ -1695,6 +1757,14 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 int l_cond = next_label(emit);
                 int l_body = next_label(emit);
                 int l_end2 = next_label(emit);
+                int l_inc = next_label(emit);
+
+                // Push loop labels for break/continue
+                if (emit->loop_depth < 32) {
+                    emit->break_labels[emit->loop_depth] = l_end2;
+                    emit->continue_labels[emit->loop_depth] = l_inc;
+                    emit->loop_depth++;
+                }
 
                 fprintf(emit->out, "@L%d\n", l_cond);
                 int ci = next_temp(emit);
@@ -1719,6 +1789,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
 
                 emit_block(emit, stmt->for_stmt.body);
 
+                fprintf(emit->out, "@L%d\n", l_inc);
                 int ci3 = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", ci3, idx_name);
                 int ni = next_temp(emit);
@@ -1726,6 +1797,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", ni, idx_name);
                 fprintf(emit->out, "\tjmp @L%d\n", l_cond);
                 fprintf(emit->out, "@L%d\n", l_end2);
+                emit->loop_depth--;
             } else if (is_list) {
                 // for item in list → index loop with element load
                 int list_ptr = emit_expr(emit, iter);
@@ -1746,6 +1818,14 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 int l_cond = next_label(emit);
                 int l_body = next_label(emit);
                 int l_end2 = next_label(emit);
+                int l_inc = next_label(emit);
+
+                // Push loop labels for break/continue
+                if (emit->loop_depth < 32) {
+                    emit->break_labels[emit->loop_depth] = l_end2;
+                    emit->continue_labels[emit->loop_depth] = l_inc;
+                    emit->loop_depth++;
+                }
 
                 fprintf(emit->out, "@L%d\n", l_cond);
                 int ci = next_temp(emit);
@@ -1763,6 +1843,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
 
                 emit_block(emit, stmt->for_stmt.body);
 
+                fprintf(emit->out, "@L%d\n", l_inc);
                 int ci3 = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", ci3, idx_name);
                 int ni = next_temp(emit);
@@ -1770,6 +1851,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", ni, idx_name);
                 fprintf(emit->out, "\tjmp @L%d\n", l_cond);
                 fprintf(emit->out, "@L%d\n", l_end2);
+                emit->loop_depth--;
             } else if (is_set) {
                 // for item in set → convert to list via mix_set_values, then list iterate
                 int set_ptr = emit_expr(emit, iter);
@@ -1796,6 +1878,14 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 int l_cond = next_label(emit);
                 int l_body = next_label(emit);
                 int l_end2 = next_label(emit);
+                int l_inc = next_label(emit);
+
+                // Push loop labels for break/continue
+                if (emit->loop_depth < 32) {
+                    emit->break_labels[emit->loop_depth] = l_end2;
+                    emit->continue_labels[emit->loop_depth] = l_inc;
+                    emit->loop_depth++;
+                }
 
                 fprintf(emit->out, "@L%d\n", l_cond);
                 int ci = next_temp(emit);
@@ -1813,6 +1903,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
 
                 emit_block(emit, stmt->for_stmt.body);
 
+                fprintf(emit->out, "@L%d\n", l_inc);
                 int ci3 = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", ci3, idx_name);
                 int ni = next_temp(emit);
@@ -1820,6 +1911,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", ni, idx_name);
                 fprintf(emit->out, "\tjmp @L%d\n", l_cond);
                 fprintf(emit->out, "@L%d\n", l_end2);
+                emit->loop_depth--;
             } else {
                 // For-range: for i in start..end
                 int start_val, end_val;
@@ -1840,6 +1932,14 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 int l_cond = next_label(emit);
                 int l_body = next_label(emit);
                 int l_end2 = next_label(emit);
+                int l_inc = next_label(emit);
+
+                // Push loop labels for break/continue
+                if (emit->loop_depth < 32) {
+                    emit->break_labels[emit->loop_depth] = l_end2;
+                    emit->continue_labels[emit->loop_depth] = l_inc;
+                    emit->loop_depth++;
+                }
 
                 fprintf(emit->out, "@L%d\n", l_cond);
                 int cur = next_temp(emit);
@@ -1854,6 +1954,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "@L%d\n", l_body);
                 emit_block(emit, stmt->for_stmt.body);
 
+                fprintf(emit->out, "@L%d\n", l_inc);
                 int cur2 = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", cur2, stmt->for_stmt.var_name);
                 int next_v = next_temp(emit);
@@ -1861,6 +1962,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", next_v, stmt->for_stmt.var_name);
                 fprintf(emit->out, "\tjmp @L%d\n", l_cond);
                 fprintf(emit->out, "@L%d\n", l_end2);
+                emit->loop_depth--;
             }
             break;
         }
@@ -2096,6 +2198,70 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 }
             }
             fprintf(emit->out, "@dead%d\n", next_label(emit));
+            break;
+        }
+        case NODE_FIELD_ASSIGN: {
+            int obj = emit_expr(emit, stmt->field_assign.object);
+            int val = emit_expr(emit, stmt->field_assign.value);
+            MixType *obj_type = stmt->field_assign.object->resolved_type;
+            if (obj_type && obj_type->kind == TYPE_SHAPE) {
+                ShapeFieldInfo *fi = type_find_field(obj_type, stmt->field_assign.field_name);
+                if (fi) {
+                    const char *mem_ty = type_to_qbe_mem(fi->type);
+                    if (stmt->field_assign.op != TOK_EQ) {
+                        // Compound assignment: load old value, apply op, store
+                        const char *reg_ty = type_to_qbe(fi->type);
+                        const char *load_ty = type_to_qbe_load(fi->type);
+                        int old_val = next_temp(emit);
+                        int addr = -1;
+                        if (fi->offset == 0) {
+                            fprintf(emit->out, "\t%%t%d =%s load%s %%t%d\n", old_val, reg_ty, load_ty, obj);
+                        } else {
+                            addr = next_temp(emit);
+                            fprintf(emit->out, "\t%%t%d =l add %%t%d, %d\n", addr, obj, fi->offset);
+                            fprintf(emit->out, "\t%%t%d =%s load%s %%t%d\n", old_val, reg_ty, load_ty, addr);
+                        }
+                        const char *op;
+                        switch (stmt->field_assign.op) {
+                            case TOK_PLUS_EQ:  op = "add"; break;
+                            case TOK_MINUS_EQ: op = "sub"; break;
+                            case TOK_STAR_EQ:  op = "mul"; break;
+                            case TOK_SLASH_EQ: op = "div"; break;
+                            default: op = "add"; break;
+                        }
+                        int result = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =%s %s %%t%d, %%t%d\n", result, reg_ty, op, old_val, val);
+                        if (fi->offset == 0) {
+                            fprintf(emit->out, "\tstore%s %%t%d, %%t%d\n", mem_ty, result, obj);
+                        } else {
+                            fprintf(emit->out, "\tstore%s %%t%d, %%t%d\n", mem_ty, result, addr);
+                        }
+                    } else {
+                        // Simple assignment
+                        if (fi->offset == 0) {
+                            fprintf(emit->out, "\tstore%s %%t%d, %%t%d\n", mem_ty, val, obj);
+                        } else {
+                            int addr = next_temp(emit);
+                            fprintf(emit->out, "\t%%t%d =l add %%t%d, %d\n", addr, obj, fi->offset);
+                            fprintf(emit->out, "\tstore%s %%t%d, %%t%d\n", mem_ty, val, addr);
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        case NODE_BREAK_STMT: {
+            if (emit->loop_depth > 0) {
+                fprintf(emit->out, "\tjmp @L%d\n", emit->break_labels[emit->loop_depth - 1]);
+                fprintf(emit->out, "@dead%d\n", next_label(emit));
+            }
+            break;
+        }
+        case NODE_CONTINUE_STMT: {
+            if (emit->loop_depth > 0) {
+                fprintf(emit->out, "\tjmp @L%d\n", emit->continue_labels[emit->loop_depth - 1]);
+                fprintf(emit->out, "@dead%d\n", next_label(emit));
+            }
             break;
         }
         default:

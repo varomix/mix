@@ -812,6 +812,10 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
         }
         case NODE_CALL_EXPR: {
             /* Emit arguments first */
+            if (expr->call.arg_count > 64) {
+                mix_error(expr->loc, "too many function arguments (max 64)");
+                return -1;
+            }
             int arg_temps[64];
             for (int i = 0; i < expr->call.arg_count; i++) {
                 arg_temps[i] = emit_expr(emit, expr->call.args[i]);

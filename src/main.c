@@ -77,14 +77,22 @@ static int run_process(const char *const argv[], char **captured_stderr) {
         // Read child stderr into buffer
         size_t cap = 4096, len = 0;
         char *buf = malloc(cap);
+        if (!buf) { close(pipe_fds[0]); *captured_stderr = NULL; }
+        else {
         ssize_t n;
         while ((n = read(pipe_fds[0], buf + len, cap - len - 1)) > 0) {
             len += n;
-            if (len + 1 >= cap) { cap *= 2; buf = realloc(buf, cap); }
+            if (len + 1 >= cap) {
+                cap *= 2;
+                char *newbuf = realloc(buf, cap);
+                if (!newbuf) break;
+                buf = newbuf;
+            }
         }
         buf[len] = '\0';
         close(pipe_fds[0]);
         *captured_stderr = buf;
+        }
     }
 
     int status;
@@ -241,6 +249,7 @@ static char *resolve_module_path(Arena *arena, const char *base_dir,
     int off = (int)strlen(path);
 
     for (const char *p = module_path; *p; p++) {
+        if (off >= (int)sizeof(path) - 5) break;
         if (*p == '.') {
             path[off++] = '/';
         } else {

@@ -30,6 +30,7 @@ const char *type_kind_name(TypeKind kind) {
         case TYPE_TASK:    return "task";
         case TYPE_RESULT:  return "result";
         case TYPE_SET:     return "set";
+        case TYPE_GENERIC: return "T";
     }
     return "unknown";
 }

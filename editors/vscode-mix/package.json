@@ -1,0 +1,68 @@
+{
+  "name": "mix-lang",
+  "displayName": "MIX Language",
+  "description": "MIX language support: syntax highlighting, diagnostics, hover",
+  "version": "0.2.0",
+  "publisher": "varomix",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:mix"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "mix",
+        "aliases": [
+          "MIX",
+          "mix"
+        ],
+        "extensions": [
+          ".mix"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "mix",
+        "scopeName": "source.mix",
+        "path": "./syntaxes/mix.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "MIX",
+      "properties": {
+        "mix.lsp.path": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the mix-lsp binary. Leave empty to use mix-lsp from PATH."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[mix]": {
+        "editor.quickSuggestions": {
+          "strings": "on"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0"
+  }
+}

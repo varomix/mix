@@ -386,6 +386,11 @@ static void process_indentation(Lexer *lex) {
 
     if (current_indent > stack_top) {
         // Push new indent level
+        if (lex->indent_top + 1 >= 128) {
+            SrcLoc loc = {lex->filename, lex->line, 1};
+            mix_error(loc, "indentation nested too deeply (max 127 levels)");
+            return;
+        }
         lex->indent_top++;
         lex->indent_stack[lex->indent_top] = current_indent;
         Token tok = {0};
@@ -496,7 +501,12 @@ void lexer_tokenize(Lexer *lex) {
                 break;
             }
             case ')': {
-                lex->paren_depth--;
+                if (lex->paren_depth > 0) {
+                    lex->paren_depth--;
+                } else {
+                    SrcLoc loc = {lex->filename, lex->line, lex->col - 1};
+                    mix_error(loc, "unmatched ')'");
+                }
                 emit_token(lex, make_token(lex, TOK_RPAREN, lex->current - 1, 1));
                 break;
             }
@@ -506,7 +516,12 @@ void lexer_tokenize(Lexer *lex) {
                 break;
             }
             case ']': {
-                lex->paren_depth--;
+                if (lex->paren_depth > 0) {
+                    lex->paren_depth--;
+                } else {
+                    SrcLoc loc = {lex->filename, lex->line, lex->col - 1};
+                    mix_error(loc, "unmatched ']'");
+                }
                 emit_token(lex, make_token(lex, TOK_RBRACKET, lex->current - 1, 1));
                 break;
             }
@@ -516,7 +531,12 @@ void lexer_tokenize(Lexer *lex) {
                 break;
             }
             case '}': {
-                lex->paren_depth--;
+                if (lex->paren_depth > 0) {
+                    lex->paren_depth--;
+                } else {
+                    SrcLoc loc = {lex->filename, lex->line, lex->col - 1};
+                    mix_error(loc, "unmatched '}'");
+                }
                 emit_token(lex, make_token(lex, TOK_RBRACE, lex->current - 1, 1));
                 break;
             }

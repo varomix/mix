@@ -20,6 +20,7 @@ typedef enum {
     TYPE_TASK,
     TYPE_RESULT,
     TYPE_SET,
+    TYPE_GENERIC,
 } TypeKind;
 
 typedef struct ShapeFieldInfo {

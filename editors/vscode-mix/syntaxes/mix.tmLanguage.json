@@ -1,0 +1,333 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "MIX",
+  "scopeName": "source.mix",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#comptime" },
+    { "include": "#extern-block" },
+    { "include": "#shape-declaration" },
+    { "include": "#type-alias" },
+    { "include": "#function-definition" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#function-call" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.mix",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.mix",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.mix",
+              "match": "\\\\[nrt\\\\\"0]"
+            },
+            {
+              "name": "meta.interpolation.mix",
+              "begin": "\\{",
+              "end": "\\}",
+              "beginCaptures": {
+                "0": { "name": "punctuation.definition.interpolation.begin.mix" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.definition.interpolation.end.mix" }
+              },
+              "patterns": [
+                { "include": "#keywords" },
+                { "include": "#types" },
+                { "include": "#constants" },
+                { "include": "#numbers" },
+                { "include": "#operators" },
+                { "include": "#function-call" },
+                { "include": "#identifiers" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "comptime": {
+      "patterns": [
+        {
+          "name": "meta.comptime.const.mix",
+          "match": "(@const)\\s+([A-Z_][A-Z0-9_]*)\\s*=",
+          "captures": {
+            "1": { "name": "keyword.other.comptime.mix" },
+            "2": { "name": "constant.other.mix" }
+          }
+        },
+        {
+          "name": "keyword.other.comptime.mix",
+          "match": "@(?:os|arch|debug|release)\\b"
+        },
+        {
+          "name": "meta.generic.mix",
+          "match": "(@)([A-Z][A-Za-z0-9]*)(?:\\s*,\\s*([A-Z][A-Za-z0-9]*))*",
+          "captures": {
+            "1": { "name": "keyword.other.comptime.mix" },
+            "2": { "name": "entity.name.type.parameter.mix" },
+            "3": { "name": "entity.name.type.parameter.mix" }
+          }
+        },
+        {
+          "name": "meta.generic.constraint.mix",
+          "match": "(@[A-Z][A-Za-z0-9]*)\\s+(has)\\b",
+          "captures": {
+            "1": { "name": "entity.name.type.parameter.mix" },
+            "2": { "name": "keyword.other.constraint.mix" }
+          }
+        }
+      ]
+    },
+    "extern-block": {
+      "patterns": [
+        {
+          "name": "meta.extern.mix",
+          "match": "(extern)\\s+(\"[^\"]+\")",
+          "captures": {
+            "1": { "name": "keyword.other.extern.mix" },
+            "2": { "name": "string.quoted.double.mix" }
+          }
+        }
+      ]
+    },
+    "shape-declaration": {
+      "patterns": [
+        {
+          "name": "meta.shape.mix",
+          "match": "(shape)\\s+([A-Z][A-Za-z0-9]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.shape.mix" },
+            "2": { "name": "entity.name.type.shape.mix" }
+          }
+        }
+      ]
+    },
+    "type-alias": {
+      "patterns": [
+        {
+          "name": "meta.type-alias.mix",
+          "match": "(type)\\s+([A-Z][A-Za-z0-9]*)\\s*=",
+          "captures": {
+            "1": { "name": "keyword.declaration.type.mix" },
+            "2": { "name": "entity.name.type.alias.mix" }
+          }
+        }
+      ]
+    },
+    "function-definition": {
+      "patterns": [
+        {
+          "name": "meta.function.pub.mix",
+          "match": "(pub)\\s+([a-z_][a-zA-Z0-9_]*)\\s*\\(",
+          "captures": {
+            "1": { "name": "keyword.other.pub.mix" },
+            "2": { "name": "entity.name.function.mix" }
+          }
+        },
+        {
+          "name": "meta.function.stream.mix",
+          "match": "(stream)\\s+([a-z_][a-zA-Z0-9_]*)\\s*\\(",
+          "captures": {
+            "1": { "name": "keyword.other.stream.mix" },
+            "2": { "name": "entity.name.function.mix" }
+          }
+        },
+        {
+          "comment": "Top-level function definition: name followed by ( at start of line or after indent",
+          "name": "meta.function.mix",
+          "match": "^(\\s*)([a-z_][a-zA-Z0-9_]*)\\s*\\(",
+          "captures": {
+            "2": { "name": "entity.name.function.mix" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.mix",
+          "match": "\\b(if|else|while|for|in|match|repeat|break|continue|done|then)\\b"
+        },
+        {
+          "name": "keyword.other.mix",
+          "match": "\\b(pub|use|extern|defer|unsafe|zone|go|wait|run|shared|channel|stream|yield|fail|type|shape|has)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.mix",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "keyword.other.memory.mix",
+          "match": "\\b(stack|heap)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.mix",
+          "match": "\\b(int|float|bool|byte|str)\\b"
+        },
+        {
+          "name": "storage.type.sized.mix",
+          "match": "\\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float32|float64)\\b"
+        },
+        {
+          "comment": "User-defined types (PascalCase identifiers)",
+          "name": "entity.name.type.mix",
+          "match": "\\b([A-Z][A-Za-z0-9]+)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.mix",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.none.mix",
+          "match": "\\b(none)\\b"
+        },
+        {
+          "comment": "UPPER_CASE identifiers are constants",
+          "name": "constant.other.mix",
+          "match": "\\b([A-Z][A-Z0-9_]{2,})\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.mix",
+          "match": "\\b0x[0-9a-fA-F_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.mix",
+          "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*\\b"
+        },
+        {
+          "name": "constant.numeric.integer.mix",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.mix",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.fatarrow.mix",
+          "match": "=>"
+        },
+        {
+          "name": "keyword.operator.range.inclusive.mix",
+          "match": "\\.\\.\\.?="
+        },
+        {
+          "name": "keyword.operator.range.mix",
+          "match": "\\.\\."
+        },
+        {
+          "name": "keyword.operator.pipe.mix",
+          "match": "\\|>"
+        },
+        {
+          "name": "keyword.operator.comparison.mix",
+          "match": "==|!=|<=|>="
+        },
+        {
+          "name": "keyword.operator.assignment.compound.mix",
+          "match": "\\+=|-=|\\*=|/=|%="
+        },
+        {
+          "name": "keyword.operator.assignment.mix",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.arithmetic.mix",
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.comparison.mix",
+          "match": "[<>]"
+        },
+        {
+          "name": "keyword.operator.optional.mix",
+          "match": "\\?"
+        },
+        {
+          "name": "keyword.operator.mutability.mix",
+          "match": "!"
+        },
+        {
+          "name": "keyword.operator.sideeffect.mix",
+          "match": "~"
+        },
+        {
+          "name": "keyword.operator.address.mix",
+          "match": "&"
+        }
+      ]
+    },
+    "function-call": {
+      "patterns": [
+        {
+          "comment": "Built-in functions",
+          "name": "meta.function-call.builtin.mix",
+          "match": "\\b(print|panic|assert|len|bytes|alloc|free|sizeof|type_of|sqrt|abs|min|max|floor|ceil|round|sin|cos|tan|pow|log|log2)(!?)\\s*\\(",
+          "captures": {
+            "1": { "name": "support.function.builtin.mix" },
+            "2": { "name": "keyword.operator.mutability.mix" }
+          }
+        },
+        {
+          "comment": "Regular function calls",
+          "name": "meta.function-call.mix",
+          "match": "\\b([a-z_][a-zA-Z0-9_]*)(!?)\\s*\\(",
+          "captures": {
+            "1": { "name": "entity.name.function.call.mix" },
+            "2": { "name": "keyword.operator.mutability.mix" }
+          }
+        },
+        {
+          "comment": "Method calls with dot notation",
+          "name": "meta.method-call.mix",
+          "match": "\\.([a-z_][a-zA-Z0-9_]*)(!?)\\s*\\(",
+          "captures": {
+            "1": { "name": "entity.name.function.call.mix" },
+            "2": { "name": "keyword.operator.mutability.mix" }
+          }
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "comment": "some/ok/err pattern matching keywords",
+          "name": "keyword.other.result.mix",
+          "match": "\\b(some|ok|err)\\b"
+        }
+      ]
+    }
+  }
+}

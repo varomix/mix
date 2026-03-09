@@ -1,12 +1,14 @@
-extern "raylib"
-    InitWindow(w: int32, h: int32, title: *byte) ~
-    WindowShouldClose() -> bool ~
-    BeginDrawing() ~
-    EndDrawing() ~
-    CloseWindow() ~
-    ClearBackground(color: Color) ~
-    SetTargetFPS(fps: int32) ~
-    DrawText(text: *byte, posx: int32, posy: int32, fontsize: int32, color: Color) ~
+// extern "raylib"
+//     InitWindow(w: int32, h: int32, title: *byte) ~
+//     WindowShouldClose() -> bool ~
+//     BeginDrawing() ~
+//     EndDrawing() ~
+//     CloseWindow() ~
+//     ClearBackground(color: Color) ~
+//     SetTargetFPS(fps: int32) ~
+//     DrawText(text: *byte, posx: int32, posy: int32, fontsize: int32, color: Color) ~
+
+use raylib
 
 @const WIN_W = 1280
 @const WIN_H = 800

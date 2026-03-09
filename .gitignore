@@ -3,3 +3,5 @@ build/
 *.s
 *.ssa
 .DS_Store
+node_modules/
+out/

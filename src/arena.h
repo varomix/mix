@@ -5,10 +5,17 @@
 
 #define ARENA_DEFAULT_CAP (1024 * 1024) // 1 MB
 
-struct Arena {
+typedef struct ArenaBlock {
     char *base;
     size_t used;
     size_t capacity;
+    struct ArenaBlock *next;
+} ArenaBlock;
+
+struct Arena {
+    ArenaBlock *current;
+    ArenaBlock *first;
+    size_t block_size; // default capacity for new blocks
 };
 
 Arena arena_create(size_t capacity);

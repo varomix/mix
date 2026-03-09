@@ -22,7 +22,7 @@ make
 - **Optionals** — `T?` types with `else` fallback
 - **Error handling** — result-based errors with `fail`, `else` fallback, and `?` propagation
 - **String interpolation** — `"Hello {name}!"`
-- **String operations** — `+` concatenation, comparison (`==`, `<`, `>`), `.char_at()`, `.code()`, `ord()`, `chr()`
+- **String operations** — `+` concatenation, comparison (`==`, `<`, `>`), `.sort()`, `.char_at()`, `.code()`, `ord()`, `chr()`
 - **Lists** — `push`, `pop`, `sort` (int/float/string), `reverse`, `insert`, `remove`, `contains`, `index_of`, `join`
 - **Maps** — `{"key": val}`, `.has()`, `.remove!()`, `.keys`, `.values`
 - **Sets** — `set{"a", "b"}`, `.add!()`, `.remove!()`, `.has()`, `.union()`, `.intersect()`, `.diff()`

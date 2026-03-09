@@ -391,6 +391,7 @@ name.split(" ")
 name.contains("li")
 name.starts_with("Al")
 name.replace("Alice", "Bob")
+name.sort()                     // "Acel" — sort characters
 ```
 
 ### String Comparison

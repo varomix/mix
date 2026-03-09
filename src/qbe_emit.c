@@ -1,6 +1,7 @@
 #include "qbe_emit.h"
 #include "errors.h"
 #include "arena.h"
+#include "lexer.h"
 #include <inttypes.h>
 
 QbeEmitter qbe_emitter_create(FILE *out, Arena *arena, SymTab *symtab, bool debug) {
@@ -718,7 +719,7 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     fprintf(emit->out, "\t%%t%d =w or %%t%d, %%t%d\n", t, left, right);
                     break;
                 default:
-                    mix_error(expr->loc, "unsupported binary operator in codegen");
+                    mix_error(expr->loc, "unsupported binary operator '%s' in codegen", token_kind_name(expr->binary.op));
                     break;
             }
             return t;
@@ -1464,7 +1465,7 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             return t;
         }
         default:
-            mix_error(expr->loc, "unsupported expression in codegen");
+            mix_error(expr->loc, "unsupported expression node (kind %d) in codegen", expr->kind);
             return next_temp(emit);
     }
 }

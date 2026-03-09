@@ -2,6 +2,47 @@
 #include "errors.h"
 #include "arena.h"
 
+// --- Levenshtein distance for "did you mean?" suggestions ---
+
+static int levenshtein(const char *a, const char *b) {
+    int la = (int)strlen(a), lb = (int)strlen(b);
+    if (la == 0) return lb;
+    if (lb == 0) return la;
+    // Use two rows to save stack space
+    int prev[128], curr[128];
+    if (lb >= 128) return 99;
+    for (int j = 0; j <= lb; j++) prev[j] = j;
+    for (int i = 1; i <= la; i++) {
+        curr[0] = i;
+        for (int j = 1; j <= lb; j++) {
+            int cost = (a[i-1] == b[j-1]) ? 0 : 1;
+            int del = prev[j] + 1;
+            int ins = curr[j-1] + 1;
+            int sub = prev[j-1] + cost;
+            curr[j] = del < ins ? (del < sub ? del : sub) : (ins < sub ? ins : sub);
+        }
+        for (int j = 0; j <= lb; j++) prev[j] = curr[j];
+    }
+    return prev[lb];
+}
+
+// Search all scopes for the closest name within max_dist.
+// Returns the best match name, or NULL if none found.
+static const char *find_similar_name(SymTab *st, const char *name, int max_dist) {
+    const char *best = NULL;
+    int best_dist = max_dist + 1;
+    for (Scope *scope = st->current; scope; scope = scope->parent) {
+        for (Symbol *sym = scope->symbols; sym; sym = sym->next) {
+            int d = levenshtein(name, sym->name);
+            if (d > 0 && d < best_dist) {
+                best_dist = d;
+                best = sym->name;
+            }
+        }
+    }
+    return best;
+}
+
 Sema sema_create(Arena *arena) {
     Sema sema = {0};
     sema.arena = arena;
@@ -237,6 +278,8 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
             Symbol *sym = symtab_lookup(&sema->symtab, expr->ident.name);
             if (!sym) {
                 mix_error(expr->loc, "undefined variable '%s'", expr->ident.name);
+                const char *suggestion = find_similar_name(&sema->symtab, expr->ident.name, 2);
+                if (suggestion) mix_note(expr->loc, "did you mean '%s'?", suggestion);
                 expr->resolved_type = make_type(sema->arena, TYPE_INT);
             } else {
                 expr->resolved_type = sym->type;
@@ -439,6 +482,8 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
             Symbol *sym = symtab_lookup(&sema->symtab, expr->call.name);
             if (!sym) {
                 mix_error(expr->loc, "undefined function '%s'", expr->call.name);
+                const char *suggestion = find_similar_name(&sema->symtab, expr->call.name, 2);
+                if (suggestion) mix_note(expr->loc, "did you mean '%s'?", suggestion);
                 expr->resolved_type = make_type(sema->arena, TYPE_INT);
                 for (int i = 0; i < expr->call.arg_count; i++) {
                     resolve_expr(sema, expr->call.args[i]);

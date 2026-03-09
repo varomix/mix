@@ -1,0 +1,4 @@
+// ERROR: undefined variable 'scroe'
+main()
+    score = 100
+    print(scroe)

@@ -13,6 +13,7 @@
 #include <libgen.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
@@ -37,6 +38,71 @@ static char *read_file(const char *path) {
     buf[rd] = '\0';
     fclose(f);
     return buf;
+}
+
+// Run a subprocess without shell interpretation (prevents command injection).
+// argv must be NULL-terminated. Returns the process exit code, or -1 on failure.
+// If captured_stderr is non-NULL, child stderr is captured into a malloc'd buffer
+// (caller must free) instead of going to the terminal.
+static int run_process(const char *const argv[], char **captured_stderr) {
+    int pipe_fds[2] = {-1, -1};
+    if (captured_stderr) {
+        *captured_stderr = NULL;
+        if (pipe(pipe_fds) < 0) {
+            fprintf(stderr, "mix: pipe failed: %s\n", strerror(errno));
+            return -1;
+        }
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "mix: fork failed: %s\n", strerror(errno));
+        if (captured_stderr) { close(pipe_fds[0]); close(pipe_fds[1]); }
+        return -1;
+    }
+    if (pid == 0) {
+        if (captured_stderr) {
+            close(pipe_fds[0]);
+            dup2(pipe_fds[1], STDERR_FILENO);
+            close(pipe_fds[1]);
+        }
+        execvp(argv[0], (char *const *)argv);
+        fprintf(stderr, "mix: exec '%s' failed: %s\n", argv[0], strerror(errno));
+        _exit(127);
+    }
+
+    // Parent
+    if (captured_stderr) {
+        close(pipe_fds[1]);
+        // Read child stderr into buffer
+        size_t cap = 4096, len = 0;
+        char *buf = malloc(cap);
+        ssize_t n;
+        while ((n = read(pipe_fds[0], buf + len, cap - len - 1)) > 0) {
+            len += n;
+            if (len + 1 >= cap) { cap *= 2; buf = realloc(buf, cap); }
+        }
+        buf[len] = '\0';
+        close(pipe_fds[0]);
+        *captured_stderr = buf;
+    }
+
+    int status;
+    if (waitpid(pid, &status, 0) < 0) {
+        fprintf(stderr, "mix: waitpid failed: %s\n", strerror(errno));
+        return -1;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    return -1;
+}
+
+// Print an argv array as a command string (for verbose logging).
+static void print_argv(const char *const argv[]) {
+    for (int i = 0; argv[i]; i++) {
+        if (i > 0) fprintf(stderr, " ");
+        fprintf(stderr, "%s", argv[i]);
+    }
+    fprintf(stderr, "\n");
 }
 
 static void usage(void) {
@@ -186,75 +252,164 @@ static char *resolve_module_path(Arena *arena, const char *base_dir,
     return arena_strdup(arena, path);
 }
 
-// Compile a single module, return its output file path (or NULL on failure)
+// Circular import detection — stack of modules currently being compiled.
+// Entries are pushed on entry to compile_module and popped on exit,
+// so only modules on the current call-chain are tracked.
+#define MAX_COMPILING_MODULES 128
+static const char *compiling_modules[MAX_COMPILING_MODULES];
+static int compiling_module_count = 0;
+
+static bool is_module_compiling(const char *path) {
+    for (int i = 0; i < compiling_module_count; i++) {
+        if (strcmp(compiling_modules[i], path) == 0) return true;
+    }
+    return false;
+}
+
+// Compile a single module, return its output file path (or NULL on failure).
+// Recursively compiles any modules this module imports via 'use'.
 // For QBE backend: returns .s file path
 // For C backend: returns .c file path
 static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
-                            const char *base_dir, bool verbose, int module_id,
-                            const char *prefix, bool debug, bool use_c_backend) {
+                            const char *base_dir, bool verbose,
+                            bool debug, bool use_c_backend,
+                            const char *exe_dir,
+                            char **module_asm_files, int *module_count,
+                            int max_modules) {
+    // Circular import check
+    if (is_module_compiling(source_path)) {
+        fprintf(stderr, "mix: circular import detected: '%s'\n", source_path);
+        return NULL;
+    }
+    if (compiling_module_count >= MAX_COMPILING_MODULES) {
+        fprintf(stderr, "mix: too many nested imports (max %d)\n", MAX_COMPILING_MODULES);
+        return NULL;
+    }
+    compiling_modules[compiling_module_count++] = source_path;
+
     char *source = read_file(source_path);
-    if (!source) return NULL;
+    if (!source) { compiling_module_count--; return NULL; }
+
+    // Set error source to this module's source for correct source-line display
+    errors_set_source(source, source_path);
 
     // Lex
     Lexer lexer = lexer_create(source, source_path, arena);
     lexer_tokenize(&lexer);
-    if (mix_error_count() > 0) { free(source); return NULL; }
+    if (mix_error_count() > 0) {
+        free(source); free(lexer.tokens); compiling_module_count--;
+        return NULL;
+    }
 
     // Parse
     Parser parser = parser_create(lexer.tokens, lexer.token_count, arena, source_path);
     AstNode *program = parser_parse(&parser);
-    if (mix_error_count() > 0) { free(source); free(lexer.tokens); return NULL; }
+    if (mix_error_count() > 0) {
+        free(source); free(lexer.tokens); compiling_module_count--;
+        return NULL;
+    }
+
+    // Recursively compile any modules this module imports
+    for (int i = 0; i < program->program.decl_count; i++) {
+        AstNode *decl = program->program.decls[i];
+        if (decl->kind == NODE_USE_DECL) {
+            char *sub_path = resolve_module_path(arena, base_dir,
+                                                  decl->use_decl.module_path, exe_dir);
+            if (verbose) fprintf(stderr, "mix: compiling sub-module '%s' -> %s\n",
+                                 decl->use_decl.module_path, sub_path);
+
+            char *sub_asm = compile_module(sub_path, arena, sema, base_dir,
+                                           verbose, debug, use_c_backend,
+                                           exe_dir, module_asm_files,
+                                           module_count, max_modules);
+            if (!sub_asm) {
+                fprintf(stderr, "mix: failed to compile module '%s'\n",
+                        decl->use_decl.module_path);
+                free(source); free(lexer.tokens); compiling_module_count--;
+                return NULL;
+            }
+            // Restore error source to this module after sub-module compilation
+            errors_set_source(source, source_path);
+
+            if (*module_count >= max_modules) {
+                fprintf(stderr, "mix: too many modules (max %d)\n", max_modules);
+                free(source); free(lexer.tokens); compiling_module_count--;
+                return NULL;
+            }
+            module_asm_files[(*module_count)++] = sub_asm;
+        }
+    }
 
     // Analyze (uses shared sema so pub symbols are visible to main)
     sema_analyze(sema, program);
-    if (mix_error_count() > 0) { free(source); free(lexer.tokens); return NULL; }
+    if (mix_error_count() > 0) {
+        free(source); free(lexer.tokens); compiling_module_count--;
+        return NULL;
+    }
+
+    int mod_id = *module_count;  // unique ID for temp file naming
 
     if (use_c_backend) {
         // C backend: emit .c file directly
         char c_path[256];
-        snprintf(c_path, sizeof(c_path), "/tmp/mod_%d_%d.c", getpid(), module_id);
+        snprintf(c_path, sizeof(c_path), "/tmp/mod_%d_%d.c", getpid(), mod_id);
         FILE *c_out = fopen(c_path, "w");
-        if (!c_out) { free(source); free(lexer.tokens); return NULL; }
+        if (!c_out) {
+            free(source); free(lexer.tokens); compiling_module_count--;
+            return NULL;
+        }
         CEmitter c_emitter = c_emitter_create(c_out, arena, &sema->symtab);
         c_emit_program(&c_emitter, program);
         fclose(c_out);
         free(source);
         free(lexer.tokens);
+        compiling_module_count--;
         return arena_strdup(arena, c_path);
     } else {
         // QBE backend: emit .ssa, compile to .s
-    char ssa_path[256], asm_path[256];
-    snprintf(ssa_path, sizeof(ssa_path), "/tmp/mod_%d_%d.ssa", getpid(), module_id);
-    snprintf(asm_path, sizeof(asm_path), "/tmp/mod_%d_%d.s", getpid(), module_id);
+        char ssa_path[256], asm_path[256];
+        snprintf(ssa_path, sizeof(ssa_path), "/tmp/mod_%d_%d.ssa", getpid(), mod_id);
+        snprintf(asm_path, sizeof(asm_path), "/tmp/mod_%d_%d.s", getpid(), mod_id);
 
-    FILE *ssa_out = fopen(ssa_path, "w");
-    if (!ssa_out) { free(source); free(lexer.tokens); return NULL; }
+        FILE *ssa_out = fopen(ssa_path, "w");
+        if (!ssa_out) {
+            free(source); free(lexer.tokens); compiling_module_count--;
+            return NULL;
+        }
 
-    QbeEmitter emitter = qbe_emitter_create(ssa_out, arena, &sema->symtab, debug);
-    qbe_emit_program(&emitter, program);
-    fclose(ssa_out);
+        QbeEmitter emitter = qbe_emitter_create(ssa_out, arena, &sema->symtab, debug);
+        qbe_emit_program(&emitter, program);
+        fclose(ssa_out);
 
-    // QBE compile
-    char qbe_cmd[512];
-    snprintf(qbe_cmd, sizeof(qbe_cmd), "qbe -o %s %s", asm_path, ssa_path);
-    if (verbose) fprintf(stderr, "mix: %s\n", qbe_cmd);
+        // QBE compile
+        const char *qbe_argv[] = {"qbe", "-o", asm_path, ssa_path, NULL};
+        if (verbose) { fprintf(stderr, "mix: "); print_argv(qbe_argv); }
 
-    int ret = system(qbe_cmd);
-    if (ret != 0) {
-        fprintf(stderr, "mix: qbe failed for module '%s'\n", source_path);
-        free(source); free(lexer.tokens);
-        return NULL;
+        char *qbe_stderr = NULL;
+        int ret = run_process(qbe_argv, verbose ? NULL : &qbe_stderr);
+        if (ret != 0) {
+            if (verbose) {
+                fprintf(stderr, "mix: qbe failed for module '%s'\n", source_path);
+            } else {
+                fprintf(stderr, "mix: internal compiler error while compiling '%s'. Run with -v for details.\n", source_path);
+            }
+            free(qbe_stderr);
+            free(source); free(lexer.tokens); compiling_module_count--;
+            return NULL;
+        }
+        free(qbe_stderr);
+
+        if (!verbose) remove(ssa_path);
+        free(source);
+        free(lexer.tokens);
+        compiling_module_count--;
+        return arena_strdup(arena, asm_path);
     }
-
-    if (!verbose) remove(ssa_path);
-    free(source);
-    free(lexer.tokens);
-
-    return arena_strdup(arena, asm_path);
-    } /* end QBE backend */
 }
 
 int main(int argc, char **argv) {
+    errors_init();
+
     const char *input_file = NULL;
     const char *output_file = NULL;
     const char *bind_path = NULL;
@@ -268,7 +423,8 @@ int main(int argc, char **argv) {
     RunMode mode = MODE_BUILD;
     bool output_set = false;
 
-    char *link_flags[64];
+    #define MAX_LINK_FLAGS 64
+    char *link_flags[MAX_LINK_FLAGS];
     int link_flag_count = 0;
 
     // Parse subcommand (argv[1])
@@ -311,8 +467,12 @@ int main(int argc, char **argv) {
             backend = argv[++i];
         } else if (strcmp(argv[i], "--lib") == 0 && i + 1 < argc) {
             bind_lib = argv[++i];
-        } else if (strncmp(argv[i], "-l", 2) == 0 || strncmp(argv[i], "-L", 2) == 0 ||
+    } else if (strncmp(argv[i], "-l", 2) == 0 || strncmp(argv[i], "-L", 2) == 0 ||
                    strncmp(argv[i], "-framework", 10) == 0) {
+            if (link_flag_count >= MAX_LINK_FLAGS) {
+                fprintf(stderr, "mix: too many linker flags (max %d)\n", MAX_LINK_FLAGS);
+                return 1;
+            }
             link_flags[link_flag_count++] = argv[i];
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "mix: unknown option '%s'\n", argv[i]);
@@ -444,7 +604,8 @@ int main(int argc, char **argv) {
     }
 
     // Compile imported modules first
-    char *module_asm_files[64];
+    #define MAX_MODULES 64
+    char *module_asm_files[MAX_MODULES];
     int module_count = 0;
 
     Sema sema = sema_create(&arena);
@@ -484,10 +645,17 @@ int main(int argc, char **argv) {
                                  decl->use_decl.module_path, mod_path);
 
             char *asm_file = compile_module(mod_path, &arena, &sema, base_dir,
-                                            verbose, module_count, decl->use_decl.module_path,
-                                            debug_mode, use_c_backend);
+                                            verbose, debug_mode, use_c_backend,
+                                            exe_dir, module_asm_files,
+                                            &module_count, MAX_MODULES);
             if (!asm_file) {
                 fprintf(stderr, "mix: failed to compile module '%s'\n", decl->use_decl.module_path);
+                return 1;
+            }
+            // Restore error source to main file after module compilation
+            errors_set_source(source, input_file);
+            if (module_count >= MAX_MODULES) {
+                fprintf(stderr, "mix: too many modules (max %d)\n", MAX_MODULES);
                 return 1;
             }
             module_asm_files[module_count++] = asm_file;
@@ -548,14 +716,20 @@ int main(int argc, char **argv) {
     // QBE backend: compile .ssa -> .s
     if (!use_c_backend) {
         snprintf(asm_path, sizeof(asm_path), "/tmp/mix_%d.s", getpid());
-        char qbe_cmd[512];
-        snprintf(qbe_cmd, sizeof(qbe_cmd), "qbe -o %s %s", asm_path, gen_path);
-        if (verbose) fprintf(stderr, "mix: %s\n", qbe_cmd);
-        int ret = system(qbe_cmd);
+        const char *qbe_argv[] = {"qbe", "-o", asm_path, gen_path, NULL};
+        if (verbose) { fprintf(stderr, "mix: "); print_argv(qbe_argv); }
+        char *qbe_stderr = NULL;
+        int ret = run_process(qbe_argv, verbose ? NULL : &qbe_stderr);
         if (ret != 0) {
-            fprintf(stderr, "mix: qbe failed (exit %d)\n", ret);
+            if (verbose) {
+                fprintf(stderr, "mix: qbe failed (exit %d)\n", ret);
+            } else {
+                fprintf(stderr, "mix: internal compiler error while compiling '%s'. Run with -v for details.\n", input_file);
+            }
+            free(qbe_stderr);
             return 1;
         }
+        free(qbe_stderr);
     }
 
     // Find runtime
@@ -576,42 +750,68 @@ int main(int argc, char **argv) {
         if (test) { fclose(test); runtime_path = runtime_paths[i]; break; }
     }
 
-    // Link
-    char link_cmd[2048];
-    int off = 0;
-    if (use_c_backend) {
-        // C backend: cc generated.c + module .c files + runtime
-        off = snprintf(link_cmd, sizeof(link_cmd), "cc %s%s%s",
-                       debug_mode ? "-g " : "",
-                       debug_mode ? "" : "-O2 ",
-                       gen_path);
-        for (int i = 0; i < module_count; i++)
-            off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " %s", module_asm_files[i]);
-    } else {
-        // QBE backend: cc .s + module .s files
-        off = snprintf(link_cmd, sizeof(link_cmd), "cc %s%s%s",
-                       debug_mode ? "-g " : "",
-                       debug_mode ? "" : "-O2 ",
-                       asm_path);
-        for (int i = 0; i < module_count; i++)
-            off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " %s", module_asm_files[i]);
-    }
+    // Link — build argv array to avoid shell injection
+    // Max entries: cc + flags(2) + main_file + modules(64) + runtime + -o + output + -lm
+    //              + link_flags(64) + LDFLAGS tokens(64) + NULL
+    #define MAX_LINK_ARGV 256
+    const char *link_argv[MAX_LINK_ARGV];
+    int ai = 0;
+
+    link_argv[ai++] = "cc";
+    if (debug_mode) link_argv[ai++] = "-g";
+    if (!debug_mode) link_argv[ai++] = "-O2";
+    link_argv[ai++] = use_c_backend ? gen_path : asm_path;
+    for (int i = 0; i < module_count && ai < MAX_LINK_ARGV - 8; i++)
+        link_argv[ai++] = module_asm_files[i];
     if (runtime_path)
-        off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " %s", runtime_path);
-    off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " -o %s -lm", output_file);
-    for (int i = 0; i < link_flag_count; i++)
-        off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " %s", link_flags[i]);
+        link_argv[ai++] = runtime_path;
+    link_argv[ai++] = "-o";
+    link_argv[ai++] = output_file;
+    link_argv[ai++] = "-lm";
+    for (int i = 0; i < link_flag_count && ai < MAX_LINK_ARGV - 2; i++)
+        link_argv[ai++] = link_flags[i];
+
+    // LDFLAGS: split by whitespace since execvp doesn't use a shell.
+    // Tokenize a mutable copy so each flag becomes a separate argv entry.
+    char *ldflags_buf = NULL;
     const char *env_ldflags = getenv("LDFLAGS");
-    if (env_ldflags && env_ldflags[0])
-        off += snprintf(link_cmd + off, sizeof(link_cmd) - off, " %s", env_ldflags);
+    if (env_ldflags && env_ldflags[0]) {
+        ldflags_buf = strdup(env_ldflags);
+        char *tok = strtok(ldflags_buf, " \t");
+        while (tok && ai < MAX_LINK_ARGV - 1) {
+            link_argv[ai++] = tok;
+            tok = strtok(NULL, " \t");
+        }
+    }
 
-    if (verbose) fprintf(stderr, "mix: %s\n", link_cmd);
+    link_argv[ai] = NULL;
+    #undef MAX_LINK_ARGV
 
-    int ret = system(link_cmd);
+    if (verbose) { fprintf(stderr, "mix: "); print_argv(link_argv); }
+
+    char *link_stderr = NULL;
+    int ret = run_process(link_argv, verbose ? NULL : &link_stderr);
+    free(ldflags_buf);
     if (ret != 0) {
-        fprintf(stderr, "mix: linker failed (exit %d)\n", ret);
+        if (verbose) {
+            fprintf(stderr, "mix: linker failed (exit %d)\n", ret);
+        } else {
+            // Try to translate common linker errors
+            if (link_stderr && (strstr(link_stderr, "undefined reference") ||
+                                strstr(link_stderr, "undefined symbol") ||
+                                strstr(link_stderr, "Undefined symbols"))) {
+                fprintf(stderr, "mix: linking failed: undefined symbol. Check that all functions and external libraries are available.\n");
+            } else if (link_stderr && (strstr(link_stderr, "library not found") ||
+                                       strstr(link_stderr, "cannot find -l"))) {
+                fprintf(stderr, "mix: linking failed: library not found. Check your -l flags.\n");
+            } else {
+                fprintf(stderr, "mix: linking failed. Run with -v for details.\n");
+            }
+        }
+        free(link_stderr);
         return 1;
     }
+    free(link_stderr);
 
     // Cleanup
     if (!verbose) {
@@ -630,13 +830,14 @@ int main(int argc, char **argv) {
     // In run mode, execute the compiled binary
     if (mode == MODE_RUN) {
         // Build the path — if output_file is a bare name, prefix with ./
-        char run_cmd[512];
+        char run_path[512];
         if (output_file[0] == '/' || (output_file[0] == '.' && output_file[1] == '/')) {
-            snprintf(run_cmd, sizeof(run_cmd), "%s", output_file);
+            snprintf(run_path, sizeof(run_path), "%s", output_file);
         } else {
-            snprintf(run_cmd, sizeof(run_cmd), "./%s", output_file);
+            snprintf(run_path, sizeof(run_path), "./%s", output_file);
         }
-        return system(run_cmd);
+        const char *run_argv[] = {run_path, NULL};
+        return run_process(run_argv, NULL);
     }
 
     return 0;

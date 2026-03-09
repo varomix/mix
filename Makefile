@@ -56,7 +56,10 @@ test: $(BIN)
 test-errors: $(BIN)
 	bash tests/run_error_tests.sh
 
-test-all: test test-errors
+test-error-messages: $(BIN)
+	bash tests/run_error_message_tests.sh
+
+test-all: test test-errors test-error-messages
 
 PREFIX ?= /usr/local
 install: $(BIN) $(LSP_BIN)
@@ -69,4 +72,4 @@ install: $(BIN) $(LSP_BIN)
 		cp lib/std/*.mix $(PREFIX)/lib/mix/std/; \
 	fi
 
-.PHONY: all clean run test test-errors test-all install
+.PHONY: all clean run test test-errors test-error-messages test-all install

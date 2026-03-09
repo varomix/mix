@@ -14,6 +14,9 @@ typedef enum {
 typedef void (*DiagnosticCallback)(DiagSeverity severity, SrcLoc loc,
                                     const char *message, void *userdata);
 
+// Initialize error system (detect color support). Call once at startup.
+void errors_init(void);
+
 // Set a diagnostic callback. Pass NULL to restore default stderr behavior.
 void errors_set_callback(DiagnosticCallback cb, void *userdata);
 
@@ -34,5 +37,8 @@ void mix_note(SrcLoc loc, const char *fmt, ...);
 
 // Get total error count
 int mix_error_count(void);
+
+// Check if error limit was reached
+bool mix_error_limit_reached(void);
 
 #endif // ERRORS_H

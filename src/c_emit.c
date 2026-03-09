@@ -1446,7 +1446,7 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             return t;
         }
         default:
-            mix_error(expr->loc, "unsupported expression in C codegen");
+            mix_error(expr->loc, "unsupported expression node (kind %d) in C codegen", expr->kind);
             return next_temp(emit);
     }
 }

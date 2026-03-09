@@ -494,6 +494,55 @@ static void handle_completion_request(LspServer *server, int64_t id, JsonValue *
         for (int i = 0; type_kws[i]; i++) {
             emit_completion(&w, type_kws[i], 22, NULL);
         }
+
+        // Built-in functions
+        static const struct { const char *name; const char *detail; } builtins[] = {
+            {"print", "(any)"},
+            {"to_string", "(any) -> str"},
+            {"to_int", "(any) -> int"},
+            {"to_float", "(any) -> float"},
+            {"to_set", "([any]) -> set"},
+            {"ord", "(str) -> int"},
+            {"chr", "(int) -> str"},
+            {"sqrt", "(float) -> float"},
+            {"abs", "(float) -> float"},
+            {"floor", "(float) -> float"},
+            {"ceil", "(float) -> float"},
+            {"round", "(float) -> float"},
+            {"pow", "(float, float) -> float"},
+            {"min", "(float, float) -> float"},
+            {"max", "(float, float) -> float"},
+            {"sin", "(float) -> float"},
+            {"cos", "(float) -> float"},
+            {"tan", "(float) -> float"},
+            {"log", "(float) -> float"},
+            {"asin", "(float) -> float"},
+            {"acos", "(float) -> float"},
+            {"atan2", "(float, float) -> float"},
+            {"clamp", "(float, float, float) -> float"},
+            {"lerp", "(float, float, float) -> float"},
+            {"file_open", "(str, str) -> int"},
+            {"file_read", "(int) -> str"},
+            {"file_write", "(int, str)"},
+            {"file_close", "(int)"},
+            {"file_read_all", "(str) -> str"},
+            {"file_write_all", "(str, str)"},
+            {"file_exists", "(str) -> bool"},
+            {"list_dir", "(str) -> [str]"},
+            {"shell", "(str) -> int"},
+            {"shell_output", "(str) -> str"},
+            {"env", "(str) -> str"},
+            {"exit", "(int)"},
+            {"getcwd", "() -> str"},
+            {"mkdir", "(str) -> bool"},
+            {"args", "() -> [str]"},
+            {"str_reverse", "(str) -> str"},
+            {"str_count", "(str, str) -> int"},
+            {NULL, NULL}
+        };
+        for (int i = 0; builtins[i].name; i++) {
+            emit_completion(&w, builtins[i].name, 3, builtins[i].detail);
+        }
     }
 
     } // end interp_mode else

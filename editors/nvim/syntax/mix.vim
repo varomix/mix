@@ -10,10 +10,6 @@ endif
 let s:cpo_save = &cpo
 set cpo&vim
 
-" ── Comments (highest priority — must come last or use priority) ──
-syn match mixComment    '//.*$' contains=mixTodo
-syn keyword mixTodo     TODO FIXME XXX HACK NOTE contained
-
 " ── Keywords ──
 syn keyword mixKeyword  if else while for in match done shape extern use pub
 syn keyword mixKeyword  type zone defer unsafe go wait shared as then
@@ -102,7 +98,11 @@ syn keyword mixBuiltin  min max to_string to_int to_float to_set
 syn keyword mixBuiltin  file_open file_read file_write file_close
 syn keyword mixBuiltin  file_read_all file_write_all file_exists list_dir
 syn keyword mixBuiltin  shell shell_output env exit getcwd mkdir args
-syn keyword mixBuiltin  str_reverse str_count
+syn keyword mixBuiltin  str_reverse str_count ord chr
+
+" ── Comments (must be defined AFTER keywords so the match takes priority) ──
+syn match mixComment    '//.*$' contains=mixTodo
+syn keyword mixTodo     TODO FIXME XXX HACK NOTE contained
 
 " ── Linking ──
 hi def link mixComment       Comment

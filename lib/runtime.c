@@ -1048,6 +1048,105 @@ void mix_print_set_int(const void *set_ptr) {
     printf("}\n");
 }
 
+// Write functions for collections (no newline — for string interpolation)
+void mix_write_list_int(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    printf("[");
+    for (int64_t i = 0; i < list->len; i++) {
+        if (i > 0) printf(", ");
+        printf("%"PRId64, list->data[i]);
+    }
+    printf("]");
+}
+
+void mix_write_list_str(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    printf("[");
+    for (int64_t i = 0; i < list->len; i++) {
+        if (i > 0) printf(", ");
+        printf("\"%s\"", (const char *)list->data[i]);
+    }
+    printf("]");
+}
+
+void mix_write_list_float(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    printf("[");
+    for (int64_t i = 0; i < list->len; i++) {
+        if (i > 0) printf(", ");
+        double val;
+        memcpy(&val, &list->data[i], sizeof(double));
+        printf("%g", val);
+    }
+    printf("]");
+}
+
+void mix_write_list_bool(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    printf("[");
+    for (int64_t i = 0; i < list->len; i++) {
+        if (i > 0) printf(", ");
+        printf("%s", list->data[i] ? "true" : "false");
+    }
+    printf("]");
+}
+
+void mix_write_map(const void *map_ptr) {
+    const MixMap *map = map_ptr;
+    printf("{");
+    int first = 1;
+    for (int64_t i = 0; i < map->cap; i++) {
+        if (map->entries[i].occupied) {
+            if (!first) printf(", ");
+            printf("\"%s\": %" PRId64, map->entries[i].key, map->entries[i].value);
+            first = 0;
+        }
+    }
+    printf("}");
+}
+
+void mix_write_map_str(const void *map_ptr) {
+    const MixMap *map = map_ptr;
+    printf("{");
+    int first = 1;
+    for (int64_t i = 0; i < map->cap; i++) {
+        if (map->entries[i].occupied) {
+            if (!first) printf(", ");
+            printf("\"%s\": \"%s\"", map->entries[i].key, (const char *)map->entries[i].value);
+            first = 0;
+        }
+    }
+    printf("}");
+}
+
+void mix_write_set(const void *set_ptr) {
+    const MixMap *map = set_ptr;
+    printf("set{");
+    int first = 1;
+    for (int64_t i = 0; i < map->cap; i++) {
+        if (map->entries[i].occupied) {
+            if (!first) printf(", ");
+            printf("\"%s\"", map->entries[i].key);
+            first = 0;
+        }
+    }
+    printf("}");
+}
+
+void mix_write_set_int(const void *set_ptr) {
+    const MixMap *map = set_ptr;
+    printf("set{");
+    int first = 1;
+    for (int64_t i = 0; i < map->cap; i++) {
+        if (map->entries[i].occupied) {
+            if (!first) printf(", ");
+            printf("%" PRId64, map->entries[i].value);
+            first = 0;
+        }
+    }
+    printf("}");
+}
+
 void *mix_set_from_list_int(const void *list_ptr) {
     const MixList *list = list_ptr;
     void *set = mix_set_new();

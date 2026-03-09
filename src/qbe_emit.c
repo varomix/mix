@@ -117,6 +117,31 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                         fprintf(emit->out, "\t%%t%d =l call $mix_write_float(d %%t%d)\n", ev2, ev);
                     } else if (etype && etype->kind == TYPE_BOOL) {
                         fprintf(emit->out, "\t%%t%d =l call $mix_write_bool(w %%t%d)\n", ev2, ev);
+                    } else if (etype && etype->kind == TYPE_LIST) {
+                        MixType *elem = etype->list.elem_type;
+                        if (elem && elem->kind == TYPE_STR) {
+                            fprintf(emit->out, "\t%%t%d =l call $mix_write_list_str(l %%t%d)\n", ev2, ev);
+                        } else if (elem && type_is_float(elem)) {
+                            fprintf(emit->out, "\t%%t%d =l call $mix_write_list_float(l %%t%d)\n", ev2, ev);
+                        } else if (elem && elem->kind == TYPE_BOOL) {
+                            fprintf(emit->out, "\t%%t%d =l call $mix_write_list_bool(l %%t%d)\n", ev2, ev);
+                        } else {
+                            fprintf(emit->out, "\t%%t%d =l call $mix_write_list_int(l %%t%d)\n", ev2, ev);
+                        }
+                    } else if (etype && etype->kind == TYPE_MAP) {
+                        MixType *vt = etype->map.val_type;
+                        if (vt && vt->kind == TYPE_STR) {
+                            fprintf(emit->out, "\t%%t%d =l call $mix_write_map_str(l %%t%d)\n", ev2, ev);
+                        } else {
+                            fprintf(emit->out, "\t%%t%d =l call $mix_write_map(l %%t%d)\n", ev2, ev);
+                        }
+                    } else if (etype && etype->kind == TYPE_SET) {
+                        MixType *se = etype->set.elem_type;
+                        if (se && type_is_integer(se)) {
+                            fprintf(emit->out, "\t%%t%d =l call $mix_write_set_int(l %%t%d)\n", ev2, ev);
+                        } else {
+                            fprintf(emit->out, "\t%%t%d =l call $mix_write_set(l %%t%d)\n", ev2, ev);
+                        }
                     } else {
                         fprintf(emit->out, "\t%%t%d =l call $mix_write_int(l %%t%d)\n", ev2, ev);
                     }
@@ -294,6 +319,23 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             fprintf(emit->out, "\t%%t%d =l call $mix_list_new()\n", list_t);
             for (int i = 0; i < expr->list_lit.element_count; i++) {
                 int val = emit_expr(emit, expr->list_lit.elements[i]);
+                MixType *etype = expr->list_lit.elements[i]->resolved_type;
+                // Float elements: cast double bits to int64 for storage
+                if (etype && type_is_float(etype)) {
+                    int cast_t = next_temp(emit);
+                    fprintf(emit->out, "\t%%t%d =l cast %%t%d\n", cast_t, val);
+                    val = cast_t;
+                }
+                // Bool/small int elements: extend to 64-bit
+                else if (etype && (etype->kind == TYPE_BOOL ||
+                         etype->kind == TYPE_INT32 || etype->kind == TYPE_UINT32 ||
+                         etype->kind == TYPE_INT16 || etype->kind == TYPE_UINT16 ||
+                         etype->kind == TYPE_INT8 || etype->kind == TYPE_UINT8 ||
+                         etype->kind == TYPE_BYTE)) {
+                    int ext_t = next_temp(emit);
+                    fprintf(emit->out, "\t%%t%d =l extsw %%t%d\n", ext_t, val);
+                    val = ext_t;
+                }
                 int push_t = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l call $mix_list_push(l %%t%d, l %%t%d)\n",
                         push_t, list_t, val);

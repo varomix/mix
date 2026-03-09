@@ -73,6 +73,14 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void mix_print_map_str(const void *);\n"
         "extern void mix_print_set(const void *);\n"
         "extern void mix_print_set_int(const void *);\n"
+        "extern void mix_write_list_int(const void *);\n"
+        "extern void mix_write_list_str(const void *);\n"
+        "extern void mix_write_list_float(const void *);\n"
+        "extern void mix_write_list_bool(const void *);\n"
+        "extern void mix_write_map(const void *);\n"
+        "extern void mix_write_map_str(const void *);\n"
+        "extern void mix_write_set(const void *);\n"
+        "extern void mix_write_set_int(const void *);\n"
         "extern void mix_write_int(int64_t);\n"
         "extern void mix_write_float(double);\n"
         "extern void mix_write_str(const char *);\n"
@@ -311,6 +319,31 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                         ind(emit); fprintf(emit->out, "mix_write_float((double)t%d);\n", ev);
                     } else if (etype && etype->kind == TYPE_BOOL) {
                         ind(emit); fprintf(emit->out, "mix_write_bool((int)t%d);\n", ev);
+                    } else if (etype && etype->kind == TYPE_LIST) {
+                        MixType *elem = etype->list.elem_type;
+                        if (elem && elem->kind == TYPE_STR) {
+                            ind(emit); fprintf(emit->out, "mix_write_list_str(t%d);\n", ev);
+                        } else if (elem && type_is_float(elem)) {
+                            ind(emit); fprintf(emit->out, "mix_write_list_float(t%d);\n", ev);
+                        } else if (elem && elem->kind == TYPE_BOOL) {
+                            ind(emit); fprintf(emit->out, "mix_write_list_bool(t%d);\n", ev);
+                        } else {
+                            ind(emit); fprintf(emit->out, "mix_write_list_int(t%d);\n", ev);
+                        }
+                    } else if (etype && etype->kind == TYPE_MAP) {
+                        MixType *vt = etype->map.val_type;
+                        if (vt && vt->kind == TYPE_STR) {
+                            ind(emit); fprintf(emit->out, "mix_write_map_str(t%d);\n", ev);
+                        } else {
+                            ind(emit); fprintf(emit->out, "mix_write_map(t%d);\n", ev);
+                        }
+                    } else if (etype && etype->kind == TYPE_SET) {
+                        MixType *se = etype->set.elem_type;
+                        if (se && type_is_integer(se)) {
+                            ind(emit); fprintf(emit->out, "mix_write_set_int(t%d);\n", ev);
+                        } else {
+                            ind(emit); fprintf(emit->out, "mix_write_set(t%d);\n", ev);
+                        }
                     } else {
                         ind(emit); fprintf(emit->out, "mix_write_int((int64_t)t%d);\n", ev);
                     }

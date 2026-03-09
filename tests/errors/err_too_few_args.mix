@@ -1,0 +1,6 @@
+// ERROR: expects 2 argument(s), got 1
+add(a: int, b: int) -> int
+    a + b
+
+main()
+    print(add(1))

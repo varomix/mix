@@ -1,0 +1,3 @@
+// ERROR: cannot assign str
+main()
+    x: int = "hello"

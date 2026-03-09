@@ -1,0 +1,6 @@
+// ERROR: expected \[int\], got \[str\]
+f(nums: [int]) ~
+    print(nums)
+
+main()
+    f(["a", "b"])

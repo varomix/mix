@@ -278,6 +278,50 @@ display <span class="op">=</span> name <span class="kw">else</span> <span class=
 <pre><code><span class="kw">type</span> <span class="ty">Score</span> <span class="op">=</span> <span class="ty">int</span>
 <span class="kw">type</span> <span class="ty">Names</span> <span class="op">=</span> [<span class="ty">str</span>]
 <span class="kw">type</span> <span class="ty">Config</span> <span class="op">=</span> {<span class="ty">str</span>: <span class="ty">str</span>}</code><span class="label">mix</span></pre>
+
+<h3>Type Checking</h3>
+<p>The compiler checks types at function call sites, catching mismatches at compile time instead of failing at runtime.</p>
+
+<h4>Argument type checking</h4>
+<pre><code><span class="fn">add</span>(a: <span class="ty">int</span>, b: <span class="ty">int</span>) -> <span class="ty">int</span>
+    a + b
+
+<span class="fn">main</span>()
+    <span class="fn">add</span>(<span class="str">"x"</span>, <span class="str">"y"</span>)   <span class="cm">// error: argument 1 of 'add': expected int, got str</span></code><span class="label">mix</span></pre>
+
+<h4>Collection element types</h4>
+<pre><code><span class="fn">process</span>(nums: [<span class="ty">int</span>]) ~
+    <span class="fn">print</span>(nums)
+
+<span class="fn">main</span>()
+    <span class="fn">process</span>([<span class="str">"a"</span>, <span class="str">"b"</span>])   <span class="cm">// error: argument 1 of 'process': expected [int], got [str]</span></code><span class="label">mix</span></pre>
+
+<h4>Shape type checking</h4>
+<pre><code><span class="kw">shape</span> <span class="ty">Vec2</span>
+    x, y: <span class="ty">float</span>
+
+<span class="kw">shape</span> <span class="ty">Color</span>
+    r, g, b: <span class="ty">int</span>
+
+<span class="fn">normalize</span>(v: <span class="ty">Vec2</span>) -> <span class="ty">Vec2</span>
+    <span class="cm">// ...</span>
+
+<span class="fn">main</span>()
+    c = <span class="ty">Color</span>(r: <span class="num">255</span>, g: <span class="num">0</span>, b: <span class="num">0</span>)
+    <span class="fn">normalize</span>(c)   <span class="cm">// error: argument 1 of 'normalize': expected Vec2, got Color</span></code><span class="label">mix</span></pre>
+
+<h4>Argument count checking</h4>
+<pre><code><span class="fn">add</span>(<span class="num">1</span>)         <span class="cm">// error: 'add' expects 2 argument(s), got 1</span>
+<span class="fn">add</span>(<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>)   <span class="cm">// error: 'add' expects 2 argument(s), got 3</span></code><span class="label">mix</span></pre>
+
+<h4>Implicit numeric promotion</h4>
+<p>Integers are automatically promoted to floats when passed to float parameters. No explicit cast needed.</p>
+<pre><code><span class="fn">scale</span>(v: <span class="ty">Vec2</span>, factor: <span class="ty">float</span>) -> <span class="ty">Vec2</span>
+    <span class="cm">// ...</span>
+
+<span class="fn">main</span>()
+    v = <span class="ty">Vec2</span>(x: <span class="num">3.0</span>, y: <span class="num">4.0</span>)
+    <span class="fn">scale</span>(v, <span class="num">2</span>)   <span class="cm">// OK: int 2 promoted to float 2.0</span></code><span class="label">mix</span></pre>
 </section>
 
 

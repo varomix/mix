@@ -1,0 +1,36 @@
+has_duplicate(nums: [int])
+    print("nums in func: {nums}")
+
+main()
+    // 5 element string list
+    fruits = ["apple", "banana", "cherry", "date", "elderberry"]
+    fs = to_set(fruits)
+    print(fs)
+    print(fs.len)
+
+    // 7 elements
+    colors = ["red", "orange", "yellow", "green", "blue", "indigo", "violet"]
+    cs = to_set(colors)
+    print(cs)
+    print(cs.len)
+
+    // 10 elements
+    nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    ns = to_set(nums)
+    print(ns)
+    print(ns.len)
+
+    // 5 with duplicates (should dedup to 3)
+    dupes = ["a", "b", "c", "a", "b"]
+    ds = to_set(dupes)
+    print(ds)
+    print(ds.len)
+
+    // nums
+    nums = [1, 2, 3, 4, 4]
+    print(nums)
+    nums_set = to_set(nums)
+    print(nums_set)
+
+    // set to function
+    has_duplicate(nums)

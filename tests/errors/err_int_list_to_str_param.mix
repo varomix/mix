@@ -1,0 +1,6 @@
+// ERROR: expected \[str\], got \[int\]
+f(words: [str]) ~
+    print(words)
+
+main()
+    f([1, 2, 3])

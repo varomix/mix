@@ -1,0 +1,47 @@
+// Type checking: valid calls with correct types
+
+show_int_list(nums: [int]) ~
+    print("ints: {nums}")
+
+show_str_list(words: [str]) ~
+    print("strs: {words}")
+
+add(a: int, b: int) -> int
+    a + b
+
+greet(name: str) ~
+    print("hi {name}")
+
+shape Vec2
+    x, y: float
+
+    length() -> float
+        sqrt(x * x + y * y)
+
+scale(v: Vec2, factor: float) -> Vec2
+    Vec2(x: v.x * factor, y: v.y * factor)
+
+main()
+    // Correct list types
+    show_int_list([1, 2, 3])
+    show_str_list(["a", "b", "c"])
+
+    // Correct scalar types
+    print(add(10, 20))
+
+    // Correct string arg
+    greet("world")
+
+    // Correct shape types
+    v = Vec2(x: 3.0, y: 4.0)
+    print(v.length())
+
+    // Int-to-float promotion (allowed)
+    v2 = scale(v, 2)
+    print(v2.x)
+
+    // to_set with int and string lists
+    ns = to_set([1, 2, 2, 3])
+    print(ns)
+    ss = to_set(["x", "y", "x"])
+    print(ss)

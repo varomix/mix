@@ -1,0 +1,13 @@
+// ERROR: expected Vec2, got Color
+shape Vec2
+    x, y: float
+
+shape Color
+    r, g, b: int
+
+f(v: Vec2) ~
+    print(v.x)
+
+main()
+    c = Color(r: 255, g: 0, b: 0)
+    f(c)

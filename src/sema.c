@@ -41,6 +41,97 @@ static MixType *make_set_type(Arena *a, MixType *elem) {
     return t;
 }
 
+/* Produce a readable type name: int, [int], [str], map[str,int], set[str], ShapeName */
+static const char *type_name(Arena *a, MixType *t) {
+    if (!t) return "unknown";
+    switch (t->kind) {
+        case TYPE_LIST: {
+            const char *inner = type_name(a, t->list.elem_type);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "[%s]", inner);
+            return arena_strdup(a, buf);
+        }
+        case TYPE_MAP: {
+            const char *k = type_name(a, t->map.key_type);
+            const char *v = type_name(a, t->map.val_type);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "map[%s, %s]", k, v);
+            return arena_strdup(a, buf);
+        }
+        case TYPE_SET: {
+            const char *inner = type_name(a, t->set.elem_type);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "set[%s]", inner);
+            return arena_strdup(a, buf);
+        }
+        case TYPE_OPTIONAL: {
+            const char *inner = type_name(a, t->optional.inner);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "%s?", inner);
+            return arena_strdup(a, buf);
+        }
+        case TYPE_RESULT: {
+            const char *inner = type_name(a, t->result.ok_type);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "result[%s]", inner);
+            return arena_strdup(a, buf);
+        }
+        case TYPE_SHAPE:
+            return t->shape.name ? t->shape.name : "shape";
+        case TYPE_FUNC:
+            return "func";
+        default:
+            return type_kind_name(t->kind);
+    }
+}
+
+/* Check if two types are compatible (same kind + matching inner types) */
+static bool types_compatible(MixType *expected, MixType *actual) {
+    if (!expected || !actual) return true;  /* unknown types — don't error */
+    if (expected->kind == TYPE_INFER || actual->kind == TYPE_INFER) return true;
+    if (expected->kind == TYPE_GENERIC || actual->kind == TYPE_GENERIC) return true;
+    if (expected->kind == TYPE_NAMED || actual->kind == TYPE_NAMED) return true;
+    if (expected->kind == TYPE_VOID || actual->kind == TYPE_VOID) return true;
+
+    /* Numeric promotion: int types are compatible with each other */
+    if (type_is_integer(expected) && type_is_integer(actual)) return true;
+    /* Float types compatible with each other */
+    if (type_is_float(expected) && type_is_float(actual)) return true;
+    /* Int and float are compatible (implicit conversion) */
+    if (type_is_numeric(expected) && type_is_numeric(actual)) return true;
+
+    /* ptr and str are compatible (strings are pointers) */
+    if ((expected->kind == TYPE_PTR && actual->kind == TYPE_STR) ||
+        (expected->kind == TYPE_STR && actual->kind == TYPE_PTR)) return true;
+    /* ptr is compatible with any pointer-like type */
+    if (expected->kind == TYPE_PTR || actual->kind == TYPE_PTR) return true;
+    /* func type is compatible with any func-like value */
+    if (expected->kind == TYPE_FUNC || actual->kind == TYPE_FUNC) return true;
+
+    if (expected->kind != actual->kind) return false;
+
+    /* For parameterized types, check inner types */
+    switch (expected->kind) {
+        case TYPE_LIST:
+            return types_compatible(expected->list.elem_type, actual->list.elem_type);
+        case TYPE_MAP:
+            return types_compatible(expected->map.key_type, actual->map.key_type) &&
+                   types_compatible(expected->map.val_type, actual->map.val_type);
+        case TYPE_SET:
+            return types_compatible(expected->set.elem_type, actual->set.elem_type);
+        case TYPE_OPTIONAL:
+            return types_compatible(expected->optional.inner, actual->optional.inner);
+        case TYPE_RESULT:
+            return types_compatible(expected->result.ok_type, actual->result.ok_type);
+        case TYPE_SHAPE:
+            if (expected->shape.name && actual->shape.name)
+                return strcmp(expected->shape.name, actual->shape.name) == 0;
+            return true;
+        default:
+            return true;
+    }
+}
+
 static MixType *resolve_type_node(Sema *sema, AstNode *type_node) {
     if (!type_node) return make_type(sema->arena, TYPE_VOID);
 
@@ -381,6 +472,35 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
             for (int i = 0; i < expr->call.arg_count; i++) {
                 resolve_expr(sema, expr->call.args[i]);
             }
+            // Type-check arguments against parameter types
+            if (sym->type && sym->type->kind == TYPE_FUNC) {
+                MixType *ftype = sym->type;
+                // Check argument count (skip variadic and builtins with overloads)
+                if (!ftype->func.is_variadic && ftype->func.param_count > 0 &&
+                    expr->call.arg_count != ftype->func.param_count) {
+                    // Skip count check for overloaded builtins (print, min, max, etc.)
+                    const char *n = expr->call.name;
+                    bool is_overloaded = (strcmp(n, "print") == 0 || strcmp(n, "to_string") == 0 ||
+                        strcmp(n, "to_int") == 0 || strcmp(n, "to_float") == 0 ||
+                        strcmp(n, "to_set") == 0);
+                    if (!is_overloaded) {
+                        mix_error(expr->loc, "'%s' expects %d argument(s), got %d",
+                                  expr->call.name, ftype->func.param_count, expr->call.arg_count);
+                    }
+                }
+                // Check argument types
+                for (int i = 0; i < expr->call.arg_count && i < ftype->func.param_count; i++) {
+                    MixType *expected = ftype->func.param_types[i];
+                    MixType *actual = expr->call.args[i]->resolved_type;
+                    if (!types_compatible(expected, actual)) {
+                        mix_error(expr->call.args[i]->loc,
+                                  "argument %d of '%s': expected %s, got %s",
+                                  i + 1, expr->call.name,
+                                  type_name(sema->arena, expected),
+                                  type_name(sema->arena, actual));
+                    }
+                }
+            }
             // to_set: infer set element type from list argument
             if (strcmp(expr->call.name, "to_set") == 0 && expr->call.arg_count == 1) {
                 MixType *arg_type = expr->call.args[0]->resolved_type;
@@ -656,6 +776,21 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                 Symbol *msym = symtab_lookup(&sema->symtab, mangled);
                 if (msym && msym->type && msym->type->kind == TYPE_FUNC) {
                     expr->resolved_type = msym->type->func.return_type;
+                    // Check method argument types (param 0 is self, user args start at 1)
+                    MixType *mtype = msym->type;
+                    for (int i2 = 0; i2 < expr->method_call.arg_count &&
+                         i2 + 1 < mtype->func.param_count; i2++) {
+                        MixType *expected = mtype->func.param_types[i2 + 1];
+                        MixType *actual = expr->method_call.args[i2]->resolved_type;
+                        if (!types_compatible(expected, actual)) {
+                            mix_error(expr->method_call.args[i2]->loc,
+                                      "argument %d of '%s.%s': expected %s, got %s",
+                                      i2 + 1, obj_type->shape.name,
+                                      expr->method_call.method_name,
+                                      type_name(sema->arena, expected),
+                                      type_name(sema->arena, actual));
+                        }
+                    }
                 } else {
                     mix_error(expr->loc, "shape '%s' has no method '%s'",
                               obj_type->shape.name, expr->method_call.method_name);
@@ -735,13 +870,34 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
             // When there's a type annotation, still resolve the init expression
             // so it gets type-checked and its resolved_type is set.
             if (stmt->var_decl.type_ann && stmt->var_decl.init_expr) {
-                resolve_expr(sema, stmt->var_decl.init_expr);
+                MixType *init_type = resolve_expr(sema, stmt->var_decl.init_expr);
+                if (!types_compatible(type, init_type)) {
+                    mix_error(stmt->loc,
+                              "cannot assign %s to variable '%s' of type %s",
+                              type_name(sema->arena, init_type),
+                              stmt->var_decl.name,
+                              type_name(sema->arena, type));
+                }
             }
             symtab_insert(&sema->symtab, stmt->var_decl.name, type, stmt->var_decl.is_mutable);
             break;
         }
         case NODE_ASSIGN: {
-            resolve_expr(sema, stmt->assign.value);
+            MixType *val_type = resolve_expr(sema, stmt->assign.value);
+            Symbol *var_sym = symtab_lookup(&sema->symtab, stmt->assign.name);
+            if (var_sym && var_sym->type && val_type) {
+                if (!var_sym->is_mutable) {
+                    mix_error(stmt->loc, "cannot assign to immutable variable '%s'",
+                              stmt->assign.name);
+                }
+                if (stmt->assign.op == TOK_EQ && !types_compatible(var_sym->type, val_type)) {
+                    mix_error(stmt->loc,
+                              "cannot assign %s to '%s' of type %s",
+                              type_name(sema->arena, val_type),
+                              stmt->assign.name,
+                              type_name(sema->arena, var_sym->type));
+                }
+            }
             break;
         }
         case NODE_IF_STMT:
@@ -1209,13 +1365,13 @@ void sema_analyze(Sema *sema, AstNode *program) {
         symtab_insert(&sema->symtab, "to_float", ft, false);
     }
 
-    // to_set(list: [str]) -> set[str]
+    // to_set(list) -> set  (accepts any list type, infers element type)
     {
         MixType *ft = make_type(sema->arena, TYPE_FUNC);
         ft->func.return_type = make_set_type(sema->arena, make_type(sema->arena, TYPE_STR));
         ft->func.param_count = 1;
         ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
-        ft->func.param_types[0] = make_list_type(sema->arena, make_type(sema->arena, TYPE_STR));
+        ft->func.param_types[0] = make_list_type(sema->arena, make_type(sema->arena, TYPE_INFER));
         symtab_insert(&sema->symtab, "to_set", ft, false);
     }
 

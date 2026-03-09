@@ -1026,6 +1026,20 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             const char *ret_sig = qbe_sig_type(expr->resolved_type, emit->arena);
             bool has_return = !(expr->resolved_type && expr->resolved_type->kind == TYPE_VOID);
 
+            // Pre-convert args that need int→float promotion
+            for (int i = 0; i < expr->call.arg_count; i++) {
+                MixType *param_type = (fn_type && i < fn_type->func.param_count)
+                    ? fn_type->func.param_types[i]
+                    : expr->call.args[i]->resolved_type;
+                MixType *arg_type = expr->call.args[i]->resolved_type;
+                if (param_type && type_is_float(param_type) &&
+                    arg_type && type_is_integer(arg_type)) {
+                    int conv = next_temp(emit);
+                    fprintf(emit->out, "\t%%t%d =d swtof %%t%d\n", conv, arg_temps[i]);
+                    arg_temps[i] = conv;
+                }
+            }
+
             if (is_lambda_var) {
                 // Indirect call through variable holding function pointer
                 int fptr = next_temp(emit);

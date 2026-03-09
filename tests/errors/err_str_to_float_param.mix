@@ -1,0 +1,6 @@
+// ERROR: expected float, got str
+f(x: float) -> float
+    x * 2.0
+
+main()
+    print(f("hello"))

@@ -1,0 +1,6 @@
+// ERROR: expected int, got str
+add(a: int, b: int) -> int
+    a + b
+
+main()
+    print(add("x", "y"))

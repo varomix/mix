@@ -22,9 +22,10 @@ make
 - **Optionals** — `T?` types with `else` fallback
 - **Error handling** — result-based errors with `fail`, `else` fallback, and `?` propagation
 - **String interpolation** — `"Hello {name}!"`
-- **String operations** — `+` concatenation, `.ends_with()`, `.char_at()`, `to_string()`
-- **Lists** — `push`, `pop`, `sort`, `reverse`, `insert`, `remove`, `contains`, `index_of`, `join`
+- **String operations** — `+` concatenation, comparison (`==`, `<`, `>`), `.char_at()`, `.code()`, `ord()`, `chr()`
+- **Lists** — `push`, `pop`, `sort` (int/float/string), `reverse`, `insert`, `remove`, `contains`, `index_of`, `join`
 - **Maps** — `{"key": val}`, `.has()`, `.remove!()`, `.keys`, `.values`
+- **Sets** — `set{"a", "b"}`, `.add!()`, `.remove!()`, `.has()`, `.union()`, `.intersect()`, `.diff()`
 - **Slices & comprehensions** — `list[1..3]`, `[x*x for x in list]`
 - **Closures / lambdas** — `x => x * 2`
 - **Concurrency** — `go`/`wait` with `shared` for thread-safe values
@@ -35,6 +36,7 @@ make
 - **OS builtins** — `shell`, `file_exists`, `getcwd`, `mkdir`, `env`, `args`, `exit`
 - **Build system** — `build.mix` with built-in `Project` shape for declarative builds
 - **Math** — `sqrt`, `sin`, `cos`, `pow`, `abs`, `floor`, `ceil`, `round`, `min`, `max`
+- **Error messages** — colored output, line gutters, "did you mean?" suggestions, error limit
 - **Conditional compilation** — `@os == "macos"`, `@debug`
 - **Debug info** — DWARF line numbers for `lldb` source-level debugging
 - **LSP** — language server with diagnostics, hover, and go-to-definition
@@ -60,6 +62,7 @@ Options:
   --lib <name>     Library name for --bind
   -l<lib>          Link library (passed to cc)
   -v               Verbose
+  --backend <name> Code backend (qbe or c)
 ```
 
 ## Build System
@@ -127,7 +130,7 @@ See the `examples/` directory for complete programs including shapes with method
 ## Testing
 
 ```bash
-make test    # 45 tests
+make test-all    # 77 tests (runtime + error + error-message)
 ```
 
 ## Documentation

@@ -485,7 +485,16 @@ to their string representation.</p>
 
     <span class="cm">// Convert other types to string</span>
     n = <span class="num">42</span>
-    s2 = <span class="fn">to_string</span>(n)              <span class="cm">// "42"</span></code><span class="label">mix</span></pre>
+    s2 = <span class="fn">to_string</span>(n)              <span class="cm">// "42"</span>
+
+    <span class="cm">// String comparison (lexicographic)</span>
+    <span class="fn">print</span>(<span class="str">"apple"</span> &lt; <span class="str">"banana"</span>)    <span class="cm">// true</span>
+    <span class="fn">print</span>(<span class="str">"hello"</span> == <span class="str">"hello"</span>)    <span class="cm">// true</span>
+
+    <span class="cm">// Character / Unicode operations</span>
+    <span class="fn">print</span>(<span class="fn">ord</span>(<span class="str">"A"</span>))               <span class="cm">// 65</span>
+    <span class="fn">print</span>(<span class="fn">chr</span>(<span class="num">65</span>))                <span class="cm">// "A"</span>
+    <span class="fn">print</span>(<span class="str">"Z"</span>.<span class="fn">code</span>())            <span class="cm">// 90</span></code><span class="label">mix</span></pre>
 
 </section>
 
@@ -513,7 +522,7 @@ inside brackets.</p>
     last = nums.<span class="fn">pop!</span>()     <span class="cm">// last = 60, list shrinks</span>
     nums.<span class="fn">insert!</span>(<span class="num">0</span>, <span class="num">5</span>)     <span class="cm">// [5, 10, 20, 30, 40, 50]</span>
     nums.<span class="fn">remove!</span>(<span class="num">0</span>)        <span class="cm">// [10, 20, 30, 40, 50]</span>
-    nums.<span class="fn">sort!</span>()            <span class="cm">// sort in place</span>
+    nums.<span class="fn">sort!</span>()            <span class="cm">// sorts int, float, and str lists</span>
     nums.<span class="fn">reverse!</span>()         <span class="cm">// reverse in place</span>
 
     <span class="cm">// Non-mutating methods</span>

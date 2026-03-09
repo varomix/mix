@@ -557,7 +557,7 @@ nums.<span class="fn">push!</span>(<span class="num">6</span>)
 last <span class="op">=</span> nums.<span class="fn">pop!</span>()
 nums.<span class="fn">insert!</span>(<span class="num">0</span>, <span class="num">99</span>)
 nums.<span class="fn">remove!</span>(<span class="num">0</span>)
-nums.<span class="fn">sort!</span>()
+nums.<span class="fn">sort!</span>()              <span class="cm">// sorts int, float, str lists</span>
 nums.<span class="fn">reverse!</span>()
 
 <span class="cm">// query</span>
@@ -650,7 +650,16 @@ rep <span class="op">=</span> <span class="str">"ha"</span>.<span class="fn">rep
 rev <span class="op">=</span> <span class="str">"abc"</span>.<span class="fn">reverse</span>()      <span class="cm">// "cba"</span>
 
 <span class="cm">// conversion</span>
-s <span class="op">=</span> <span class="fn">to_string</span>(<span class="num">42</span>)         <span class="cm">// "42"</span></code><span class="label">mix</span></pre>
+s <span class="op">=</span> <span class="fn">to_string</span>(<span class="num">42</span>)         <span class="cm">// "42"</span>
+
+<span class="cm">// comparison (lexicographic)</span>
+<span class="str">"apple"</span> <span class="op">&lt;</span> <span class="str">"banana"</span>       <span class="cm">// true</span>
+<span class="str">"hello"</span> <span class="op">==</span> <span class="str">"hello"</span>      <span class="cm">// true</span>
+
+<span class="cm">// character operations</span>
+code <span class="op">=</span> <span class="fn">ord</span>(<span class="str">"A"</span>)           <span class="cm">// 65 (Unicode code point)</span>
+ch <span class="op">=</span> <span class="fn">chr</span>(<span class="num">65</span>)              <span class="cm">// "A"</span>
+code <span class="op">=</span> <span class="str">"A"</span>.<span class="fn">code</span>()        <span class="cm">// 65 (same as ord)</span></code><span class="label">mix</span></pre>
 </section>
 
 
@@ -983,6 +992,8 @@ mix --bind raylib.h</code><span class="label">shell</span></pre>
     <tr><td><code><span class="fn">to_string</span></code></td><td><code>(<span class="ty">any</span>) <span class="op">-></span> <span class="ty">str</span></code></td><td>Convert value to string</td></tr>
     <tr><td><code><span class="fn">str_reverse</span></code></td><td><code>(<span class="ty">str</span>) <span class="op">-></span> <span class="ty">str</span></code></td><td>Reverse a string</td></tr>
     <tr><td><code><span class="fn">str_count</span></code></td><td><code>(<span class="ty">str</span>, <span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span></code></td><td>Count substring occurrences</td></tr>
+    <tr><td><code><span class="fn">ord</span></code></td><td><code>(<span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span></code></td><td>Unicode code point of first character</td></tr>
+    <tr><td><code><span class="fn">chr</span></code></td><td><code>(<span class="ty">int</span>) <span class="op">-></span> <span class="ty">str</span></code></td><td>Code point to character string (UTF-8)</td></tr>
 </table>
 </section>
 

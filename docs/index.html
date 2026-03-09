@@ -435,7 +435,7 @@ footer em { color: var(--text); }
     <p class="tagline">"Fast to run, fast to write, fast to read."</p>
     <p class="hero-sub">A systems language with the footprint of C and the clarity of Python. Compiles to native arm64 via QBE. Built for graphics, games, and real-time systems.</p>
     <div class="hero-badges">
-        <span class="badge g">50/50 tests passing</span>
+        <span class="badge g">52/52 tests passing</span>
         <span class="badge b">QBE backend</span>
         <span class="badge p">arm64 native</span>
         <span class="badge o">SDL3 verified</span>
@@ -496,7 +496,7 @@ xcode-select --install</code></pre>
 <h3>Build the Compiler</h3>
 <pre><code>cd mix_lang
 make              <span class="cm"># produces build/mix</span>
-make test         <span class="cm"># runs 43 test programs</span></code></pre>
+make test         <span class="cm"># runs 77 tests</span></code></pre>
 
 <h3>Compile &amp; Run</h3>
 <pre><code>./build/mix hello.mix -o hello && ./hello</code></pre>
@@ -632,7 +632,7 @@ s = <span class="ty">Circle</span>(radius: <span class="num">5.0</span>)
 <span class="fn">print</span>(nums.len)          <span class="cm">// 5</span>
 <span class="fn">print</span>(nums[<span class="num">0</span>])           <span class="cm">// 10</span>
 nums.<span class="fn">push!</span>(<span class="num">60</span>)           <span class="cm">// append</span>
-nums.<span class="fn">sort!</span>()              <span class="cm">// sort in place</span>
+nums.<span class="fn">sort!</span>()              <span class="cm">// sorts int, float, str lists</span>
 nums.<span class="fn">reverse!</span>()           <span class="cm">// reverse in place</span>
 last = nums.<span class="fn">pop!</span>()       <span class="cm">// remove + return last</span>
 <span class="fn">print</span>(nums.<span class="fn">contains</span>(<span class="num">30</span>)) <span class="cm">// true</span>
@@ -674,7 +674,7 @@ greeting = <span class="str">"Hello"</span> + <span class="str">" "</span> + <sp
 
 <span class="cm">// Convert to string</span>
 s = <span class="fn">to_string</span>(<span class="num">42</span>)         <span class="cm">// "42"</span></code><span class="label">mix</span></pre>
-<p class="dim">String methods: <code>.len</code>, <code>.upper()</code>, <code>.lower()</code>, <code>.trim()</code>, <code>.split()</code>, <code>.contains()</code>, <code>.starts_with()</code>, <code>.ends_with()</code>, <code>.replace()</code>, <code>.char_at()</code>, <code>.slice()</code>, <code>.repeat()</code>, <code>.reverse()</code>, <code>.index_of()</code>. Concatenation: <code>str + str</code>. Conversion: <code>to_string()</code>.</p>
+<p class="dim">String methods: <code>.len</code>, <code>.upper()</code>, <code>.lower()</code>, <code>.trim()</code>, <code>.split()</code>, <code>.contains()</code>, <code>.starts_with()</code>, <code>.ends_with()</code>, <code>.replace()</code>, <code>.char_at()</code>, <code>.slice()</code>, <code>.repeat()</code>, <code>.reverse()</code>, <code>.index_of()</code>, <code>.code()</code>. Concatenation: <code>str + str</code>. Comparison: <code>==</code>, <code><</code>, <code>></code>, <code>!=</code>, <code><=</code>, <code>>=</code>. Conversion: <code>to_string()</code>, <code>ord()</code>, <code>chr()</code>.</p>
 
 <h3>Sets</h3>
 <pre><code>colors<span class="op">!</span> = <span class="kw">set</span>{<span class="str">"red"</span>, <span class="str">"green"</span>, <span class="str">"blue"</span>}

@@ -320,6 +320,7 @@ nums = [1, 2, 3, 4, 5]
 nums[0]             // 0-indexed
 nums.len            // length
 nums.push!(6)       // append
+nums.sort!()            // sorts: int, float, and string lists
 ```
 
 ### Map
@@ -391,6 +392,31 @@ name.contains("li")
 name.starts_with("Al")
 name.replace("Alice", "Bob")
 ```
+
+### String Comparison
+
+Strings compare lexicographically (alphabetical order):
+
+```mix
+"apple" < "banana"      // true
+"hello" == "hello"      // true
+"xyz" > "abc"           // true
+```
+
+All comparison operators work: `==`, `!=`, `<`, `>`, `<=`, `>=`.
+
+### Character Operations
+
+```mix
+ord("A")                // 65 (Unicode code point)
+chr(65)                 // "A" (code point to string)
+"A".code()              // 65 (same as ord)
+
+// Round-trip
+chr(ord("X"))           // "X"
+```
+
+`ord()` and `chr()` support full UTF-8 (1-4 byte sequences).
 
 ---
 
@@ -874,6 +900,8 @@ alloc!(T)           // allocate a T on the heap
 free!(ptr)          // free heap memory
 sizeof(T)           // size of type in bytes
 type_of(x)          // type name as str (debug use)
+ord(s)              // Unicode code point of first character
+chr(n)              // code point to character string
 ```
 
 Math:

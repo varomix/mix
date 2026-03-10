@@ -8,13 +8,12 @@ main()
 
     win = SDL_CreateWindow("MIX + SDL3", 800, 600, 0)
     rnd = SDL_CreateRenderer(win, 0)
-    event = bytes(128)
-
+    event = SDL_Event()
     running! = true
+
     while running
         while SDL_PollEvent(event) != 0
-            event_type = peek_u32(event)
-            if event_type == SDL_EVENT_QUIT
+            if event.type_ == SDL_EVENT_QUIT
                 running! = false
 
         SDL_SetRenderDrawColor(rnd, 100, 149, 237, 255)
@@ -22,5 +21,4 @@ main()
         SDL_RenderPresent(rnd)
         SDL_Delay(16)
 
-    free_mem(event)
     SDL_DestroyWindow(win)

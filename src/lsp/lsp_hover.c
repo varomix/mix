@@ -54,6 +54,8 @@ int mix_type_to_string(MixType *type, char *buf, int size) {
             return n;
         }
         case TYPE_SHAPE:
+            if (type->shape.is_union)
+                return snprintf(buf, size, "union %s", type->shape.name ? type->shape.name : "union");
             return snprintf(buf, size, "%s", type->shape.name ? type->shape.name : "shape");
         case TYPE_NAMED:
             return snprintf(buf, size, "%s", type->named.name ? type->named.name : "?");

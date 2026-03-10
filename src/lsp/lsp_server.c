@@ -183,8 +183,33 @@ static void handle_hover_request(LspServer *server, int64_t id, JsonValue *param
     char type_str[512];
     mix_type_to_string(type, type_str, sizeof(type_str));
 
-    char hover_md[1024];
-    snprintf(hover_md, sizeof(hover_md), "```mix\n%s: %s\n```", name, type_str);
+    char hover_md[4096];
+    int hlen = 0;
+
+    // For shape/union types, show field list
+    if (type->kind == TYPE_SHAPE && type->shape.field_count > 0) {
+        const char *kw = type->shape.is_union ? "union" : "shape";
+        hlen += snprintf(hover_md + hlen, sizeof(hover_md) - hlen,
+                         "```mix\n%s %s\n", kw, type->shape.name);
+        for (int i = 0; i < type->shape.field_count && i < 20; i++) {
+            char ft[128];
+            mix_type_to_string(type->shape.fields[i].type, ft, sizeof(ft));
+            hlen += snprintf(hover_md + hlen, sizeof(hover_md) - hlen,
+                             "    %s: %s\n", type->shape.fields[i].name, ft);
+        }
+        if (type->shape.field_count > 20) {
+            hlen += snprintf(hover_md + hlen, sizeof(hover_md) - hlen,
+                             "    ... (%d more)\n", type->shape.field_count - 20);
+        }
+        hlen += snprintf(hover_md + hlen, sizeof(hover_md) - hlen, "```");
+    } else if (type->kind == TYPE_FUNC && type->func.return_type) {
+        // For functions, show signature
+        hlen += snprintf(hover_md + hlen, sizeof(hover_md) - hlen,
+                         "```mix\n%s: %s\n```", name, type_str);
+    } else {
+        hlen += snprintf(hover_md + hlen, sizeof(hover_md) - hlen,
+                         "```mix\n%s: %s\n```", name, type_str);
+    }
 
     JsonWriter w;
     jw_init(&w);

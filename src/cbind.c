@@ -46,6 +46,11 @@ static int const_count = 0;
 static CShape shapes[MAX_SHAPES];
 static int shape_count = 0;
 
+// Typedef alias table: maps e.g. "Uint32" → "uint32_t" so c_type_to_mix resolves them
+#define MAX_TYPEDEFS 256
+static struct { char alias[128]; char target[128]; } typedefs[MAX_TYPEDEFS];
+static int typedef_count = 0;
+
 // ---- Helpers ----
 
 static void trim(char *s) {
@@ -189,6 +194,13 @@ static const char *c_type_to_mix(const char *ctype) {
     // Check if this is a known struct/typedef that we parsed as a shape
     for (int i = 0; i < shape_count; i++) {
         if (strcmp(shapes[i].name, buf) == 0) return shapes[i].name;
+    }
+
+    // Check typedef alias table (e.g. Uint32 → uint32_t → uint32)
+    for (int i = 0; i < typedef_count; i++) {
+        if (strcmp(typedefs[i].alias, buf) == 0) {
+            return c_type_to_mix(typedefs[i].target);
+        }
     }
 
     // Unknown type — treat as opaque pointer (*byte)
@@ -568,6 +580,77 @@ static bool parse_one_param(const char *param_str, char *out, int idx) {
 
     snprintf(out, 256, "%s: %s", pname, mix_type);
     return true;
+}
+
+// ---- Parse simple typedefs into alias table ----
+// Handles: typedef <known_type> <alias>;
+// E.g.: typedef uint32_t Uint32;  →  Uint32 resolves to uint32
+
+static void parse_typedefs(const char *text) {
+    const char *p = text;
+    while (*p) {
+        const char *ts = strstr(p, "typedef ");
+        if (!ts) break;
+        p = ts + 8; // skip "typedef "
+
+        // Skip struct/union/enum typedefs (handled separately)
+        while (*p && isspace((unsigned char)*p)) p++;
+        if (starts_with(p, "struct ") || starts_with(p, "union ") ||
+            starts_with(p, "enum ")) {
+            p++;
+            continue;
+        }
+
+        // Collect everything until ';'
+        char line[512];
+        int li = 0;
+        const char *lp = ts + 8;
+        while (*lp && *lp != ';' && *lp != '{' && li < 510) line[li++] = *lp++;
+        line[li] = '\0';
+        if (*lp != ';') { p = lp; continue; }
+        p = lp + 1;
+        trim(line);
+
+        // Must be exactly two tokens: "target_type alias_name"
+        // Skip function pointers (contain parens)
+        if (strchr(line, '(') || strchr(line, ')')) continue;
+        // Skip pointer typedefs
+        if (strchr(line, '*')) continue;
+
+        // Find last identifier as alias name
+        int len = (int)strlen(line);
+        int ne = len - 1;
+        while (ne >= 0 && isspace((unsigned char)line[ne])) ne--;
+        if (ne < 0 || !is_ident_char(line[ne])) continue;
+        int ns = ne;
+        while (ns > 0 && is_ident_char(line[ns - 1])) ns--;
+
+        char alias[128], target[128];
+        int alen = ne - ns + 1;
+        if (alen > 127) continue;
+        memcpy(alias, line + ns, alen);
+        alias[alen] = '\0';
+
+        int tlen = ns;
+        while (tlen > 0 && isspace((unsigned char)line[tlen - 1])) tlen--;
+        if (tlen <= 0 || tlen > 127) continue;
+        memcpy(target, line, tlen);
+        target[tlen] = '\0';
+        trim(target);
+
+        // Only store if target is a known C type that c_type_to_mix can resolve
+        const char *resolved = c_type_to_mix(target);
+        if (!resolved || strcmp(resolved, "*byte") == 0) continue;
+
+        // Don't store if alias is same as target
+        if (strcmp(alias, target) == 0) continue;
+
+        if (typedef_count < MAX_TYPEDEFS) {
+            strncpy(typedefs[typedef_count].alias, alias, 127);
+            strncpy(typedefs[typedef_count].target, target, 127);
+            typedef_count++;
+        }
+    }
 }
 
 // ---- Parse struct/typedef definitions into shapes ----
@@ -1234,6 +1317,8 @@ int cbind_generate(const char *header_path, const char *out_path,
     func_count = 0;
     const_count = 0;
     shape_count = 0;
+    typedef_count = 0;
+    typedef_count = 0;
 
     // Derive lib name if not provided
     char derived_lib[256] = "";
@@ -1284,6 +1369,7 @@ int cbind_generate(const char *header_path, const char *out_path,
 
             char *text = preprocess_header(full_path, verbose);
             if (text) {
+                parse_typedefs(text);
                 parse_structs(text);
                 parse_unions(text);
                 parse_enums(text);
@@ -1303,6 +1389,7 @@ int cbind_generate(const char *header_path, const char *out_path,
             fprintf(stderr, "mix: failed to preprocess '%s'\n", header_path);
             return 1;
         }
+        parse_typedefs(text);
         parse_structs(text);
         parse_unions(text);
         parse_enums(text);
@@ -1333,6 +1420,7 @@ char *cbind_generate_string(const char *header_path, const char *lib_name, bool 
     func_count = 0;
     const_count = 0;
     shape_count = 0;
+    typedef_count = 0;
 
     // Try to resolve header path via CPPFLAGS -I directories
     char *resolved = resolve_header_path(header_path);
@@ -1382,6 +1470,7 @@ char *cbind_generate_string(const char *header_path, const char *lib_name, bool 
             free(resolved);
             return NULL;
         }
+        parse_typedefs(text);
         parse_structs(text);
         parse_unions(text);
         parse_enums(text);

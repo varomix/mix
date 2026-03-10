@@ -1505,6 +1505,21 @@ void mix_project_build(void *self) {
         }
     }
 
+    // Forward include_paths as CPPFLAGS for use c header resolution
+    if (inc_paths && inc_paths->len > 0) {
+        char cppflags[4096] = "";
+        int cpoff = 0;
+        const char *existing = getenv("CPPFLAGS");
+        if (existing && existing[0]) {
+            cpoff = snprintf(cppflags, sizeof(cppflags), "%s", existing);
+        }
+        for (int64_t i = 0; i < inc_paths->len; i++) {
+            cpoff += snprintf(cppflags + cpoff, sizeof(cppflags) - cpoff,
+                              " -I%s", (char *)inc_paths->data[i]);
+        }
+        setenv("CPPFLAGS", cppflags, 1);
+    }
+
     int ret = system(cmd);
     if (ret != 0) {
         fprintf(stderr, "mix: build failed for '%s' (exit %d)\n", name, ret);

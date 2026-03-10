@@ -240,6 +240,42 @@ static char *run_command(const char *cmd, bool verbose) {
     return buf;
 }
 
+// Resolve a header path by searching CPPFLAGS -I directories.
+// If the file exists as-is, returns a copy. Otherwise tries each -I<dir>/<path>.
+// Returns a malloc'd string or NULL if not found.
+static char *resolve_header_path(const char *path) {
+    // If file exists directly, use it as-is
+    struct stat st;
+    if (stat(path, &st) == 0) return strdup(path);
+
+    // Parse -I flags from CPPFLAGS
+    const char *cppflags = getenv("CPPFLAGS");
+    if (!cppflags || !cppflags[0]) return NULL;
+
+    char *buf = strdup(cppflags);
+    char *tok = strtok(buf, " \t");
+    while (tok) {
+        const char *dir = NULL;
+        if (strncmp(tok, "-I", 2) == 0 && tok[2] != '\0') {
+            dir = tok + 2;  // -I/path (no space)
+        } else if (strcmp(tok, "-I") == 0) {
+            tok = strtok(NULL, " \t");  // -I /path (with space)
+            if (tok) dir = tok;
+        }
+        if (dir) {
+            char full[2048];
+            snprintf(full, sizeof(full), "%s/%s", dir, path);
+            if (stat(full, &st) == 0) {
+                free(buf);
+                return strdup(full);
+            }
+        }
+        tok = strtok(NULL, " \t");
+    }
+    free(buf);
+    return NULL;
+}
+
 static char *preprocess_header(const char *path, bool verbose) {
     // Derive parent include dir (e.g., /opt/homebrew/include from
     // /opt/homebrew/include/SDL3/SDL.h)
@@ -257,20 +293,25 @@ static char *preprocess_header(const char *path, bool verbose) {
         }
     }
 
-    char cmd[2048];
+    char cmd[4096];
+    const char *cppflags = getenv("CPPFLAGS");
+    if (!cppflags) cppflags = "";
     if (include_dir[0])
-        snprintf(cmd, sizeof(cmd), "cc -E -P -I\"%s\" -x c \"%s\" 2>/dev/null",
-                 include_dir, path);
+        snprintf(cmd, sizeof(cmd), "cc -E -P %s -I\"%s\" -x c \"%s\" 2>/dev/null",
+                 cppflags, include_dir, path);
     else
-        snprintf(cmd, sizeof(cmd), "cc -E -P -x c \"%s\" 2>/dev/null", path);
+        snprintf(cmd, sizeof(cmd), "cc -E -P %s -x c \"%s\" 2>/dev/null",
+                 cppflags, path);
     return run_command(cmd, verbose);
 }
 
 // ---- Extract #define constants ----
 
 static int extract_defines(const char *path, bool verbose) {
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cc -E -dM -x c \"%s\" 2>/dev/null", path);
+    char cmd[4096];
+    const char *cppflags = getenv("CPPFLAGS");
+    if (!cppflags) cppflags = "";
+    snprintf(cmd, sizeof(cmd), "cc -E -dM %s -x c \"%s\" 2>/dev/null", cppflags, path);
     char *text = run_command(cmd, verbose);
     if (!text) return 0;
 
@@ -1027,6 +1068,12 @@ char *cbind_generate_string(const char *header_path, const char *lib_name, bool 
     const_count = 0;
     shape_count = 0;
 
+    // Try to resolve header path via CPPFLAGS -I directories
+    char *resolved = resolve_header_path(header_path);
+    if (resolved) {
+        header_path = resolved;
+    }
+
     // Derive lib name if not provided
     char derived_lib[256] = "";
     if (!lib_name || strlen(lib_name) == 0) {
@@ -1038,6 +1085,7 @@ char *cbind_generate_string(const char *header_path, const char *lib_name, bool 
         DIR *dir = opendir(header_path);
         if (!dir) {
             fprintf(stderr, "mix: cannot open directory '%s'\n", header_path);
+            free(resolved);
             return NULL;
         }
         struct dirent *entry;
@@ -1065,6 +1113,7 @@ char *cbind_generate_string(const char *header_path, const char *lib_name, bool 
         char *text = preprocess_header(header_path, verbose);
         if (!text) {
             fprintf(stderr, "mix: failed to preprocess '%s'\n", header_path);
+            free(resolved);
             return NULL;
         }
         parse_structs(text);
@@ -1080,6 +1129,7 @@ char *cbind_generate_string(const char *header_path, const char *lib_name, bool 
     FILE *mem = open_memstream(&buf, &buf_size);
     if (!mem) {
         fprintf(stderr, "mix: open_memstream failed\n");
+        free(resolved);
         return NULL;
     }
 
@@ -1091,5 +1141,6 @@ char *cbind_generate_string(const char *header_path, const char *lib_name, bool 
                 shape_count, func_count, const_count, header_path);
     }
 
+    free(resolved);
     return buf;
 }

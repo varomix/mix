@@ -2241,7 +2241,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
     /* Register constants */
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
-        if (decl->kind == NODE_CONST_DECL && emit->const_count < 256) {
+        if (decl->kind == NODE_CONST_DECL && emit->const_count < 4096) {
             emit->constants[emit->const_count].name = decl->const_decl.name;
             emit->constants[emit->const_count].value = decl->const_decl.value;
             emit->constants[emit->const_count].cached_temp = -1;

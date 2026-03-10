@@ -20,7 +20,7 @@ typedef struct {
     AstNode *deferred[64];
     int defer_count;
     // Constants (name -> AST expr)
-    struct { char *name; AstNode *value; int cached_temp; } constants[256];
+    struct { char *name; AstNode *value; int cached_temp; } constants[4096];
     int const_count;
     // Current shape being emitted (for method field access)
     MixType *current_shape;

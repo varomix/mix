@@ -2566,7 +2566,7 @@ void qbe_emit_program(QbeEmitter *emit, AstNode *program) {
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
         if (decl->kind == NODE_CONST_DECL) {
-            if (emit->const_count < 256) {
+            if (emit->const_count < 4096) {
                 emit->constants[emit->const_count].name = decl->const_decl.name;
                 emit->constants[emit->const_count].value = decl->const_decl.value;
                 emit->constants[emit->const_count].cached_temp = -1;

@@ -1,0 +1,25 @@
+// Test transparent C interop via use c
+use c "tests/programs/use_c_helper.h"
+
+main()
+    // Test #define constants
+    print(ANSWER)
+    print(HEX_MASK)
+
+    // Test enum values (auto-increment)
+    print(DIR_NORTH)
+    print(DIR_EAST)
+    print(DIR_SOUTH)
+    print(DIR_WEST)
+
+    // Test typedef enum with hex values
+    print(COLOR_RED)
+    print(COLOR_GREEN)
+    print(COLOR_BLUE)
+
+    // Test calling C functions
+    sum = test_add(10, 32)
+    print(sum)
+
+    product = test_multiply(6, 7)
+    print(product)

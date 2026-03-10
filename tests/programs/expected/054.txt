@@ -1,0 +1,4 @@
+alloc ok
+bytes ok
+0
+free ok

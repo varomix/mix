@@ -1,0 +1,18 @@
+// Memory builtins: alloc, bytes, peek_u32, free_mem
+main()
+    // alloc returns a pointer
+    ptr = alloc(64)
+    print("alloc ok")
+
+    // bytes returns zeroed memory
+    buf = bytes(128)
+    print("bytes ok")
+
+    // peek_u32 reads a uint32 from a pointer
+    val = peek_u32(buf)
+    print(val)
+
+    // free_mem releases memory
+    free_mem(ptr)
+    free_mem(buf)
+    print("free ok")

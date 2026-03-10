@@ -18,8 +18,27 @@ for src in "$TEST_DIR"/*.mix; do
     expected="$EXPECTED_DIR/$num.txt"
     binary="$BUILD_DIR/$name"
 
-    # Compile
-    compile_out=$("$MIXC" "$src" -o "$binary" 2>&1)
+    # Check for companion link flags file (e.g., 055_use_c.link)
+    # Lines containing .c files are compiled to .o first and added via LDFLAGS
+    extra_flags=""
+    extra_ldflags=""
+    link_file="$TEST_DIR/$name.link"
+    if [ -f "$link_file" ]; then
+        while IFS= read -r line; do
+            line=$(echo "$line" | xargs)  # trim whitespace
+            [ -z "$line" ] && continue
+            if [[ "$line" == *.c ]]; then
+                obj="${BUILD_DIR}/$(basename "$line" .c).o"
+                cc -c "$line" -o "$obj" 2>/dev/null
+                extra_ldflags="$extra_ldflags $obj"
+            else
+                extra_flags="$extra_flags $line"
+            fi
+        done < "$link_file"
+    fi
+
+    # Compile (LDFLAGS passes extra object files to the linker)
+    compile_out=$(LDFLAGS="$extra_ldflags $LDFLAGS" "$MIXC" "$src" -o "$binary" $extra_flags 2>&1)
     if [ $? -ne 0 ]; then
         echo "FAIL  $name  (compile error)"
         echo "      $compile_out"

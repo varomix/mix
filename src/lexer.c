@@ -28,6 +28,7 @@ const char *token_kind_name(TokenKind kind) {
         case TOK_CONTINUE:   return "CONTINUE";
         case TOK_DONE:       return "DONE";
         case TOK_SHAPE:      return "SHAPE";
+        case TOK_UNION:      return "UNION";
         case TOK_EXTERN:     return "EXTERN";
         case TOK_USE:        return "USE";
         case TOK_PUB:        return "PUB";
@@ -182,7 +183,7 @@ static Keyword keywords[] = {
     {"if", TOK_IF}, {"else", TOK_ELSE}, {"while", TOK_WHILE},
     {"for", TOK_FOR}, {"in", TOK_IN}, {"match", TOK_MATCH},
     {"break", TOK_BREAK}, {"continue", TOK_CONTINUE}, {"done", TOK_DONE},
-    {"shape", TOK_SHAPE}, {"extern", TOK_EXTERN}, {"use", TOK_USE},
+    {"shape", TOK_SHAPE}, {"union", TOK_UNION}, {"extern", TOK_EXTERN}, {"use", TOK_USE},
     {"pub", TOK_PUB}, {"type", TOK_TYPE}, {"zone", TOK_ZONE},
     {"defer", TOK_DEFER}, {"unsafe", TOK_UNSAFE},
     {"and", TOK_AND}, {"or", TOK_OR}, {"not", TOK_NOT},

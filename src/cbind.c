@@ -31,6 +31,7 @@ typedef struct {
     char fields[2048];    // MIX shape fields string
     char field_names[64][128]; // individual field names for shape-lit constants
     int field_name_count;
+    bool is_union;        // true for typedef union
 } CShape;
 
 #define MAX_FUNCS  4096
@@ -85,7 +86,7 @@ static bool shape_exists(const char *name) {
 static bool is_reserved_word(const char *name) {
     static const char *reserved[] = {
         "if", "else", "while", "for", "in", "match", "break", "continue",
-        "done", "shape", "extern", "use", "pub", "type", "zone", "defer",
+        "done", "shape", "union", "extern", "use", "pub", "type", "zone", "defer",
         "unsafe", "and", "or", "not", "go", "run", "wait", "stream",
         "yield", "shared", "repeat", "as", "then", "set", "true", "false",
         "none", "int", "float", "bool", "byte", "str",
@@ -711,6 +712,162 @@ static int parse_structs(const char *text) {
             shapes[shape_count].field_name_count = field_count < 64 ? field_count : 64;
             memcpy(shapes[shape_count].field_names, parsed_field_names,
                    sizeof(parsed_field_names));
+            shapes[shape_count].is_union = false;
+            shape_count++;
+            added++;
+        }
+    }
+
+    return added;
+}
+
+// ---- Parse typedef union definitions ----
+// Same approach as parse_structs but for union types.
+static int parse_unions(const char *text) {
+    int added = 0;
+    const char *p = text;
+
+    while (*p) {
+        const char *ts = strstr(p, "typedef union");
+        if (!ts) break;
+        p = ts + 13; // skip "typedef union"
+
+        while (*p && isspace((unsigned char)*p)) p++;
+
+        // Optional union tag name (skip it)
+        if (is_ident_char(*p)) {
+            while (*p && is_ident_char(*p)) p++;
+            while (*p && isspace((unsigned char)*p)) p++;
+        }
+
+        if (*p != '{') continue;
+        p++;
+
+        // Collect body until matching }
+        int depth = 1;
+        const char *body_start = p;
+        while (*p && depth > 0) {
+            if (*p == '{') depth++;
+            else if (*p == '}') depth--;
+            if (depth > 0) p++;
+        }
+        if (depth != 0) break;
+        const char *body_end = p;
+        p++;
+
+        // Get typedef name
+        while (*p && isspace((unsigned char)*p)) p++;
+        if (!is_ident_char(*p)) continue;
+
+        char typedef_name[128];
+        int ni = 0;
+        while (*p && is_ident_char(*p) && ni < 127) typedef_name[ni++] = *p++;
+        typedef_name[ni] = '\0';
+
+        if (typedef_name[0] == '_' && typedef_name[1] == '_') continue;
+        if (shape_exists(typedef_name)) continue;
+
+        // Parse fields from the body (same as structs)
+        char fields[2048] = "";
+        int flen = 0;
+        const char *fp = body_start;
+        int field_count = 0;
+        char parsed_field_names[64][128];
+        memset(parsed_field_names, 0, sizeof(parsed_field_names));
+
+        while (fp < body_end) {
+            while (fp < body_end && isspace((unsigned char)*fp)) fp++;
+            if (fp >= body_end) break;
+
+            // Skip nested structs/unions
+            if (*fp == '{') {
+                int d = 1;
+                fp++;
+                while (fp < body_end && d > 0) {
+                    if (*fp == '{') d++;
+                    else if (*fp == '}') d--;
+                    fp++;
+                }
+                continue;
+            }
+
+            // Collect one field declaration until ';'
+            char fdecl[512];
+            int fi = 0;
+            while (fp < body_end && *fp != ';' && fi < 510) {
+                if (*fp == '{') break;
+                fdecl[fi++] = *fp++;
+            }
+            fdecl[fi] = '\0';
+            if (fp < body_end && *fp == ';') fp++;
+            trim(fdecl);
+            if (strlen(fdecl) < 2) continue;
+
+            strip_attributes(fdecl);
+            trim(fdecl);
+
+            // Extract field name (last ident) and type (everything before)
+            int dlen = (int)strlen(fdecl);
+            int ne = dlen - 1;
+            while (ne >= 0 && isspace((unsigned char)fdecl[ne])) ne--;
+            if (ne < 0 || !is_ident_char(fdecl[ne])) continue;
+
+            int ns = ne;
+            while (ns > 0 && is_ident_char(fdecl[ns - 1])) ns--;
+
+            // Check for array brackets before field name
+            bool is_array = false;
+            int bracket_end = ns - 1;
+            while (bracket_end >= 0 && isspace((unsigned char)fdecl[bracket_end])) bracket_end--;
+            if (bracket_end >= 0 && fdecl[bracket_end] == ']') is_array = true;
+
+            char fname[128];
+            int fnlen = ne - ns + 1;
+            if (fnlen > 127) fnlen = 127;
+            memcpy(fname, fdecl + ns, fnlen);
+            fname[fnlen] = '\0';
+
+            // Get C type
+            char ctype[256];
+            int ctlen = ns;
+            while (ctlen > 0 && isspace((unsigned char)fdecl[ctlen - 1])) ctlen--;
+            if (ctlen <= 0) continue;
+            memcpy(ctype, fdecl, ctlen);
+            ctype[ctlen] = '\0';
+            trim(ctype);
+
+            // Rename reserved words
+            if (is_reserved_word(fname)) {
+                int len = (int)strlen(fname);
+                if (len < 126) { fname[len] = '_'; fname[len + 1] = '\0'; }
+            }
+
+            // Map to MIX type
+            const char *mix_type;
+            if (is_array) {
+                mix_type = "*byte";
+            } else {
+                mix_type = c_type_to_mix(ctype);
+                if (!mix_type) mix_type = "*byte";
+            }
+
+            int n = snprintf(fields + flen, sizeof(fields) - flen,
+                            "    %s: %s\n", fname, mix_type);
+            flen += n;
+
+            if (field_count < 64) {
+                strncpy(parsed_field_names[field_count], fname, 127);
+                field_count++;
+            }
+        }
+
+        if (flen > 0 && shape_count < MAX_SHAPES) {
+            strncpy(shapes[shape_count].name, typedef_name, 127);
+            strncpy(shapes[shape_count].fields, fields, sizeof(shapes[shape_count].fields) - 1);
+            shapes[shape_count].field_name_count = field_count;
+            for (int k = 0; k < field_count && k < 64; k++)
+                strncpy(shapes[shape_count].field_names[k], parsed_field_names[k], 127);
+            shapes[shape_count].is_union = true;
             shape_count++;
             added++;
         }
@@ -886,6 +1043,17 @@ static int parse_prototypes(const char *text) {
 
         // Skip reserved/internal names
         if (fname[0] == '_' && fname[1] == '_') continue;
+        // Skip C compiler builtins/keywords that look like function prototypes
+        if (starts_with(fname, "_Static_assert") ||
+            starts_with(fname, "_Alignas") ||
+            starts_with(fname, "_Alignof") ||
+            starts_with(fname, "_Atomic") ||
+            starts_with(fname, "_Generic") ||
+            starts_with(fname, "_Noreturn") ||
+            starts_with(fname, "_Thread_local") ||
+            starts_with(fname, "_Bool") ||
+            starts_with(fname, "_Complex") ||
+            starts_with(fname, "_Imaginary")) continue;
 
         // Skip if already recorded
         if (func_exists(fname)) continue;
@@ -990,7 +1158,8 @@ static void write_mix_output(FILE *out, const char *lib_name, const char *source
     if (shape_count > 0) {
         fprintf(out, "// ---- Shapes ----\n\n");
         for (int i = 0; i < shape_count; i++) {
-            fprintf(out, "shape %s\n%s\n\n", shapes[i].name, shapes[i].fields);
+            const char *kw = shapes[i].is_union ? "union" : "shape";
+            fprintf(out, "%s %s\n%s\n\n", kw, shapes[i].name, shapes[i].fields);
         }
     }
 
@@ -1116,6 +1285,7 @@ int cbind_generate(const char *header_path, const char *out_path,
             char *text = preprocess_header(full_path, verbose);
             if (text) {
                 parse_structs(text);
+                parse_unions(text);
                 parse_enums(text);
                 int nf = parse_prototypes(text);
                 free(text);
@@ -1134,6 +1304,7 @@ int cbind_generate(const char *header_path, const char *out_path,
             return 1;
         }
         parse_structs(text);
+        parse_unions(text);
         parse_enums(text);
         parse_prototypes(text);
         free(text);
@@ -1212,6 +1383,7 @@ char *cbind_generate_string(const char *header_path, const char *lib_name, bool 
             return NULL;
         }
         parse_structs(text);
+        parse_unions(text);
         parse_enums(text);
         parse_prototypes(text);
         free(text);

@@ -1555,6 +1555,16 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             if (obj_type && obj_type->kind == TYPE_SHAPE) {
                 ShapeFieldInfo *fi = type_find_field(obj_type, expr->field_expr.field_name);
                 if (fi) {
+                    // Shape-typed field: return address of inline data (not load)
+                    if (fi->type && fi->type->kind == TYPE_SHAPE) {
+                        int t = next_temp(emit);
+                        if (fi->offset == 0) {
+                            fprintf(emit->out, "\t%%t%d =l copy %%t%d\n", t, obj);
+                        } else {
+                            fprintf(emit->out, "\t%%t%d =l add %%t%d, %d\n", t, obj, fi->offset);
+                        }
+                        return t;
+                    }
                     const char *reg_ty = type_to_qbe(fi->type);
                     const char *load_ty = type_to_qbe_load(fi->type);
                     int t = next_temp(emit);
@@ -2644,6 +2654,15 @@ void qbe_emit_program(QbeEmitter *emit, AstNode *program) {
                 for (int j = 0; j < data_longs; j++)
                     fprintf(emit->out, ", l");
                 fprintf(emit->out, " }\n");
+            } else if (st && st->shape.is_union) {
+                // C-style union: pad to total_size with longs
+                int nlongs = (st->shape.total_size + 7) / 8;
+                fprintf(emit->out, "type :%s = { ", decl->shape_decl.name);
+                for (int j = 0; j < nlongs; j++) {
+                    if (j > 0) fprintf(emit->out, ", ");
+                    fprintf(emit->out, "l");
+                }
+                fprintf(emit->out, " }\n");
             } else {
                 fprintf(emit->out, "type :%s = { ", decl->shape_decl.name);
                 for (int j = 0; j < decl->shape_decl.field_count; j++) {
@@ -2680,12 +2699,31 @@ void qbe_emit_program(QbeEmitter *emit, AstNode *program) {
                         }
                     }
                     if (!already_emitted && emitted_count < 128) {
-                        fprintf(emit->out, "type :%s = { ", sym->type->shape.name);
-                        for (int j = 0; j < sym->type->shape.field_count; j++) {
-                            if (j > 0) fprintf(emit->out, ", ");
-                            fprintf(emit->out, "%s", type_to_qbe_mem(sym->type->shape.fields[j].type));
+                        if (sym->type->shape.is_union || sym->type->shape.is_tagged_union) {
+                            // Union/tagged union: pad to total_size with longs
+                            int base = sym->type->shape.is_tagged_union ? 8 : 0;
+                            int data_bytes = sym->type->shape.total_size - base;
+                            int nlongs = (data_bytes + 7) / 8;
+                            if (sym->type->shape.is_tagged_union) {
+                                fprintf(emit->out, "type :%s = { l", sym->type->shape.name);
+                                for (int j = 0; j < nlongs; j++)
+                                    fprintf(emit->out, ", l");
+                            } else {
+                                fprintf(emit->out, "type :%s = { ", sym->type->shape.name);
+                                for (int j = 0; j < nlongs; j++) {
+                                    if (j > 0) fprintf(emit->out, ", ");
+                                    fprintf(emit->out, "l");
+                                }
+                            }
+                            fprintf(emit->out, " }\n");
+                        } else {
+                            fprintf(emit->out, "type :%s = { ", sym->type->shape.name);
+                            for (int j = 0; j < sym->type->shape.field_count; j++) {
+                                if (j > 0) fprintf(emit->out, ", ");
+                                fprintf(emit->out, "%s", type_to_qbe_mem(sym->type->shape.fields[j].type));
+                            }
+                            fprintf(emit->out, " }\n");
                         }
-                        fprintf(emit->out, " }\n");
                         emitted_shapes[emitted_count++] = sym->type->shape.name;
                     }
                 }

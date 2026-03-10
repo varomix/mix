@@ -18,6 +18,7 @@ make
 - **Type inference** — types deduced from context, explicit annotations optional
 - **Shapes** — struct-like types with methods, computed fields, and operator overloading
 - **Tagged unions** — sum types with exhaustive `match`
+- **Unions** — C-style untagged unions for transparent C interop
 - **Generics** — `@T` type parameters with `has` constraints
 - **Optionals** — `T?` types with `else` fallback
 - **Error handling** — result-based errors with `fail`, `else` fallback, and `?` propagation

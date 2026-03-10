@@ -11,7 +11,7 @@ let s:cpo_save = &cpo
 set cpo&vim
 
 " ── Keywords ──
-syn keyword mixKeyword  if else while for in match done shape extern use pub
+syn keyword mixKeyword  if else while for in match done shape union extern use pub
 syn keyword mixKeyword  type zone defer unsafe go wait shared as then
 syn keyword mixKeyword  break continue
 syn keyword mixKeyword  run stream yield repeat set fail

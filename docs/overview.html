@@ -533,6 +533,17 @@ c <span class="op">=</span> a <span class="op">+</span> b   <span class="cm">// 
         <span class="ty">Add</span>(a, b) <span class="op">=></span> <span class="fn">eval</span>(a) <span class="op">+</span> <span class="fn">eval</span>(b)
         <span class="ty">Mul</span>(a, b) <span class="op">=></span> <span class="fn">eval</span>(a) <span class="op">*</span> <span class="fn">eval</span>(b)</code><span class="label">mix</span></pre>
 
+<h3>Unions (C-style)</h3>
+<p>For C interop, MIX supports untagged unions where all fields overlap at offset 0:</p>
+<pre><code><span class="kw">union</span> <span class="ty">Value</span>
+    i<span class="op">:</span> <span class="ty">int</span>
+    f<span class="op">:</span> <span class="ty">float</span>
+    b<span class="op">:</span> <span class="ty">bool</span>
+
+v <span class="op">=</span> <span class="ty">Value</span>(i<span class="op">:</span> <span class="num">42</span>)
+<span class="fn">print</span>(v.i)</code><span class="label">mix</span></pre>
+<p><code>cbind</code> automatically generates <code>union</code> declarations from C <code>typedef union</code> types (e.g., <code>SDL_Event</code>).</p>
+
 <h3>Public Shapes</h3>
 <pre><code><span class="kw">pub</span> <span class="kw">shape</span> <span class="ty">Config</span>
     host<span class="op">:</span> <span class="ty">str</span>

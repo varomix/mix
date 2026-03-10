@@ -31,6 +31,7 @@ typedef enum {
     TOK_CONTINUE,
     TOK_DONE,
     TOK_SHAPE,
+    TOK_UNION,
     TOK_EXTERN,
     TOK_USE,
     TOK_PUB,

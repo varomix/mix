@@ -688,7 +688,8 @@ static AstNode *parse_expr_prec(Parser *p, Precedence min_prec) {
         advance_tok(p); // skip .
         Token *field = current(p);
         if (field->kind != TOK_IDENT && field->kind != TOK_IDENT_MUT &&
-            field->kind != TOK_REPEAT && field->kind != TOK_SET) {
+            field->kind != TOK_REPEAT && field->kind != TOK_SET &&
+            field->kind != TOK_UNION) {
             mix_error(dot_loc, "expected field or method name after '.'");
             break;
         }
@@ -1227,7 +1228,11 @@ static AstNode *parse_extern_block(Parser *p) {
 //           3.14 * radius * radius
 static AstNode *parse_shape_decl(Parser *p) {
     SrcLoc loc = tok_loc(p);
-    expect(p, TOK_SHAPE);
+    // Accept either 'shape' or 'union' keyword
+    if (check(p, TOK_UNION))
+        advance_tok(p);
+    else
+        expect(p, TOK_SHAPE);
 
     Token *name_tok = expect(p, TOK_IDENT);
     AstNode *node = ast_new(p->arena, NODE_SHAPE_DECL, loc);
@@ -1511,6 +1516,14 @@ static AstNode *parse_top_level(Parser *p) {
     if (check(p, TOK_SHAPE)) {
         AstNode *decl = parse_shape_decl(p);
         decl->shape_decl.is_pub = is_pub;
+        return decl;
+    }
+
+    // union Name
+    if (check(p, TOK_UNION)) {
+        AstNode *decl = parse_shape_decl(p);
+        decl->shape_decl.is_pub = is_pub;
+        decl->shape_decl.is_union = true;
         return decl;
     }
 

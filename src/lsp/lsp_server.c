@@ -487,7 +487,7 @@ static void handle_completion_request(LspServer *server, int64_t id, JsonValue *
 
         static const char *keywords[] = {
             "if", "else", "while", "for", "in", "match",
-            "break", "continue", "done", "shape", "extern",
+            "break", "continue", "done", "shape", "union", "extern",
             "use", "pub", "type", "zone", "defer", "unsafe",
             "and", "or", "not", "go", "wait", "shared",
             "true", "false", "none", "fail", NULL

@@ -309,6 +309,35 @@ shape Shape
 
 Used with `match` — compiler enforces exhaustiveness.
 
+### Unions (C-style)
+
+For C interop, MIX supports untagged unions where all fields overlap at offset 0:
+
+```mix
+union Value
+    i: int
+    f: float
+    b: bool
+```
+
+Construction and field access work like shapes:
+
+```mix
+v = Value(i: 42)
+print(v.i)          // 42
+```
+
+Unions are primarily used for transparent C interop — `cbind` automatically generates `union` declarations from C `typedef union` types (e.g., `SDL_Event`):
+
+```mix
+use c "SDL3/SDL.h" link "SDL3"
+
+event = SDL_Event()
+while SDL_PollEvent(event)
+    if event.type_ == SDL_EVENT_QUIT
+        running! = false
+```
+
 ---
 
 ## 6. Collections

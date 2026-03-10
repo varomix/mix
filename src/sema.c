@@ -1547,6 +1547,8 @@ void sema_analyze(Sema *sema, AstNode *program) {
                 sizeof(ShapeFieldInfo) * decl->shape_decl.field_count);
 
             int offset = 0;
+            bool is_union = decl->shape_decl.is_union;
+            int max_field_size = 0;
             for (int j = 0; j < decl->shape_decl.field_count; j++) {
                 ShapeField *sf = &decl->shape_decl.fields[j];
                 MixType *ftype = sf->type ? resolve_type_node(sema, sf->type)
@@ -1556,22 +1558,38 @@ void sema_analyze(Sema *sema, AstNode *program) {
                 int fsize = type_size(ftype);
                 int falign = type_alignment(ftype);
 
-                // Align offset
-                offset = (offset + falign - 1) & ~(falign - 1);
+                if (is_union) {
+                    // Union: all fields at offset 0
+                    shape_type->shape.fields[j].name = sf->name;
+                    shape_type->shape.fields[j].type = ftype;
+                    shape_type->shape.fields[j].offset = 0;
+                    shape_type->shape.fields[j].size = fsize;
+                    sf->offset = 0;
+                    sf->size = fsize;
+                    if (fsize > max_field_size) max_field_size = fsize;
+                } else {
+                    // Align offset
+                    offset = (offset + falign - 1) & ~(falign - 1);
 
-                shape_type->shape.fields[j].name = sf->name;
-                shape_type->shape.fields[j].type = ftype;
-                shape_type->shape.fields[j].offset = offset;
-                shape_type->shape.fields[j].size = fsize;
+                    shape_type->shape.fields[j].name = sf->name;
+                    shape_type->shape.fields[j].type = ftype;
+                    shape_type->shape.fields[j].offset = offset;
+                    shape_type->shape.fields[j].size = fsize;
 
-                // Store computed values back in AST for emitter
-                sf->offset = offset;
-                sf->size = fsize;
+                    // Store computed values back in AST for emitter
+                    sf->offset = offset;
+                    sf->size = fsize;
 
-                offset += fsize;
+                    offset += fsize;
+                }
             }
             // Final alignment
-            shape_type->shape.total_size = (offset + 7) & ~7;
+            if (is_union) {
+                shape_type->shape.total_size = (max_field_size + 7) & ~7;
+                shape_type->shape.is_union = true;
+            } else {
+                shape_type->shape.total_size = (offset + 7) & ~7;
+            }
             shape_type->shape.alignment = 8;
 
             // Handle tagged union variants

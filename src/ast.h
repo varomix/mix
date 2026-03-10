@@ -367,6 +367,7 @@ struct AstNode {
             ShapeVariantDecl *variants;
             int variant_count;
             bool is_pub;
+            bool is_union;
         } shape_decl;
 
         // NODE_FIELD_EXPR  (obj.field)

@@ -61,6 +61,7 @@ struct MixType {
             ShapeVariant *variants;
             int variant_count;
             bool is_tagged_union;
+            bool is_union;       // C-style union: all fields at offset 0
         } shape;
         struct { char *name; } named;
         struct { struct MixType *inner; } shared;

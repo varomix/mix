@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 
 #define SYM_BUCKETS 128
+#define MODULE_CACHE_MAX 32
 
 static unsigned int sym_hash(const char *s) {
     unsigned int h = 5381;
@@ -249,8 +250,89 @@ static void store_fn_params(SymbolIndex *idx, const char *fn_name,
     if (rts) fe->return_type_str = strdup(rts);
 }
 
+// --- Module symbol cache ---
+// Caches parsed symbols from imported modules, keyed by path + mtime.
+// Avoids re-reading/re-lexing/re-parsing unchanged files on every keystroke.
+
+typedef struct {
+    char *path;
+    time_t mtime;
+    // Cached symbol entries (copies, not arena-allocated)
+    struct {
+        char *name;
+        SrcLoc loc;
+        NodeKind kind;
+        int param_count;
+        char **param_names;
+        char **param_type_strs;
+        char *return_type_str;
+    } *entries;
+    int entry_count;
+    int entry_cap;
+} ModuleCache;
+
+static ModuleCache module_cache[MODULE_CACHE_MAX];
+static int module_cache_count = 0;
+
+static void module_cache_free_entry(ModuleCache *mc) {
+    free(mc->path);
+    for (int i = 0; i < mc->entry_count; i++) {
+        free(mc->entries[i].name);
+        for (int j = 0; j < mc->entries[i].param_count; j++) {
+            free(mc->entries[i].param_names[j]);
+            free(mc->entries[i].param_type_strs[j]);
+        }
+        free(mc->entries[i].param_names);
+        free(mc->entries[i].param_type_strs);
+        free(mc->entries[i].return_type_str);
+    }
+    free(mc->entries);
+    memset(mc, 0, sizeof(ModuleCache));
+}
+
+static ModuleCache *module_cache_find(const char *path) {
+    for (int i = 0; i < module_cache_count; i++) {
+        if (module_cache[i].path && strcmp(module_cache[i].path, path) == 0)
+            return &module_cache[i];
+    }
+    return NULL;
+}
+
+// Replay cached symbols into the index
+static void module_cache_replay(ModuleCache *mc, SymbolIndex *idx) {
+    for (int i = 0; i < mc->entry_count; i++) {
+        sym_add(idx, mc->entries[i].name, mc->entries[i].loc, NULL, mc->entries[i].kind, NULL);
+        if (mc->entries[i].param_count > 0) {
+            SymbolEntry *fe = symbol_index_lookup(idx, mc->entries[i].name);
+            if (fe) {
+                fe->param_name_count = mc->entries[i].param_count;
+                fe->param_names = calloc(mc->entries[i].param_count, sizeof(char *));
+                fe->param_type_strs = calloc(mc->entries[i].param_count, sizeof(char *));
+                for (int j = 0; j < mc->entries[i].param_count; j++) {
+                    fe->param_names[j] = strdup(mc->entries[i].param_names[j]);
+                    fe->param_type_strs[j] = strdup(mc->entries[i].param_type_strs[j]);
+                }
+                if (mc->entries[i].return_type_str)
+                    fe->return_type_str = strdup(mc->entries[i].return_type_str);
+            }
+        }
+    }
+}
+
 // Index pub symbols from an imported module file
 static void index_module_file(SymbolIndex *idx, const char *module_path) {
+    // Check mtime
+    struct stat st;
+    if (stat(module_path, &st) != 0) return;
+    time_t mtime = st.st_mtime;
+
+    // Check cache
+    ModuleCache *cached = module_cache_find(module_path);
+    if (cached && cached->mtime == mtime) {
+        module_cache_replay(cached, idx);
+        return;
+    }
+
     FILE *f = fopen(module_path, "r");
     if (!f) return;
 
@@ -270,6 +352,35 @@ static void index_module_file(SymbolIndex *idx, const char *module_path) {
     Parser parser = parser_create(lexer.tokens, lexer.token_count, &arena, module_path);
     AstNode *prog = parser_parse(&parser);
 
+    // Prepare cache slot
+    if (!cached) {
+        if (module_cache_count < MODULE_CACHE_MAX) {
+            cached = &module_cache[module_cache_count++];
+        } else {
+            // Evict oldest entry
+            module_cache_free_entry(&module_cache[0]);
+            memmove(&module_cache[0], &module_cache[1],
+                    sizeof(ModuleCache) * (MODULE_CACHE_MAX - 1));
+            cached = &module_cache[MODULE_CACHE_MAX - 1];
+        }
+        memset(cached, 0, sizeof(ModuleCache));
+        cached->path = strdup(module_path);
+    } else {
+        // Clear old cached entries
+        for (int i = 0; i < cached->entry_count; i++) {
+            free(cached->entries[i].name);
+            for (int j = 0; j < cached->entries[i].param_count; j++) {
+                free(cached->entries[i].param_names[j]);
+                free(cached->entries[i].param_type_strs[j]);
+            }
+            free(cached->entries[i].param_names);
+            free(cached->entries[i].param_type_strs);
+            free(cached->entries[i].return_type_str);
+        }
+        cached->entry_count = 0;
+    }
+    cached->mtime = mtime;
+
     if (prog && prog->kind == NODE_PROGRAM) {
         for (int i = 0; i < prog->program.decl_count; i++) {
             AstNode *d = prog->program.decls[i];
@@ -278,8 +389,47 @@ static void index_module_file(SymbolIndex *idx, const char *module_path) {
                 store_fn_params(idx, d->fn_decl.name,
                                 d->fn_decl.params, d->fn_decl.param_count,
                                 d->fn_decl.return_type);
+                // Cache this entry
+                if (cached->entry_count >= cached->entry_cap) {
+                    cached->entry_cap = cached->entry_cap ? cached->entry_cap * 2 : 16;
+                    cached->entries = realloc(cached->entries,
+                        sizeof(cached->entries[0]) * cached->entry_cap);
+                }
+                int ci = cached->entry_count++;
+                cached->entries[ci].name = strdup(d->fn_decl.name);
+                cached->entries[ci].loc = d->loc;
+                cached->entries[ci].kind = NODE_FN_DECL;
+                SymbolEntry *fe = symbol_index_lookup(idx, d->fn_decl.name);
+                if (fe && fe->param_name_count > 0) {
+                    cached->entries[ci].param_count = fe->param_name_count;
+                    cached->entries[ci].param_names = calloc(fe->param_name_count, sizeof(char *));
+                    cached->entries[ci].param_type_strs = calloc(fe->param_name_count, sizeof(char *));
+                    for (int k = 0; k < fe->param_name_count; k++) {
+                        cached->entries[ci].param_names[k] = strdup(fe->param_names[k]);
+                        cached->entries[ci].param_type_strs[k] = strdup(fe->param_type_strs[k]);
+                    }
+                    cached->entries[ci].return_type_str = fe->return_type_str ? strdup(fe->return_type_str) : NULL;
+                } else {
+                    cached->entries[ci].param_count = 0;
+                    cached->entries[ci].param_names = NULL;
+                    cached->entries[ci].param_type_strs = NULL;
+                    cached->entries[ci].return_type_str = NULL;
+                }
             } else if (d->kind == NODE_SHAPE_DECL && d->shape_decl.is_pub) {
                 sym_add(idx, d->shape_decl.name, d->loc, NULL, NODE_SHAPE_DECL, NULL);
+                if (cached->entry_count >= cached->entry_cap) {
+                    cached->entry_cap = cached->entry_cap ? cached->entry_cap * 2 : 16;
+                    cached->entries = realloc(cached->entries,
+                        sizeof(cached->entries[0]) * cached->entry_cap);
+                }
+                int ci = cached->entry_count++;
+                cached->entries[ci].name = strdup(d->shape_decl.name);
+                cached->entries[ci].loc = d->loc;
+                cached->entries[ci].kind = NODE_SHAPE_DECL;
+                cached->entries[ci].param_count = 0;
+                cached->entries[ci].param_names = NULL;
+                cached->entries[ci].param_type_strs = NULL;
+                cached->entries[ci].return_type_str = NULL;
             } else if (d->kind == NODE_EXTERN_BLOCK) {
                 for (int j = 0; j < d->extern_block.decl_count; j++) {
                     AstNode *ef = d->extern_block.decls[j];
@@ -290,12 +440,38 @@ static void index_module_file(SymbolIndex *idx, const char *module_path) {
                                         ef->extern_fn_decl.params,
                                         ef->extern_fn_decl.param_count,
                                         ef->extern_fn_decl.return_type);
+                        if (cached->entry_count >= cached->entry_cap) {
+                            cached->entry_cap = cached->entry_cap ? cached->entry_cap * 2 : 16;
+                            cached->entries = realloc(cached->entries,
+                                sizeof(cached->entries[0]) * cached->entry_cap);
+                        }
+                        int ci = cached->entry_count++;
+                        cached->entries[ci].name = strdup(ef->extern_fn_decl.name);
+                        cached->entries[ci].loc = ef->loc;
+                        cached->entries[ci].kind = NODE_FN_DECL;
+                        SymbolEntry *fe = symbol_index_lookup(idx, ef->extern_fn_decl.name);
+                        if (fe && fe->param_name_count > 0) {
+                            cached->entries[ci].param_count = fe->param_name_count;
+                            cached->entries[ci].param_names = calloc(fe->param_name_count, sizeof(char *));
+                            cached->entries[ci].param_type_strs = calloc(fe->param_name_count, sizeof(char *));
+                            for (int k = 0; k < fe->param_name_count; k++) {
+                                cached->entries[ci].param_names[k] = strdup(fe->param_names[k]);
+                                cached->entries[ci].param_type_strs[k] = fe->param_type_strs ? strdup(fe->param_type_strs[k]) : strdup("?");
+                            }
+                            cached->entries[ci].return_type_str = fe->return_type_str ? strdup(fe->return_type_str) : NULL;
+                        } else {
+                            cached->entries[ci].param_count = 0;
+                            cached->entries[ci].param_names = NULL;
+                            cached->entries[ci].param_type_strs = NULL;
+                            cached->entries[ci].return_type_str = NULL;
+                        }
                     }
                 }
             }
         }
     }
 
+    free(lexer.tokens);
     arena_destroy(&arena);
     free(source);
 }

@@ -145,7 +145,12 @@ static void handle_hover_request(LspServer *server, int64_t id, JsonValue *param
     int col = (int)json_get_int(pos, "character") + 1;
 
     LspDocument *doc = docstore_find(&server->documents, uri);
-    if (!doc || !doc->analysis_valid) {
+    if (!doc) {
+        lsp_send_response(id, "null");
+        return;
+    }
+    document_ensure_analyzed(doc);
+    if (!doc->analysis_valid) {
         lsp_send_response(id, "null");
         return;
     }
@@ -204,7 +209,12 @@ static void handle_goto_definition(LspServer *server, int64_t id, JsonValue *par
     int col = (int)json_get_int(pos, "character") + 1;
 
     LspDocument *doc = docstore_find(&server->documents, uri);
-    if (!doc || !doc->analysis_valid) {
+    if (!doc) {
+        lsp_send_response(id, "null");
+        return;
+    }
+    document_ensure_analyzed(doc);
+    if (!doc->analysis_valid) {
         lsp_send_response(id, "null");
         return;
     }
@@ -373,6 +383,7 @@ static void handle_completion_request(LspServer *server, int64_t id, JsonValue *
         lsp_send_response(id, "null");
         return;
     }
+    document_ensure_analyzed(doc);
 
     JsonWriter w;
     jw_init(&w);
@@ -565,6 +576,7 @@ static void handle_signature_help(LspServer *server, int64_t id, JsonValue *para
         lsp_send_response(id, "null");
         return;
     }
+    document_ensure_analyzed(doc);
 
     // Find the line in source
     const char *src = doc->source;

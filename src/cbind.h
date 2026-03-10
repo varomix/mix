@@ -12,4 +12,9 @@
 int cbind_generate(const char *header_path, const char *out_path,
                    const char *lib_name, bool verbose);
 
+// Generate MIX binding source as an in-memory string.
+// Returns a malloc'd string (caller must free), or NULL on failure.
+char *cbind_generate_string(const char *header_path, const char *lib_name,
+                            bool verbose);
+
 #endif // CBIND_H

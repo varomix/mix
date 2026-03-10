@@ -1060,6 +1060,25 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 return t;
             }
 
+            /* Memory builtins */
+            if (strcmp(expr->call.name, "alloc") == 0 && expr->call.arg_count == 1) {
+                ind(emit); fprintf(emit->out, "void *t%d = mix_alloc((int64_t)t%d);\n", t, arg_temps[0]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "bytes") == 0 && expr->call.arg_count == 1) {
+                ind(emit); fprintf(emit->out, "void *t%d = mix_bytes((int64_t)t%d);\n", t, arg_temps[0]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "peek_u32") == 0 && expr->call.arg_count == 1) {
+                ind(emit); fprintf(emit->out, "uint32_t t%d = mix_peek_u32(t%d);\n", t, arg_temps[0]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "free_mem") == 0 && expr->call.arg_count == 1) {
+                ind(emit); fprintf(emit->out, "mix_free(t%d);\n", arg_temps[0]);
+                ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
+                return t;
+            }
+
             /* Regular / indirect function call */
             Symbol *fn_sym = symtab_lookup(emit->symtab, expr->call.name);
             MixType *fn_type = (fn_sym && fn_sym->type && fn_sym->type->kind == TYPE_FUNC)
@@ -2331,7 +2350,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                     "to_float","to_set","str_reverse","str_count","file_open","file_read",
                     "file_write","file_close","file_read_all","file_write_all","file_exists",
                     "list_dir","shell","shell_output","env","exit","getcwd","mkdir","args",
-                    "ord","chr",NULL};
+                    "ord","chr","alloc","bytes","peek_u32","free_mem",NULL};
                 for (int b = 0; builtins[b]; b++) {
                     if (strcmp(sym->name, builtins[b]) == 0) { is_local = true; break; }
                 }
@@ -2345,6 +2364,32 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                 for (int j = 0; j < sym->type->func.param_count; j++) {
                     if (j > 0) fprintf(emit->out, ", ");
                     MixType *pt = sym->type->func.param_types[j];
+                    if (pt && pt->kind == TYPE_SHAPE) fprintf(emit->out, "void *");
+                    else if (pt && type_is_float(pt)) fprintf(emit->out, "double");
+                    else fprintf(emit->out, "%s", c_type(pt));
+                }
+                if (sym->type->func.param_count == 0) fprintf(emit->out, "void");
+                fprintf(emit->out, ");\n");
+            }
+        }
+    }
+
+    /* Emit extern declarations for extern block functions (from use c or explicit extern) */
+    for (int i = 0; i < program->program.decl_count; i++) {
+        AstNode *d = program->program.decls[i];
+        if (d->kind == NODE_EXTERN_BLOCK) {
+            for (int j = 0; j < d->extern_block.decl_count; j++) {
+                AstNode *efn = d->extern_block.decls[j];
+                Symbol *sym = symtab_lookup(emit->symtab, efn->extern_fn_decl.name);
+                if (!sym || !sym->type || sym->type->kind != TYPE_FUNC) continue;
+                MixType *rt = sym->type->func.return_type;
+                const char *rs = rt ? c_type(rt) : "void";
+                if (rt && (rt->kind == TYPE_RESULT || rt->kind == TYPE_OPTIONAL)) rs = "void *";
+                else if (rt && rt->kind == TYPE_SHAPE) rs = "void *";
+                fprintf(emit->out, "extern %s %s(", rs, efn->extern_fn_decl.name);
+                for (int k = 0; k < sym->type->func.param_count; k++) {
+                    if (k > 0) fprintf(emit->out, ", ");
+                    MixType *pt = sym->type->func.param_types[k];
                     if (pt && pt->kind == TYPE_SHAPE) fprintf(emit->out, "void *");
                     else if (pt && type_is_float(pt)) fprintf(emit->out, "double");
                     else fprintf(emit->out, "%s", c_type(pt));

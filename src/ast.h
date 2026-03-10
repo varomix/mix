@@ -11,6 +11,7 @@ typedef enum {
     NODE_EXTERN_BLOCK,
     NODE_EXTERN_FN_DECL,
     NODE_USE_DECL,
+    NODE_USE_C_DECL,        // use c "header.h" link "lib"
 
     // Statements
     NODE_BLOCK,
@@ -233,6 +234,12 @@ struct AstNode {
             char **imports;      // selective: use math: add, PI (NULL if import all)
             int import_count;
         } use_decl;
+
+        // NODE_USE_C_DECL — use c "header.h" link "lib"
+        struct {
+            char *header_path;   // "SDL3/SDL.h"
+            char *lib_name;      // "SDL3" (NULL if no link clause)
+        } use_c_decl;
 
         // NODE_INT_LIT
         struct { int64_t value; } int_lit;

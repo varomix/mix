@@ -53,6 +53,12 @@ void ast_print(AstNode *node, int indent) {
             }
             printf("\n");
             break;
+        case NODE_USE_C_DECL:
+            printf("UseCDecl: \"%s\"", node->use_c_decl.header_path);
+            if (node->use_c_decl.lib_name)
+                printf(" link \"%s\"", node->use_c_decl.lib_name);
+            printf("\n");
+            break;
         case NODE_BLOCK:
             printf("Block (%d stmts)\n", node->block.stmt_count);
             for (int i = 0; i < node->block.stmt_count; i++)

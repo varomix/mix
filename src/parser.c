@@ -1416,6 +1416,24 @@ static AstNode *parse_top_level(Parser *p) {
         SrcLoc loc = tok_loc(p);
         advance_tok(p); // skip 'use'
 
+        // use c "header.h" [link "lib"]
+        if (check(p, TOK_IDENT) && current(p)->length == 1 && current(p)->start[0] == 'c'
+            && peek_at(p, 1)->kind == TOK_STRING_LIT) {
+            advance_tok(p); // skip 'c'
+            Token *header_tok = expect(p, TOK_STRING_LIT);
+            AstNode *node = ast_new(p->arena, NODE_USE_C_DECL, loc);
+            node->use_c_decl.header_path = arena_strndup(p->arena, header_tok->start, header_tok->length);
+            node->use_c_decl.lib_name = NULL;
+            // Optional: link "libname"
+            if (check(p, TOK_IDENT) && current(p)->length == 4
+                && strncmp(current(p)->start, "link", 4) == 0) {
+                advance_tok(p); // skip 'link'
+                Token *lib_tok = expect(p, TOK_STRING_LIT);
+                node->use_c_decl.lib_name = arena_strndup(p->arena, lib_tok->start, lib_tok->length);
+            }
+            return node;
+        }
+
         AstNode *node = ast_new(p->arena, NODE_USE_DECL, loc);
         node->use_decl.alias = NULL;
         node->use_decl.imports = NULL;

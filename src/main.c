@@ -324,7 +324,28 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
     // Recursively compile any modules this module imports
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
-        if (decl->kind == NODE_USE_DECL) {
+        if (decl->kind == NODE_USE_C_DECL) {
+            // use c "header.h" in a module — generate bindings and analyze
+            char *bind_src = cbind_generate_string(decl->use_c_decl.header_path,
+                                                    decl->use_c_decl.lib_name, verbose);
+            if (!bind_src) {
+                fprintf(stderr, "mix: failed to generate bindings for '%s'\n",
+                        decl->use_c_decl.header_path);
+                free(source); free(lexer.tokens); compiling_module_count--;
+                return NULL;
+            }
+            errors_set_source(bind_src, decl->use_c_decl.header_path);
+            Lexer bl = lexer_create(bind_src, decl->use_c_decl.header_path, arena);
+            lexer_tokenize(&bl);
+            if (mix_error_count() == 0) {
+                Parser bp = parser_create(bl.tokens, bl.token_count, arena, decl->use_c_decl.header_path);
+                AstNode *bprog = parser_parse(&bp);
+                if (mix_error_count() == 0) sema_analyze(sema, bprog);
+            }
+            errors_set_source(source, source_path);
+            free(bind_src);
+            free(bl.tokens);
+        } else if (decl->kind == NODE_USE_DECL) {
             char *sub_path = resolve_module_path(arena, base_dir,
                                                   decl->use_decl.module_path, exe_dir);
             if (verbose) fprintf(stderr, "mix: compiling sub-module '%s' -> %s\n",
@@ -655,7 +676,66 @@ int main(int argc, char **argv) {
     // Process use declarations — compile each module
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
-        if (decl->kind == NODE_USE_DECL) {
+        if (decl->kind == NODE_USE_C_DECL) {
+            // use c "header.h" link "lib"
+            const char *header = decl->use_c_decl.header_path;
+            const char *lib = decl->use_c_decl.lib_name;
+            if (verbose) fprintf(stderr, "mix: use c \"%s\"%s%s%s\n",
+                                 header, lib ? " link \"" : "", lib ? lib : "", lib ? "\"" : "");
+
+            char *bind_src = cbind_generate_string(header, lib, verbose);
+            if (!bind_src) {
+                fprintf(stderr, "mix: failed to generate bindings for '%s'\n", header);
+                return 1;
+            }
+
+            // Feed through lex -> parse -> sema
+            errors_set_source(bind_src, header);
+            Lexer bind_lex = lexer_create(bind_src, header, &arena);
+            lexer_tokenize(&bind_lex);
+            if (mix_error_count() > 0) {
+                free(bind_src); free(bind_lex.tokens);
+                fprintf(stderr, "mix: errors in generated bindings for '%s'\n", header);
+                return 1;
+            }
+            Parser bind_parser = parser_create(bind_lex.tokens, bind_lex.token_count, &arena, header);
+            AstNode *bind_prog = parser_parse(&bind_parser);
+            if (mix_error_count() > 0) {
+                free(bind_src); free(bind_lex.tokens);
+                fprintf(stderr, "mix: errors in generated bindings for '%s'\n", header);
+                return 1;
+            }
+            sema_analyze(&sema, bind_prog);
+            if (mix_error_count() > 0) {
+                free(bind_src); free(bind_lex.tokens);
+                fprintf(stderr, "mix: errors in generated bindings for '%s'\n", header);
+                return 1;
+            }
+
+            // Merge generated declarations into main program AST so emitter sees them
+            if (bind_prog && bind_prog->program.decl_count > 0) {
+                int old_count = program->program.decl_count;
+                int new_count = old_count + bind_prog->program.decl_count;
+                AstNode **merged = arena_alloc(&arena, sizeof(AstNode*) * new_count);
+                memcpy(merged, program->program.decls, sizeof(AstNode*) * old_count);
+                memcpy(merged + old_count, bind_prog->program.decls,
+                       sizeof(AstNode*) * bind_prog->program.decl_count);
+                program->program.decls = merged;
+                program->program.decl_count = new_count;
+            }
+
+            // Restore error source
+            errors_set_source(source, input_file);
+            free(bind_src);
+            free(bind_lex.tokens);
+
+            // Collect -l flag for linker
+            if (lib && link_flag_count < MAX_LINK_FLAGS) {
+                char *lflag = arena_alloc(&arena, strlen(lib) + 3);
+                sprintf(lflag, "-l%s", lib);
+                link_flags[link_flag_count++] = lflag;
+            }
+        } else if (decl->kind == NODE_USE_DECL) {
             char *mod_path = resolve_module_path(&arena, base_dir,
                                                   decl->use_decl.module_path, exe_dir);
             if (verbose) fprintf(stderr, "mix: compiling module '%s' -> %s\n",

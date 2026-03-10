@@ -20,6 +20,7 @@ typedef struct {
     long long int_value;
     double float_value;
     bool is_float;
+    bool is_hex;
 } CConst;
 
 typedef struct {
@@ -315,6 +316,7 @@ static int extract_defines(const char *path, bool verbose) {
 
         // Try integer parse
         char *endp;
+        bool hex_prefix = (p[0] == '0' && (p[1] == 'x' || p[1] == 'X'));
         long long ival = strtoll(p, &endp, 0);
         if (endp != p && (*endp == '\0' || isspace((unsigned char)*endp) ||
                           *endp == 'L' || *endp == 'U' || *endp == 'l' || *endp == 'u')) {
@@ -327,6 +329,7 @@ static int extract_defines(const char *path, bool verbose) {
                 strncpy(consts[const_count].name, name, 255);
                 consts[const_count].int_value = ival;
                 consts[const_count].is_float = false;
+                consts[const_count].is_hex = hex_prefix;
                 const_count++;
                 added++;
             }
@@ -583,6 +586,109 @@ static int parse_structs(const char *text) {
     return added;
 }
 
+// ---- Parse enum definitions into constants ----
+
+static int parse_enums(const char *text) {
+    int added = 0;
+    const char *p = text;
+
+    while (*p) {
+        // Look for "enum" followed by optional name and '{'
+        // Match: "typedef enum {", "typedef enum Name {", "enum Name {"
+        const char *e = strstr(p, "enum");
+        if (!e) break;
+        p = e + 4;
+
+        // Skip whitespace
+        while (*p && isspace((unsigned char)*p)) p++;
+
+        // Optional tag name (skip it)
+        if (is_ident_char(*p)) {
+            while (*p && is_ident_char(*p)) p++;
+            while (*p && isspace((unsigned char)*p)) p++;
+        }
+
+        // Must have opening brace
+        if (*p != '{') continue;
+        p++; // skip {
+
+        // Parse enumerators until }
+        long long next_value = 0;
+        while (*p && *p != '}') {
+            // Skip whitespace and commas
+            while (*p && (isspace((unsigned char)*p) || *p == ',')) p++;
+            if (*p == '}' || !*p) break;
+
+            // Skip preprocessor lines
+            if (*p == '#') {
+                while (*p && *p != '\n') p++;
+                continue;
+            }
+
+            // Read enumerator name
+            if (!is_ident_char(*p)) { p++; continue; }
+            char ename[256];
+            int ei = 0;
+            while (*p && is_ident_char(*p) && ei < 255) ename[ei++] = *p++;
+            ename[ei] = '\0';
+
+            // Skip internal names
+            if (ename[0] == '_' && ename[1] == '_') {
+                while (*p && *p != ',' && *p != '}') p++;
+                continue;
+            }
+
+            // Skip whitespace
+            while (*p && isspace((unsigned char)*p)) p++;
+
+            long long val = next_value;
+            bool hex = false;
+            if (*p == '=') {
+                p++; // skip =
+                while (*p && isspace((unsigned char)*p)) p++;
+                // Parse the value — could be hex or decimal
+                hex = (p[0] == '0' && (p[1] == 'x' || p[1] == 'X'));
+                char *endp;
+                val = strtoll(p, &endp, 0);
+                if (endp == p) {
+                    // Skip unparseable value
+                    while (*p && *p != ',' && *p != '}') p++;
+                    continue;
+                }
+                p = endp;
+                // Skip trailing type suffixes
+                while (*p == 'U' || *p == 'L' || *p == 'u' || *p == 'l') p++;
+            }
+
+            // Skip MIX reserved words
+            if (!is_reserved_word(ename)) {
+                // Check for duplicate
+                bool dup = false;
+                for (int i = 0; i < const_count; i++) {
+                    if (strcmp(consts[i].name, ename) == 0) { dup = true; break; }
+                }
+                if (!dup && const_count < MAX_CONSTS) {
+                    strncpy(consts[const_count].name, ename, 255);
+                    consts[const_count].int_value = val;
+                    consts[const_count].is_float = false;
+                    consts[const_count].is_hex = hex;
+                    const_count++;
+                    added++;
+                }
+            }
+
+            next_value = val + 1;
+
+            // Skip to next comma or end
+            while (*p && *p != ',' && *p != '}') p++;
+        }
+
+        if (*p == '}') p++;
+    }
+
+    return added;
+}
+
 static int parse_prototypes(const char *text) {
     int added = 0;
 
@@ -774,6 +880,8 @@ static void write_mix_output(FILE *out, const char *lib_name, const char *source
         for (int i = 0; i < const_count; i++) {
             if (consts[i].is_float) {
                 fprintf(out, "@const %s = %g\n", consts[i].name, consts[i].float_value);
+            } else if (consts[i].is_hex) {
+                fprintf(out, "@const %s = 0x%llx\n", consts[i].name, consts[i].int_value);
             } else {
                 fprintf(out, "@const %s = %lld\n", consts[i].name, consts[i].int_value);
             }
@@ -872,6 +980,7 @@ int cbind_generate(const char *header_path, const char *out_path,
             char *text = preprocess_header(full_path, verbose);
             if (text) {
                 parse_structs(text);
+                parse_enums(text);
                 int nf = parse_prototypes(text);
                 free(text);
                 int nc = extract_defines(full_path, verbose);
@@ -889,6 +998,7 @@ int cbind_generate(const char *header_path, const char *out_path,
             return 1;
         }
         parse_structs(text);
+        parse_enums(text);
         parse_prototypes(text);
         free(text);
         extract_defines(header_path, verbose);
@@ -907,4 +1017,79 @@ int cbind_generate(const char *header_path, const char *out_path,
     fprintf(stderr, "mix: wrote %d shapes, %d functions, %d constants to %s\n",
             shape_count, func_count, const_count, out_path);
     return 0;
+}
+
+// Generate MIX binding source as an in-memory string.
+// Returns a malloc'd string (caller must free), or NULL on failure.
+char *cbind_generate_string(const char *header_path, const char *lib_name, bool verbose) {
+    // Reset globals
+    func_count = 0;
+    const_count = 0;
+    shape_count = 0;
+
+    // Derive lib name if not provided
+    char derived_lib[256] = "";
+    if (!lib_name || strlen(lib_name) == 0) {
+        strncpy(derived_lib, basename_no_ext(header_path), sizeof(derived_lib) - 1);
+        lib_name = derived_lib;
+    }
+
+    if (path_is_directory(header_path)) {
+        DIR *dir = opendir(header_path);
+        if (!dir) {
+            fprintf(stderr, "mix: cannot open directory '%s'\n", header_path);
+            return NULL;
+        }
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            const char *name = entry->d_name;
+            int nlen = (int)strlen(name);
+            if (nlen < 3 || strcmp(name + nlen - 2, ".h") != 0) continue;
+
+            char full_path[1024];
+            snprintf(full_path, sizeof(full_path), "%s/%s", header_path, name);
+
+            char *text = preprocess_header(full_path, verbose);
+            if (text) {
+                parse_structs(text);
+                parse_enums(text);
+                parse_prototypes(text);
+                free(text);
+                extract_defines(full_path, verbose);
+            } else {
+                extract_defines(full_path, verbose);
+            }
+        }
+        closedir(dir);
+    } else {
+        char *text = preprocess_header(header_path, verbose);
+        if (!text) {
+            fprintf(stderr, "mix: failed to preprocess '%s'\n", header_path);
+            return NULL;
+        }
+        parse_structs(text);
+        parse_enums(text);
+        parse_prototypes(text);
+        free(text);
+        extract_defines(header_path, verbose);
+    }
+
+    // Write to in-memory buffer via open_memstream
+    char *buf = NULL;
+    size_t buf_size = 0;
+    FILE *mem = open_memstream(&buf, &buf_size);
+    if (!mem) {
+        fprintf(stderr, "mix: open_memstream failed\n");
+        return NULL;
+    }
+
+    write_mix_output(mem, lib_name, header_path);
+    fclose(mem);
+
+    if (verbose) {
+        fprintf(stderr, "mix: generated %d shapes, %d functions, %d constants from '%s'\n",
+                shape_count, func_count, const_count, header_path);
+    }
+
+    return buf;
 }

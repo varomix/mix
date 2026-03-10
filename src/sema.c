@@ -1462,6 +1462,52 @@ void sema_analyze(Sema *sema, AstNode *program) {
         symtab_insert(&sema->symtab, "str_count", ft, false);
     }
 
+    // Memory builtins for C interop
+    {
+        MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
+
+        // alloc(n: int) -> *byte
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = ptr_byte;
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_INT);
+        symtab_insert(&sema->symtab, "alloc", ft, false);
+    }
+    {
+        MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
+
+        // bytes(n: int) -> *byte
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = ptr_byte;
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_INT);
+        symtab_insert(&sema->symtab, "bytes", ft, false);
+    }
+    {
+        MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
+
+        // peek_u32(ptr: *byte) -> uint32
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_UINT32);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = ptr_byte;
+        symtab_insert(&sema->symtab, "peek_u32", ft, false);
+    }
+    {
+        MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
+
+        // free_mem(ptr: *byte) -> void
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_VOID);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = ptr_byte;
+        symtab_insert(&sema->symtab, "free_mem", ft, false);
+    }
+
     // Math built-ins (single arg: float -> float)
     {
         const char *math_fns[] = {"sqrt", "abs", "sin", "cos", "tan", "log", "floor", "ceil", "round"};

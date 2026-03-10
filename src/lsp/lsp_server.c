@@ -549,6 +549,10 @@ static void handle_completion_request(LspServer *server, int64_t id, JsonValue *
             {"args", "() -> [str]"},
             {"str_reverse", "(str) -> str"},
             {"str_count", "(str, str) -> int"},
+            {"alloc", "(int) -> *byte"},
+            {"bytes", "(int) -> *byte"},
+            {"peek_u32", "(*byte) -> uint32"},
+            {"free_mem", "(*byte)"},
             {NULL, NULL}
         };
         for (int i = 0; builtins[i].name; i++) {

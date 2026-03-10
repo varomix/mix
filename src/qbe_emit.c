@@ -1080,6 +1080,28 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 return t;
             }
 
+            // Memory builtins
+            if (strcmp(expr->call.name, "alloc") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_alloc(l %%t%d)\n",
+                        t, arg_temps[0]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "bytes") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_bytes(l %%t%d)\n",
+                        t, arg_temps[0]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "peek_u32") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\t%%t%d =w call $mix_peek_u32(l %%t%d)\n",
+                        t, arg_temps[0]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "free_mem") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\tcall $mix_free(l %%t%d)\n", arg_temps[0]);
+                fprintf(emit->out, "\t%%t%d =l copy 0\n", t);
+                return t;
+            }
+
             // Regular function call
             // Check if this is a direct function call or an indirect call (lambda/function pointer)
             Symbol *fn_sym = symtab_lookup(emit->symtab, expr->call.name);

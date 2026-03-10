@@ -1,0 +1,41 @@
+// Union type: C-style untagged unions (all fields at offset 0)
+union Value
+    i: int
+    f: float
+    b: bool
+
+union Small
+    x: int32
+    y: uint8
+
+union Nested
+    a: int
+    v: Value
+
+main()
+    // Basic union construction and field access
+    v1 = Value(i: 42)
+    print(v1.i)
+
+    v2 = Value(f: 3.14)
+    print(v2.f)
+
+    v3 = Value(b: true)
+    print(v3.b)
+
+    // Union with smaller types
+    s = Small(x: 99)
+    print(s.x)
+
+    // Positional construction
+    v4 = Value(100)
+    print(v4.i)
+
+    // Mutable union variable
+    v5! = Value(i: 10)
+    print(v5.i)
+    v5! = Value(i: 20)
+    print(v5.i)
+
+    // Union size should be max of all fields (8 bytes for int/float)
+    print("unions ok")

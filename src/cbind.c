@@ -21,11 +21,16 @@ typedef struct {
     double float_value;
     bool is_float;
     bool is_hex;
+    bool is_shape_lit;
+    char shape_name[128];       // e.g., "Color"
+    char shape_values[512];     // e.g., "r: 200, g: 200, b: 200, a: 255"
 } CConst;
 
 typedef struct {
     char name[128];       // struct/typedef name (e.g., "Vector2", "Color")
     char fields[2048];    // MIX shape fields string
+    char field_names[64][128]; // individual field names for shape-lit constants
+    int field_name_count;
 } CShape;
 
 #define MAX_FUNCS  4096
@@ -391,6 +396,85 @@ static int extract_defines(const char *path, bool verbose) {
                     added++;
                 }
             }
+            // Try CLITERAL(TypeName){ val, val, ... } or (TypeName){ val, ... }
+            // This handles Raylib-style struct literal macros like color constants
+            {
+                const char *cp = p;
+                // Skip CLITERAL prefix if present
+                if (strncmp(cp, "CLITERAL(", 9) == 0) {
+                    cp += 9;
+                } else if (*cp == '(' && is_ident_char(cp[1])) {
+                    cp++;
+                } else {
+                    goto skip_shape_lit;
+                }
+
+                // Extract type name
+                char stype[128];
+                int si = 0;
+                while (*cp && is_ident_char(*cp) && si < 127) stype[si++] = *cp++;
+                stype[si] = '\0';
+                if (*cp != ')') goto skip_shape_lit;
+                cp++; // skip ')'
+
+                // Find matching shape
+                CShape *shape = NULL;
+                for (int i = 0; i < shape_count; i++) {
+                    if (strcmp(shapes[i].name, stype) == 0) {
+                        shape = &shapes[i];
+                        break;
+                    }
+                }
+                if (!shape || shape->field_name_count == 0) goto skip_shape_lit;
+
+                // Skip whitespace and expect '{'
+                while (*cp && isspace((unsigned char)*cp)) cp++;
+                if (*cp != '{') goto skip_shape_lit;
+                cp++; // skip '{'
+
+                // Parse comma-separated integer values
+                long long vals[64];
+                int val_count = 0;
+                while (*cp && *cp != '}' && val_count < 64) {
+                    while (*cp && isspace((unsigned char)*cp)) cp++;
+                    if (*cp == '}') break;
+                    char *vend;
+                    long long v = strtoll(cp, &vend, 0);
+                    if (vend == cp) goto skip_shape_lit;
+                    vals[val_count++] = v;
+                    cp = vend;
+                    // Skip suffixes and whitespace
+                    while (*cp == 'U' || *cp == 'L' || *cp == 'u' || *cp == 'l' || *cp == 'f' || *cp == 'F') cp++;
+                    while (*cp && isspace((unsigned char)*cp)) cp++;
+                    if (*cp == ',') cp++;
+                }
+
+                if (val_count > 0 && val_count <= shape->field_name_count) {
+                    // Build "field1: val1, field2: val2, ..." string
+                    char shape_vals[512] = "";
+                    int svoff = 0;
+                    for (int i = 0; i < val_count; i++) {
+                        if (i > 0) svoff += snprintf(shape_vals + svoff, sizeof(shape_vals) - svoff, ", ");
+                        svoff += snprintf(shape_vals + svoff, sizeof(shape_vals) - svoff,
+                                          "%s: %lld", shape->field_names[i], vals[i]);
+                    }
+                    // Check for duplicate
+                    bool dup = false;
+                    for (int i = 0; i < const_count; i++) {
+                        if (strcmp(consts[i].name, name) == 0) { dup = true; break; }
+                    }
+                    if (!dup && const_count < MAX_CONSTS) {
+                        strncpy(consts[const_count].name, name, 255);
+                        consts[const_count].is_shape_lit = true;
+                        strncpy(consts[const_count].shape_name, stype, 127);
+                        strncpy(consts[const_count].shape_values, shape_vals,
+                                sizeof(consts[const_count].shape_values) - 1);
+                        const_count++;
+                        added++;
+                    }
+                }
+                skip_shape_lit: ;
+            }
         }
         line = strtok(NULL, "\n");
     }
@@ -540,6 +624,8 @@ static int parse_structs(const char *text) {
         int flen = 0;
         const char *fp = body_start;
         int field_count = 0;
+        char parsed_field_names[64][128];
+        memset(parsed_field_names, 0, sizeof(parsed_field_names));
 
         while (fp < body_end) {
             // Skip whitespace
@@ -613,12 +699,18 @@ static int parse_structs(const char *text) {
             }
             flen += snprintf(fields + flen, sizeof(fields) - flen,
                              "    %s: %s", fname, mix_ft);
+            if (field_count < 64) {
+                strncpy(parsed_field_names[field_count], fname, 127);
+            }
             field_count++;
         }
 
         if (field_count > 0 && shape_count < MAX_SHAPES) {
             strncpy(shapes[shape_count].name, typedef_name, 127);
             strncpy(shapes[shape_count].fields, fields, sizeof(shapes[shape_count].fields) - 1);
+            shapes[shape_count].field_name_count = field_count < 64 ? field_count : 64;
+            memcpy(shapes[shape_count].field_names, parsed_field_names,
+                   sizeof(parsed_field_names));
             shape_count++;
             added++;
         }
@@ -919,7 +1011,10 @@ static void write_mix_output(FILE *out, const char *lib_name, const char *source
 
     if (const_count > 0) {
         for (int i = 0; i < const_count; i++) {
-            if (consts[i].is_float) {
+            if (consts[i].is_shape_lit) {
+                fprintf(out, "@const %s = %s(%s)\n",
+                        consts[i].name, consts[i].shape_name, consts[i].shape_values);
+            } else if (consts[i].is_float) {
                 fprintf(out, "@const %s = %g\n", consts[i].name, consts[i].float_value);
             } else if (consts[i].is_hex) {
                 fprintf(out, "@const %s = 0x%llx\n", consts[i].name, consts[i].int_value);

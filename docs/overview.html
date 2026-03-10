@@ -882,7 +882,29 @@ comments <span class="op">=</span> <span class="kw">wait</span> t3</code><span c
 <section id="interop">
 <h2><span class="num">12</span>C Interop</h2>
 
-<h3>External Declarations</h3>
+<h3>Transparent Import (<code>use c</code>)</h3>
+<p>Import C headers directly — the compiler preprocesses the header, extracts functions, constants, and enums, and makes them available as native MIX symbols. No manual binding step needed.</p>
+
+<pre><code><span class="cm">// Import a C header — all functions, constants, enums available</span>
+<span class="kw">use</span> c <span class="str">"SDL3/SDL.h"</span> link <span class="str">"SDL3"</span>
+
+<span class="fn">main</span>()
+    <span class="fn">SDL_Init</span>(SDL_INIT_VIDEO)
+    <span class="kw">defer</span> <span class="fn">SDL_Quit</span>()
+
+    win <span class="op">=</span> <span class="fn">SDL_CreateWindow</span>(<span class="str">"MIX"</span>, <span class="num">800</span>, <span class="num">600</span>, <span class="num">0</span>)
+    <span class="fn">print</span>(<span class="str">"Window created!"</span>)
+    <span class="fn">SDL_DestroyWindow</span>(win)</code><span class="label">mix</span></pre>
+
+<p>The <code>link "SDL3"</code> clause automatically adds <code>-lSDL3</code> to the linker — no extra flags needed.</p>
+
+<div class="info-box tip">
+    <strong>What gets imported:</strong> Function prototypes, <code>#define</code> integer/float constants (including hex like <code>0xFF00</code>), C enums (both <code>enum Name {}</code> and <code>typedef enum {} Name</code>), and <code>typedef struct</code> shapes.
+</div>
+
+<h3>External Declarations (manual)</h3>
+<p>For fine-grained control, you can declare C functions manually:</p>
+
 <pre><code><span class="kw">extern</span> <span class="str">"SDL2"</span>
     <span class="fn">SDL_Init</span>(flags<span class="op">:</span> <span class="ty">uint32</span>) <span class="op">-></span> <span class="ty">int</span> <span class="op">~</span>
     <span class="fn">SDL_Quit</span>() <span class="op">~</span>
@@ -908,9 +930,9 @@ comments <span class="op">=</span> <span class="kw">wait</span> t3</code><span c
 </table>
 
 <h3>Binding Generation</h3>
-<p>Use the <code>--bind</code> flag to auto-generate mix bindings from a C header.</p>
+<p>For offline binding generation (instead of compile-time <code>use c</code>), use the <code>--bind</code> flag:</p>
 <pre><code><span class="cm"># generate bindings for a C library</span>
-mix --bind raylib.h</code><span class="label">shell</span></pre>
+mix --bind raylib.h -o raylib.mix</code><span class="label">shell</span></pre>
 </section>
 
 
@@ -995,6 +1017,15 @@ mix --bind raylib.h</code><span class="label">shell</span></pre>
     <tr><td><code><span class="fn">str_count</span></code></td><td><code>(<span class="ty">str</span>, <span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span></code></td><td>Count substring occurrences</td></tr>
     <tr><td><code><span class="fn">ord</span></code></td><td><code>(<span class="ty">str</span>) <span class="op">-></span> <span class="ty">int</span></code></td><td>Unicode code point of first character</td></tr>
     <tr><td><code><span class="fn">chr</span></code></td><td><code>(<span class="ty">int</span>) <span class="op">-></span> <span class="ty">str</span></code></td><td>Code point to character string (UTF-8)</td></tr>
+</table>
+
+<h3>Memory</h3>
+<table>
+    <tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+    <tr><td><code><span class="fn">alloc</span></code></td><td><code>(<span class="ty">int</span>) <span class="op">-></span> <span class="op">*</span><span class="ty">byte</span></code></td><td>Allocate bytes (malloc wrapper)</td></tr>
+    <tr><td><code><span class="fn">bytes</span></code></td><td><code>(<span class="ty">int</span>) <span class="op">-></span> <span class="op">*</span><span class="ty">byte</span></code></td><td>Allocate zeroed bytes (for C struct buffers)</td></tr>
+    <tr><td><code><span class="fn">peek_u32</span></code></td><td><code>(<span class="op">*</span><span class="ty">byte</span>) <span class="op">-></span> <span class="ty">uint32</span></code></td><td>Read uint32 from pointer (e.g., event type)</td></tr>
+    <tr><td><code><span class="fn">free_mem</span></code></td><td><code>(<span class="op">*</span><span class="ty">byte</span>)</code></td><td>Free allocated memory</td></tr>
 </table>
 </section>
 

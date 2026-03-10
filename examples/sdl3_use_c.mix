@@ -1,0 +1,26 @@
+// SDL3 window using transparent C interop
+// No manual --bind step needed — use c does it all at compile time
+use c "SDL3/SDL.h" link "SDL3"
+
+main()
+    SDL_Init(SDL_INIT_VIDEO)
+    defer SDL_Quit()
+
+    win = SDL_CreateWindow("MIX + SDL3", 800, 600, 0)
+    rnd = SDL_CreateRenderer(win, 0)
+    event = bytes(128)
+
+    running! = true
+    while running
+        while SDL_PollEvent(event) != 0
+            event_type = peek_u32(event)
+            if event_type == SDL_EVENT_QUIT
+                running! = false
+
+        SDL_SetRenderDrawColor(rnd, 100, 149, 237, 255)
+        SDL_RenderClear(rnd)
+        SDL_RenderPresent(rnd)
+        SDL_Delay(16)
+
+    free_mem(event)
+    SDL_DestroyWindow(win)

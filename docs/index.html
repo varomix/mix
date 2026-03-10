@@ -474,7 +474,7 @@ footer em { color: var(--text); }
 <div class="card-grid">
     <div class="card"><span class="icon">&#9889;</span><h4>Native Speed</h4><p>Compiles to arm64 machine code. No VM, no interpreter, no GC pauses.</p></div>
     <div class="card"><span class="icon">&#128064;</span><h4>Obvious Syntax</h4><p>If a beginner can't guess it, it's out. ~30 keywords, the whole language fits in your head.</p></div>
-    <div class="card"><span class="icon">&#128279;</span><h4>C Interop</h4><p>Call SDL3, OpenGL, Vulkan, or any C library directly. No binding generators.</p></div>
+    <div class="card"><span class="icon">&#128279;</span><h4>C Interop</h4><p>Import C headers directly with <code>use c</code> &mdash; call SDL3, OpenGL, or any C library. No binding generators.</p></div>
     <div class="card"><span class="icon">&#128230;</span><h4>Modules</h4><p>File = module. Folder = namespace. No headers, no build files.</p></div>
     <div class="card"><span class="icon">&#9881;</span><h4>QBE Backend</h4><p>12K-line compiler backend. Builds in seconds, produces good code.</p></div>
     <div class="card"><span class="icon">&#127926;</span><h4>Game Ready</h4><p>SDL3 + Raylib verified. Shapes for game math. defer for cleanup. go/wait for parallelism.</p></div>
@@ -813,13 +813,17 @@ q.<span class="fn">enqueue!</span>(<span class="num">1</span>)
 <!-- ========== C INTEROP ========== -->
 <section id="interop">
 <h2><span class="num">07</span>C Interop</h2>
-<pre><code><span class="kw">extern</span> <span class="str">"libc"</span>
-    <span class="fn">puts</span>(s: <span class="ty">*byte</span>) -> <span class="ty">int32</span> ~
+<pre><code><span class="cm">// Transparent — import C headers directly</span>
+<span class="kw">use</span> c <span class="str">"SDL3/SDL.h"</span> link <span class="str">"SDL3"</span>
 
-<span class="kw">extern</span> <span class="str">"SDL3"</span>
-    <span class="fn">SDL_Init</span>(flags: <span class="ty">uint32</span>) -> <span class="ty">int32</span> ~
-    <span class="fn">SDL_CreateWindow</span>(title: <span class="ty">*byte</span>, w: <span class="ty">int32</span>, h: <span class="ty">int32</span>, flags: <span class="ty">uint64</span>) -> <span class="ty">*byte</span> ~</code><span class="label">mix</span></pre>
-<p>Declare the functions you need, call them like MIX functions. Link with <code>-lSDL3</code>.</p>
+<span class="fn">main</span>()
+    <span class="fn">SDL_Init</span>(SDL_INIT_VIDEO)    <span class="cm">// constants + enums auto-imported</span>
+    <span class="kw">defer</span> <span class="fn">SDL_Quit</span>()
+
+<span class="cm">// Or declare manually for fine-grained control</span>
+<span class="kw">extern</span> <span class="str">"libc"</span>
+    <span class="fn">puts</span>(s: <span class="ty">*byte</span>) -> <span class="ty">int32</span> ~</code><span class="label">mix</span></pre>
+<p>One line imports all functions, constants, and enums from a C header. The <code>link</code> clause auto-adds <code>-lSDL3</code> to the linker.</p>
 
 <table>
 <tr><th>MIX</th><th>C</th><th>MIX</th><th>C</th></tr>
@@ -903,21 +907,25 @@ app.<span class="fn">build</span>()</code></pre>
 <section id="tooling-sec">
 <h2><span class="num">09</span>Tooling</h2>
 
-<h3>C Header Bindings (<code>--bind</code>)</h3>
-<p>Auto-generate MIX extern blocks from C headers. Handles SDL3 (1,400+ functions), Raylib (580+ functions), and any C library. Shows progress for directory mode.</p>
+<h3>C Header Bindings (<code>use c</code> &amp; <code>--bind</code>)</h3>
+
+<p>The preferred way to use C libraries is <code>use c</code> — a single line that imports everything at compile time:</p>
+
+<pre><code><span class="cm">// Import header at compile time — functions, constants, enums all available</span>
+<span class="kw">use</span> c <span class="str">"SDL3/SDL.h"</span> link <span class="str">"SDL3"</span>
+
+<span class="fn">main</span>()
+    <span class="fn">SDL_Init</span>(SDL_INIT_VIDEO)      <span class="cm">// enum constant, auto-imported</span>
+    <span class="fn">print</span>(SDL_INIT_VIDEO)          <span class="cm">// hex preserved: 0x20</span>
+    <span class="kw">defer</span> <span class="fn">SDL_Quit</span>()</code><span class="label">mix</span></pre>
+
+<p>For offline binding generation, use the <code>--bind</code> flag:</p>
 
 <pre><code><span class="cm"># Single header — completes in ~0.1s even for SDL3</span>
 ./build/mix --bind /opt/homebrew/include/SDL3/SDL.h -o sdl3.mix --lib SDL3
 
 <span class="cm"># Entire directory with progress output</span>
-./build/mix --bind /opt/homebrew/include/SDL3/ -o sdl3.mix --lib SDL3
-<span class="cm"># mix: [1/86] SDL_tray.h</span>
-<span class="cm"># mix: [2/86] SDL_misc.h</span>
-<span class="cm"># ...</span>
-<span class="cm"># mix: wrote 2129 functions, 4096 constants</span>
-
-<span class="cm"># Check version</span>
-./build/mix --version  <span class="cm"># mix 0.1.0 (2026-03-04)</span></code></pre>
+./build/mix --bind /opt/homebrew/include/SDL3/ -o sdl3.mix --lib SDL3</code></pre>
 
 <p>Given a C header like:</p>
 <pre><code><span class="ty">int</span> <span class="fn">SDL_Init</span>(<span class="ty">uint32_t</span> flags);
@@ -931,7 +939,7 @@ app.<span class="fn">build</span>()</code></pre>
     <span class="fn">SDL_Quit</span>() ~
     <span class="fn">SDL_GetError</span>() -> <span class="ty">*byte</span> ~
 
-<span class="kw">@const</span> SDL_INIT_VIDEO = <span class="num">32</span></code><span class="label">mix</span></pre>
+<span class="kw">@const</span> SDL_INIT_VIDEO = <span class="num">0x20</span></code><span class="label">mix</span></pre>
 
 <div class="card-grid">
 <div class="card">
@@ -1134,62 +1142,61 @@ dofile(<span class="str">"/path/to/mix_lang/editors/nvim/mix.lua"</span>)</code>
     <span class="fn">print</span>(<span class="str">"Results: {r1}, {r2}, {r3}"</span>)</code><span class="label">mix</span></pre>
 
 <h3>Step 8: C Interop</h3>
-<p>Call any C function directly. Generate bindings automatically with <code>--bind</code>.</p>
-<pre><code><span class="cm">// Step 1: Generate bindings from C headers</span>
-<span class="cm">// $ ./build/mix --bind /opt/homebrew/include/SDL3/SDL.h -o sdl3.mix --lib SDL3</span>
-
-<span class="cm">// Step 2: Use the generated bindings in your program</span>
-<span class="kw">extern</span> <span class="str">"SDL3"</span>
-    <span class="fn">SDL_Init</span>(flags: <span class="ty">uint32</span>) -> <span class="ty">int32</span> ~
-    <span class="fn">SDL_Quit</span>() ~
-
-<span class="kw">@const</span> SDL_INIT_VIDEO = <span class="num">32</span>
+<p>Import C headers directly with <code>use c</code>. All functions, constants, and enums become available instantly.</p>
+<pre><code><span class="cm">// One line — all SDL3 symbols available</span>
+<span class="kw">use</span> c <span class="str">"SDL3/SDL.h"</span> link <span class="str">"SDL3"</span>
 
 <span class="fn">main</span>()
     <span class="fn">SDL_Init</span>(SDL_INIT_VIDEO)
     <span class="fn">print</span>(<span class="str">"SDL initialized!"</span>)
     <span class="kw">defer</span> <span class="fn">SDL_Quit</span>()      <span class="cm">// cleanup runs automatically</span></code><span class="label">mix</span></pre>
-<p class="dim">Compile with: <code>./build/mix game.mix -o game -lSDL3</code></p>
+<p class="dim">Compile with: <code>mix build game.mix</code> &mdash; the <code>link "SDL3"</code> clause handles <code>-lSDL3</code> automatically.</p>
+
+<p>You can also declare functions manually with <code>extern</code> blocks:</p>
+<pre><code><span class="kw">extern</span> <span class="str">"SDL3"</span>
+    <span class="fn">SDL_Init</span>(flags: <span class="ty">uint32</span>) -> <span class="ty">int32</span> ~
+    <span class="fn">SDL_Quit</span>() ~
+
+<span class="kw">@const</span> SDL_INIT_VIDEO = <span class="num">0x20</span>
+
+<span class="fn">main</span>()
+    <span class="fn">SDL_Init</span>(SDL_INIT_VIDEO)
+    <span class="kw">defer</span> <span class="fn">SDL_Quit</span>()</code><span class="label">mix</span></pre>
+<p class="dim">Manual mode: <code>mix build game.mix -lSDL3</code></p>
 </section>
 
 <!-- ========== SDL3 ========== -->
 <section id="sdl3">
 <h2><span class="num">11</span>SDL3 Example</h2>
-<p>A native SDL3 window &mdash; cornflower blue &mdash; in 40 lines of MIX:</p>
-<pre><code><span class="kw">extern</span> <span class="str">"SDL3"</span>
-    <span class="fn">SDL_Init</span>(flags: <span class="ty">uint32</span>) -> <span class="ty">int32</span> ~
-    <span class="fn">SDL_Quit</span>() ~
-    <span class="fn">SDL_CreateWindow</span>(title: <span class="ty">*byte</span>, w: <span class="ty">int32</span>, h: <span class="ty">int32</span>, flags: <span class="ty">uint64</span>) -> <span class="ty">*byte</span> ~
-    <span class="fn">SDL_DestroyWindow</span>(win: <span class="ty">*byte</span>) ~
-    <span class="fn">SDL_CreateRenderer</span>(win: <span class="ty">*byte</span>, name: <span class="ty">*byte</span>) -> <span class="ty">*byte</span> ~
-    <span class="fn">SDL_SetRenderDrawColor</span>(rnd: <span class="ty">*byte</span>, r: <span class="ty">uint8</span>, g: <span class="ty">uint8</span>, b: <span class="ty">uint8</span>, a: <span class="ty">uint8</span>) -> <span class="ty">int32</span> ~
-    <span class="fn">SDL_RenderClear</span>(rnd: <span class="ty">*byte</span>) -> <span class="ty">int32</span> ~
-    <span class="fn">SDL_RenderPresent</span>(rnd: <span class="ty">*byte</span>) -> <span class="ty">int32</span> ~
-    <span class="fn">SDL_PollEvent</span>(event: <span class="ty">*byte</span>) -> <span class="ty">int32</span> ~
-    <span class="fn">SDL_Delay</span>(ms: <span class="ty">uint32</span>) ~
-
-<span class="kw">@const</span> SDL_INIT_VIDEO = <span class="num">0x00000020</span>
-<span class="kw">@const</span> SDL_EVENT_QUIT = <span class="num">0x100</span>
+<p>A native SDL3 window &mdash; cornflower blue &mdash; using <code>use c</code> for transparent C interop:</p>
+<pre><code><span class="cm">// SDL3 window in MIX — transparent C interop</span>
+<span class="kw">use</span> c <span class="str">"SDL3/SDL.h"</span> link <span class="str">"SDL3"</span>
 
 <span class="fn">main</span>()
     <span class="fn">SDL_Init</span>(SDL_INIT_VIDEO)
+    <span class="kw">defer</span> <span class="fn">SDL_Quit</span>()
+
     win = <span class="fn">SDL_CreateWindow</span>(<span class="str">"MIX + SDL3"</span>, <span class="num">800</span>, <span class="num">600</span>, <span class="num">0</span>)
     rnd = <span class="fn">SDL_CreateRenderer</span>(win, <span class="num">0</span>)
-    event = <span class="fn">mix_bytes</span>(<span class="num">128</span>)
-    running<span class="op">!</span> = <span class="num">1</span>
+    event = <span class="fn">bytes</span>(<span class="num">128</span>)
 
-    <span class="kw">while</span> running > <span class="num">0</span>
-        <span class="kw">while</span> <span class="fn">SDL_PollEvent</span>(event) > <span class="num">0</span>
-            etype = <span class="fn">mix_peek_u32</span>(event)
-            <span class="kw">if</span> etype == SDL_EVENT_QUIT
-                running<span class="op">!</span> = <span class="num">0</span>
+    running<span class="op">!</span> = <span class="kw">true</span>
+    <span class="kw">while</span> running
+        <span class="kw">while</span> <span class="fn">SDL_PollEvent</span>(event) != <span class="num">0</span>
+            event_type = <span class="fn">peek_u32</span>(event)
+            <span class="kw">if</span> event_type == SDL_EVENT_QUIT
+                running<span class="op">!</span> = <span class="kw">false</span>
 
         <span class="fn">SDL_SetRenderDrawColor</span>(rnd, <span class="num">100</span>, <span class="num">149</span>, <span class="num">237</span>, <span class="num">255</span>)
         <span class="fn">SDL_RenderClear</span>(rnd)
         <span class="fn">SDL_RenderPresent</span>(rnd)
-        <span class="fn">SDL_Delay</span>(<span class="num">16</span>)</code><span class="label">mix</span></pre>
+        <span class="fn">SDL_Delay</span>(<span class="num">16</span>)
 
-<pre><code>./build/mix examples/sdl3_window.mix -o sdl3 -L/opt/homebrew/lib -lSDL3
+    <span class="fn">free_mem</span>(event)
+    <span class="fn">SDL_DestroyWindow</span>(win)</code><span class="label">mix</span></pre>
+
+<pre><code><span class="cm"># No -lSDL3 needed — link clause handles it</span>
+mix build examples/sdl3_use_c.mix -o sdl3
 ./sdl3</code></pre>
 </section>
 

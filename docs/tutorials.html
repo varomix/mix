@@ -1111,13 +1111,55 @@ The <code>zone</code> block creates a memory arena that is freed all at once whe
 <section id="c-interop">
 <h2><span class="num">20</span>C Interop</h2>
 
-<p>MIX can call C functions directly using <code>extern</code> declarations. Declare the
-C function signature with MIX types, and the compiler handles the ABI bridging
-automatically. Link against C libraries using the Project build system or
-compiler flags.</p>
+<p>MIX provides transparent C interop via <code>use c</code> &mdash; import a C header directly and all its
+functions, constants, and enums become available as native MIX symbols. No manual declarations,
+no binding generator step. Just <code>use c</code> and start calling C.</p>
 
-<p>For larger C libraries, use <code>--bind</code> to auto-generate MIX bindings from C
-header files. This saves you from manually declaring every function.</p>
+<h3>Transparent Import (<code>use c</code>)</h3>
+
+<pre><code><span class="cm">// Import a C header — everything is available immediately</span>
+<span class="kw">use</span> c <span class="str">"SDL3/SDL.h"</span> link <span class="str">"SDL3"</span>
+
+<span class="fn">main</span>()
+    <span class="fn">SDL_Init</span>(SDL_INIT_VIDEO)     <span class="cm">// enum constant, auto-imported</span>
+    <span class="kw">defer</span> <span class="fn">SDL_Quit</span>()
+
+    win = <span class="fn">SDL_CreateWindow</span>(<span class="str">"MIX"</span>, <span class="num">800</span>, <span class="num">600</span>, <span class="num">0</span>)
+    <span class="fn">print</span>(<span class="str">"Window created!"</span>)
+    <span class="fn">SDL_DestroyWindow</span>(win)</code><span class="label">mix</span></pre>
+
+<p>The <code>link "SDL3"</code> clause automatically adds <code>-lSDL3</code> to the linker. Compile with just:</p>
+<pre><code>mix build game.mix</code><span class="label">shell</span></pre>
+
+<p>What gets imported automatically:</p>
+<ul>
+    <li>Function prototypes (all C functions become callable)</li>
+    <li><code>#define</code> constants (integers and floats, hex preserved)</li>
+    <li>C enums (<code>enum Name {}</code> and <code>typedef enum {} Name</code>)</li>
+    <li><code>typedef struct</code> shapes (field names and types)</li>
+</ul>
+
+<h3>Memory Builtins</h3>
+
+<p>When working with C libraries, you often need raw memory. MIX provides built-in functions:</p>
+
+<pre><code><span class="fn">main</span>()
+    <span class="cm">// Allocate a buffer for C struct data (zeroed)</span>
+    event = <span class="fn">bytes</span>(<span class="num">128</span>)
+
+    <span class="cm">// Read a uint32 from the buffer (e.g., SDL_Event.type)</span>
+    event_type = <span class="fn">peek_u32</span>(event)
+
+    <span class="cm">// General-purpose allocation</span>
+    buf = <span class="fn">alloc</span>(<span class="num">1024</span>)
+
+    <span class="cm">// Free when done</span>
+    <span class="fn">free_mem</span>(event)
+    <span class="fn">free_mem</span>(buf)</code><span class="label">mix</span></pre>
+
+<h3>Manual Declarations (<code>extern</code>)</h3>
+
+<p>For fine-grained control, you can declare C functions manually:</p>
 
 <pre><code><span class="cm">// Declare external C functions</span>
 <span class="kw">extern</span> <span class="str">"libc"</span>
@@ -1126,27 +1168,16 @@ header files. This saves you from manually declaring every function.</p>
     <span class="fn">abs</span>(n: <span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span>
 
 <span class="fn">main</span>()
-    <span class="cm">// Call C functions directly</span>
     <span class="fn">puts</span>(<span class="str">"Hello from C!"</span>)
-
     home = <span class="fn">getenv</span>(<span class="str">"HOME"</span>)
-    <span class="fn">print</span>(<span class="str">"home = {home}"</span>)
+    <span class="fn">print</span>(<span class="str">"home = {home}"</span>)</code><span class="label">mix</span></pre>
 
-    <span class="fn">print</span>(<span class="str">"abs(-42) = {abs(-42)}"</span>)</code><span class="label">mix</span></pre>
+<h3>Offline Binding Generation (<code>--bind</code>)</h3>
 
-<p>For a complete C library like SDL3, use the binding generator:</p>
+<p>For large libraries, you can pre-generate bindings to a <code>.mix</code> file:</p>
 
 <pre><code><span class="cm"># Generate MIX bindings from a C header</span>
-mix --bind SDL3/SDL.h -o sdl3.mix</code><span class="label">shell</span></pre>
-
-<p>Then import and use the generated bindings in your program:</p>
-
-<pre><code><span class="kw">use</span> sdl3
-
-<span class="fn">main</span>()
-    sdl3.<span class="fn">SDL_Init</span>(sdl3.<span class="fn">SDL_INIT_VIDEO</span>)
-    <span class="cm">// ... create window, render, etc.</span>
-    sdl3.<span class="fn">SDL_Quit</span>()</code><span class="label">mix</span></pre>
+mix --bind SDL3/SDL.h -o sdl3.mix --lib SDL3</code><span class="label">shell</span></pre>
 
 </section>
 

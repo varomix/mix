@@ -1,0 +1,25 @@
+use c "raylib.h" link "raylib"
+
+@const WIN_W = 1280
+@const WIN_H = 800
+
+shape Color
+    r, g, b, a: uint8
+
+main()
+    InitWindow(WIN_W, WIN_H, "MIX raylib example")
+
+    SetTargetFPS(60)
+    while not WindowShouldClose()
+        BeginDrawing()
+        ClearBackground(Color(36, 36, 36, 255))
+        DrawText("Hello World", 20, 20, 24, RAYWHITE)
+        DrawRectangle(10, 100, 300, 300, GREEN)
+        DrawRectangleV(Vector2(300, 30), Vector2(200, 100), BLUE)
+        DrawCircleV(Vector2(300, 300), 100, BLACK)
+        
+        
+        EndDrawing()
+    
+    CloseWindow()
+    

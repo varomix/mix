@@ -36,7 +36,7 @@ $(BUILD_DIR)/lsp_%.o: $(SRC_DIR)/lsp/%.c | $(BUILD_DIR)
 $(BIN): $(FRONTEND_OBJS) $(COMPILER_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@
 
-$(LSP_BIN): $(FRONTEND_OBJS) $(LSP_OBJS)
+$(LSP_BIN): $(FRONTEND_OBJS) $(LSP_OBJS) $(BUILD_DIR)/cbind.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 clean:

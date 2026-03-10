@@ -1,6 +1,7 @@
 #include "lsp_symbols.h"
 #include "../lexer.h"
 #include "../parser.h"
+#include "../cbind.h"
 #include <libgen.h>
 #include <sys/stat.h>
 
@@ -476,6 +477,125 @@ static void index_module_file(SymbolIndex *idx, const char *module_path) {
     free(source);
 }
 
+// Index symbols from a C header via cbind_generate_string()
+// Uses the module cache to avoid re-running cc -E on every keystroke.
+static void index_c_header(SymbolIndex *idx, const char *header_path,
+                           const char *lib_name) {
+    // Check cache — use header_path as the key.
+    // We can't stat arbitrary system headers reliably, so use a sentinel mtime
+    // of 1 to indicate "C header cached". The cache is cleared on full rebuild.
+    ModuleCache *cached = module_cache_find(header_path);
+    if (cached) {
+        module_cache_replay(cached, idx);
+        return;
+    }
+
+    // Generate MIX binding text from the C header
+    char *bind_src = cbind_generate_string(header_path, lib_name, false);
+    if (!bind_src) return;
+
+    Arena arena = arena_create(256 * 1024);
+    Lexer lexer = lexer_create(bind_src, header_path, &arena);
+    lexer_tokenize(&lexer);
+
+    Parser parser = parser_create(lexer.tokens, lexer.token_count, &arena, header_path);
+    AstNode *prog = parser_parse(&parser);
+
+    // Allocate a cache slot
+    if (module_cache_count < MODULE_CACHE_MAX) {
+        cached = &module_cache[module_cache_count++];
+    } else {
+        module_cache_free_entry(&module_cache[0]);
+        memmove(&module_cache[0], &module_cache[1],
+                sizeof(ModuleCache) * (MODULE_CACHE_MAX - 1));
+        cached = &module_cache[MODULE_CACHE_MAX - 1];
+    }
+    memset(cached, 0, sizeof(ModuleCache));
+    cached->path = strdup(header_path);
+    cached->mtime = 1; // sentinel — header content doesn't change within a session
+
+    if (prog && prog->kind == NODE_PROGRAM) {
+        for (int i = 0; i < prog->program.decl_count; i++) {
+            AstNode *d = prog->program.decls[i];
+            if (d->kind == NODE_EXTERN_BLOCK) {
+                for (int j = 0; j < d->extern_block.decl_count; j++) {
+                    AstNode *ef = d->extern_block.decls[j];
+                    if (ef->kind == NODE_EXTERN_FN_DECL) {
+                        sym_add(idx, ef->extern_fn_decl.name, ef->loc,
+                                NULL, NODE_FN_DECL, NULL);
+                        store_fn_params(idx, ef->extern_fn_decl.name,
+                                        ef->extern_fn_decl.params,
+                                        ef->extern_fn_decl.param_count,
+                                        ef->extern_fn_decl.return_type);
+                        // Cache this entry
+                        if (cached->entry_count >= cached->entry_cap) {
+                            cached->entry_cap = cached->entry_cap ? cached->entry_cap * 2 : 64;
+                            cached->entries = realloc(cached->entries,
+                                sizeof(cached->entries[0]) * cached->entry_cap);
+                        }
+                        int ci = cached->entry_count++;
+                        cached->entries[ci].name = strdup(ef->extern_fn_decl.name);
+                        cached->entries[ci].loc = ef->loc;
+                        cached->entries[ci].kind = NODE_FN_DECL;
+                        SymbolEntry *fe = symbol_index_lookup(idx, ef->extern_fn_decl.name);
+                        if (fe && fe->param_name_count > 0) {
+                            cached->entries[ci].param_count = fe->param_name_count;
+                            cached->entries[ci].param_names = calloc(fe->param_name_count, sizeof(char *));
+                            cached->entries[ci].param_type_strs = calloc(fe->param_name_count, sizeof(char *));
+                            for (int k = 0; k < fe->param_name_count; k++) {
+                                cached->entries[ci].param_names[k] = strdup(fe->param_names[k]);
+                                cached->entries[ci].param_type_strs[k] = fe->param_type_strs ? strdup(fe->param_type_strs[k]) : strdup("?");
+                            }
+                            cached->entries[ci].return_type_str = fe->return_type_str ? strdup(fe->return_type_str) : NULL;
+                        } else {
+                            cached->entries[ci].param_count = 0;
+                            cached->entries[ci].param_names = NULL;
+                            cached->entries[ci].param_type_strs = NULL;
+                            cached->entries[ci].return_type_str = NULL;
+                        }
+                    }
+                }
+            } else if (d->kind == NODE_CONST_DECL) {
+                sym_add(idx, d->const_decl.name, d->loc, NULL, NODE_CONST_DECL, NULL);
+                // Cache this entry
+                if (cached->entry_count >= cached->entry_cap) {
+                    cached->entry_cap = cached->entry_cap ? cached->entry_cap * 2 : 64;
+                    cached->entries = realloc(cached->entries,
+                        sizeof(cached->entries[0]) * cached->entry_cap);
+                }
+                int ci = cached->entry_count++;
+                cached->entries[ci].name = strdup(d->const_decl.name);
+                cached->entries[ci].loc = d->loc;
+                cached->entries[ci].kind = NODE_CONST_DECL;
+                cached->entries[ci].param_count = 0;
+                cached->entries[ci].param_names = NULL;
+                cached->entries[ci].param_type_strs = NULL;
+                cached->entries[ci].return_type_str = NULL;
+            } else if (d->kind == NODE_SHAPE_DECL) {
+                sym_add(idx, d->shape_decl.name, d->loc, NULL, NODE_SHAPE_DECL, NULL);
+                // Cache this entry
+                if (cached->entry_count >= cached->entry_cap) {
+                    cached->entry_cap = cached->entry_cap ? cached->entry_cap * 2 : 64;
+                    cached->entries = realloc(cached->entries,
+                        sizeof(cached->entries[0]) * cached->entry_cap);
+                }
+                int ci = cached->entry_count++;
+                cached->entries[ci].name = strdup(d->shape_decl.name);
+                cached->entries[ci].loc = d->loc;
+                cached->entries[ci].kind = NODE_SHAPE_DECL;
+                cached->entries[ci].param_count = 0;
+                cached->entries[ci].param_names = NULL;
+                cached->entries[ci].param_type_strs = NULL;
+                cached->entries[ci].return_type_str = NULL;
+            }
+        }
+    }
+
+    free(lexer.tokens);
+    arena_destroy(&arena);
+    free(bind_src);
+}
+
 // Resolve a module path from a use declaration relative to the main file
 static char *resolve_use_path(const char *main_filepath, const char *module_path) {
     // Get directory of the main file
@@ -515,6 +635,9 @@ void symbol_index_build_with_imports(SymbolIndex *idx, AstNode *program,
                 index_module_file(idx, mod_path);
                 free(mod_path);
             }
+        } else if (decl->kind == NODE_USE_C_DECL) {
+            index_c_header(idx, decl->use_c_decl.header_path,
+                           decl->use_c_decl.lib_name);
         }
     }
 }

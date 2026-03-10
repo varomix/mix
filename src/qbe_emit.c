@@ -37,6 +37,50 @@ static const char *qbe_type(MixType *type) {
     return type_to_qbe(type);
 }
 
+// Coerce a value temp to the QBE register type required by a field's type.
+// For example, an integer value (=l) being stored into a float32 field needs
+// conversion to =s via sltof+truncd, and into a float64 field needs =d sltof.
+// Returns the temp holding the correctly-typed value (may be the same as val).
+static int coerce_to_field_type(QbeEmitter *emit, int val, MixType *val_type,
+                                MixType *field_type) {
+    if (!field_type) return val;
+    const char *field_qbe = type_to_qbe(field_type);
+    const char *val_qbe = val_type ? type_to_qbe(val_type) : "l";
+
+    // int -> float32: sltof to double then truncd to single
+    if (strcmp(field_qbe, "s") == 0 && strcmp(val_qbe, "l") != 0 &&
+        strcmp(val_qbe, "w") != 0 && strcmp(val_qbe, "s") == 0) {
+        return val; // already single float
+    }
+    if (strcmp(field_qbe, "s") == 0 && (strcmp(val_qbe, "l") == 0 || strcmp(val_qbe, "w") == 0)) {
+        // int -> float32: sltof to double, then truncd to single
+        int dbl = next_temp(emit);
+        fprintf(emit->out, "\t%%t%d =d sltof %%t%d\n", dbl, val);
+        int sng = next_temp(emit);
+        fprintf(emit->out, "\t%%t%d =s truncd %%t%d\n", sng, dbl);
+        return sng;
+    }
+    if (strcmp(field_qbe, "s") == 0 && strcmp(val_qbe, "d") == 0) {
+        // float64 -> float32: truncd
+        int sng = next_temp(emit);
+        fprintf(emit->out, "\t%%t%d =s truncd %%t%d\n", sng, val);
+        return sng;
+    }
+    if (strcmp(field_qbe, "d") == 0 && (strcmp(val_qbe, "l") == 0 || strcmp(val_qbe, "w") == 0)) {
+        // int -> float64: sltof
+        int dbl = next_temp(emit);
+        fprintf(emit->out, "\t%%t%d =d sltof %%t%d\n", dbl, val);
+        return dbl;
+    }
+    if (strcmp(field_qbe, "d") == 0 && strcmp(val_qbe, "s") == 0) {
+        // float32 -> float64: exts
+        int dbl = next_temp(emit);
+        fprintf(emit->out, "\t%%t%d =d exts %%t%d\n", dbl, val);
+        return dbl;
+    }
+    return val;
+}
+
 // Get QBE type for function signatures — uses :ShapeName for aggregates
 static const char *qbe_sig_type(MixType *type, Arena *arena) {
     if (!type) return "l";
@@ -1131,18 +1175,13 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             const char *ret_sig = qbe_sig_type(expr->resolved_type, emit->arena);
             bool has_return = !(expr->resolved_type && expr->resolved_type->kind == TYPE_VOID);
 
-            // Pre-convert args that need int→float promotion
+            // Pre-convert args that need type coercion (int→float, float64→float32, etc.)
             for (int i = 0; i < expr->call.arg_count; i++) {
                 MixType *param_type = (fn_type && i < fn_type->func.param_count)
                     ? fn_type->func.param_types[i]
                     : expr->call.args[i]->resolved_type;
                 MixType *arg_type = expr->call.args[i]->resolved_type;
-                if (param_type && type_is_float(param_type) &&
-                    arg_type && type_is_integer(arg_type)) {
-                    int conv = next_temp(emit);
-                    fprintf(emit->out, "\t%%t%d =d sltof %%t%d\n", conv, arg_temps[i]);
-                    arg_temps[i] = conv;
-                }
+                arg_temps[i] = coerce_to_field_type(emit, arg_temps[i], arg_type, param_type);
             }
 
             if (is_lambda_var) {
@@ -1428,7 +1467,10 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     // Store variant fields at offset 8+
                     for (int i = 0; i < expr->shape_lit.field_count && i < sv->field_count; i++) {
                         int val = emit_expr(emit, expr->shape_lit.field_values[i]);
-                        const char *fty = type_to_qbe(sv->fields[i].type);
+                        val = coerce_to_field_type(emit, val,
+                                expr->shape_lit.field_values[i]->resolved_type,
+                                sv->fields[i].type);
+                        const char *fty = type_to_qbe_mem(sv->fields[i].type);
                         int foff = 8 + sv->fields[i].offset;
                         int addr = next_temp(emit);
                         fprintf(emit->out, "\t%%t%d =l add %%t%d, %d\n", addr, t, foff);
@@ -1441,6 +1483,8 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     ShapeFieldInfo *fi = type_find_field(stype, expr->shape_lit.field_names[i]);
                     if (!fi) continue;
                     int val = emit_expr(emit, expr->shape_lit.field_values[i]);
+                    val = coerce_to_field_type(emit, val,
+                            expr->shape_lit.field_values[i]->resolved_type, fi->type);
                     const char *mem_ty = type_to_qbe_mem(fi->type);
                     if (fi->offset == 0) {
                         fprintf(emit->out, "\tstore%s %%t%d, %%t%d\n", mem_ty, val, t);
@@ -1639,6 +1683,8 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 }
                 fprintf(emit->out, "\t%%v.%s =l alloc%d %d\n",
                         stmt->var_decl.name, size >= 4 ? size : 4, size);
+                init = coerce_to_field_type(emit, init,
+                        stmt->var_decl.init_expr->resolved_type, stmt->resolved_type);
                 fprintf(emit->out, "\tstore%s %%t%d, %%v.%s\n", ty, init, stmt->var_decl.name);
             } else if (stmt->var_decl.init_expr &&
                        stmt->var_decl.init_expr->kind == NODE_INT_LIT) {
@@ -1669,7 +1715,12 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
         }
         case NODE_ASSIGN: {
             int val = emit_expr(emit, stmt->assign.value);
-            const char *ty = qbe_type(stmt->assign.value->resolved_type);
+            // Determine the target variable's type for proper coercion
+            Symbol *assign_sym = symtab_lookup(emit->symtab, stmt->assign.name);
+            MixType *var_type = assign_sym ? assign_sym->type : NULL;
+            MixType *val_type = stmt->assign.value->resolved_type;
+            const char *ty = qbe_type(var_type ? var_type : val_type);
+            val = coerce_to_field_type(emit, val, val_type, var_type);
 
             if (stmt->assign.op == TOK_EQ) {
                 fprintf(emit->out, "\tstore%s %%t%d, %%v.%s\n", ty, val, stmt->assign.name);
@@ -2270,6 +2321,8 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                         }
                     } else {
                         // Simple assignment
+                        val = coerce_to_field_type(emit, val,
+                                stmt->field_assign.value->resolved_type, fi->type);
                         if (fi->offset == 0) {
                             fprintf(emit->out, "\tstore%s %%t%d, %%t%d\n", mem_ty, val, obj);
                         } else {

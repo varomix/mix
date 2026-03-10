@@ -1543,11 +1543,11 @@ export function w $main() {
 Usage: mix [command] [options] [file.mix]
 
 Commands:
-    build [file.mix]    Compile to binary (default)
+    build [file.mix]    Compile to binary
     run [file.mix]      Compile and execute
 
-    If no file is given with 'build', checks for build.mix in CWD first,
-    then auto-discovers a .mix file with main().
+    Running 'mix' with no command or file shows this help.
+    'build' or 'run' without a file auto-discovers main().
 
 Options:
     -o <file>       Output file (default: derived from input)

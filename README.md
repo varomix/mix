@@ -47,10 +47,11 @@ make
 mix [command] [options] [file.mix]
 
 Commands:
-  build [file.mix]   Compile to binary (default)
+  build [file.mix]   Compile to binary
   run [file.mix]     Compile and execute
 
-  If no file given with 'build', looks for build.mix first.
+  Running 'mix' with no command or file shows this help.
+  'build' or 'run' without a file auto-discovers main().
 
 Options:
   -o <file>        Output binary (default: derived from input)

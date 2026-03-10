@@ -118,9 +118,11 @@ static void usage(void) {
     fprintf(stderr, "mix %s (%s)\n\n", MIX_VERSION, MIX_VERSION_DATE);
     fprintf(stderr, "Usage: mix [command] [options] [file.mix]\n\n");
     fprintf(stderr, "Commands:\n");
-    fprintf(stderr, "  build [file.mix]    Compile to binary (default)\n");
+    fprintf(stderr, "  build [file.mix]    Compile to binary\n");
     fprintf(stderr, "  run [file.mix]      Compile and execute\n");
     fprintf(stderr, "  run -f <file.mix>   Compile and run specific file\n\n");
+    fprintf(stderr, "  Running 'mix' with no command or file shows this help.\n");
+    fprintf(stderr, "  'build' or 'run' without a file auto-discovers main().\n\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  -o <file>           Output file (default: derived from input)\n");
     fprintf(stderr, "  --emit-ir           Output QBE IR only\n");
@@ -446,9 +448,10 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[1], "run") == 0) {
             mode = MODE_RUN;
             arg_start = 2;
+        } else {
+            // Otherwise it's a filename — legacy mode, arg_start stays 1
+            mode = MODE_BUILD;
         }
-        // Otherwise it's a filename — legacy mode, arg_start stays 1
-        mode = MODE_BUILD;
     }
 
     for (int i = arg_start; i < argc; i++) {

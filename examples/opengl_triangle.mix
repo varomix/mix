@@ -20,21 +20,16 @@ main()
     ctx = SDL_GL_CreateContext(win)
     SDL_GL_SetSwapInterval(1)
 
-    src_ptr = alloc(8)
+    // Compile shaders
     vert_src = file_read_all("triangle.vert")
     vs = glCreateShader(GL_VERTEX_SHADER)
-    unsafe
-        *src_ptr = vert_src
-    glShaderSource(vs, 1, src_ptr, 0)
+    glShaderSource(vs, 1, &vert_src, 0)
     glCompileShader(vs)
 
     frag_src = file_read_all("triangle.frag")
     fs = glCreateShader(GL_FRAGMENT_SHADER)
-    unsafe
-        *src_ptr = frag_src
-    glShaderSource(fs, 1, src_ptr, 0)
+    glShaderSource(fs, 1, &frag_src, 0)
     glCompileShader(fs)
-    free_mem(src_ptr)
 
     prog = glCreateProgram()
     glAttachShader(prog, vs)
@@ -43,6 +38,7 @@ main()
     glDeleteShader(vs)
     glDeleteShader(fs)
 
+    // Triangle vertices: position(x,y,z) + color(r,g,b)
     vertices = [
         0.0,  0.5, 0.0,   1.0, 0.0, 0.0,
        -0.5, -0.5, 0.0,   0.0, 1.0, 0.0,
@@ -50,16 +46,14 @@ main()
     ]
     verts = list_to_f32(vertices)
 
-    vao_buf = alloc(4)
-    vbo_buf = alloc(4)
-    unsafe
-        glGenVertexArrays(1, vao_buf)
-        glGenBuffers(1, vbo_buf)
-    vao_id = peek_u32(vao_buf)
-    vbo_id = peek_u32(vbo_buf)
+    // Create VAO and VBO
+    vao! = 0
+    vbo! = 0
+    glGenVertexArrays(1, &vao)
+    glGenBuffers(1, &vbo)
 
-    glBindVertexArray(vao_id)
-    glBindBuffer(GL_ARRAY_BUFFER, vbo_id)
+    glBindVertexArray(vao)
+    glBindBuffer(GL_ARRAY_BUFFER, vbo)
     glBufferData(GL_ARRAY_BUFFER, 72, verts, GL_STATIC_DRAW)
 
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 24, 0)
@@ -71,6 +65,7 @@ main()
     glClearColor(0.2, 0.3, 0.3, 1.0)
     glUseProgram(prog)
 
+    // Render loop
     evt = SDL_Event()
     running! = true
     while running
@@ -78,14 +73,15 @@ main()
             if evt.type_ == SDL_EVENT_QUIT
                 running! = false
         glClear(GL_COLOR_BUFFER_BIT)
-        glBindVertexArray(vao_id)
+        glBindVertexArray(vao)
         glDrawArrays(GL_TRIANGLES, 0, 3)
         SDL_GL_SwapWindow(win)
 
-    free_mem(verts)
-    free_mem(vao_buf)
-    free_mem(vbo_buf)
+    // Cleanup
+    glDeleteVertexArrays(1, &vao)
+    glDeleteBuffers(1, &vbo)
     glDeleteProgram(prog)
+    free_mem(verts)
     SDL_GL_DestroyContext(ctx)
     SDL_DestroyWindow(win)
     SDL_Quit()

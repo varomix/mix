@@ -845,6 +845,17 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 fprintf(emit->out, "\t%%t%d =%s sub 0, %%t%d\n", t, ty, operand);
             } else if (expr->unary.op == TOK_NOT) {
                 fprintf(emit->out, "\t%%t%d =w ceqw %%t%d, 0\n", t, operand);
+            } else if (expr->unary.op == TOK_AMPERSAND) {
+                // Address-of operator: &x
+                AstNode *inner = expr->unary.operand;
+                if (inner->kind == NODE_IDENT && inner->ident.is_mutable) {
+                    // Mutable variable: %v.x is already a pointer (from alloc)
+                    fprintf(emit->out, "\t%%t%d =l copy %%v.%s\n", t, inner->ident.name);
+                } else {
+                    // Immutable variable or expression: spill to stack slot
+                    fprintf(emit->out, "\t%%t%d =l alloc8 8\n", t);
+                    fprintf(emit->out, "\tstorel %%t%d, %%t%d\n", operand, t);
+                }
             } else {
                 fprintf(emit->out, "\t%%t%d =%s copy %%t%d\n", t, ty, operand);
             }

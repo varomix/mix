@@ -810,6 +810,14 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 ind(emit); fprintf(emit->out, "%s t%d = -t%d;\n", ty, t, operand);
             } else if (expr->unary.op == TOK_NOT) {
                 ind(emit); fprintf(emit->out, "int32_t t%d = !t%d;\n", t, operand);
+            } else if (expr->unary.op == TOK_AMPERSAND) {
+                AstNode *inner = expr->unary.operand;
+                if (inner->kind == NODE_IDENT && inner->ident.is_mutable) {
+                    ind(emit); fprintf(emit->out, "void *t%d = &v_%s;\n", t, inner->ident.name);
+                } else {
+                    ind(emit); fprintf(emit->out, "int64_t _addr_%d = (int64_t)t%d;\n", t, operand);
+                    ind(emit); fprintf(emit->out, "void *t%d = &_addr_%d;\n", t, t);
+                }
             } else {
                 ind(emit); fprintf(emit->out, "%s t%d = t%d;\n", ty, t, operand);
             }

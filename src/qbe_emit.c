@@ -645,6 +645,7 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     case TOK_STAR:    result = lv * rv; break;
                     case TOK_SLASH:   result = rv != 0 ? lv / rv : 0; break;
                     case TOK_PERCENT: result = rv != 0 ? lv % rv : 0; break;
+                    case TOK_PIPE:    result = lv | rv; break;
                     default: folded = false; break;
                 }
                 if (folded) {
@@ -789,6 +790,9 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     break;
                 case TOK_PERCENT:
                     fprintf(emit->out, "\t%%t%d =%s rem %%t%d, %%t%d\n", t, ty, left, right);
+                    break;
+                case TOK_PIPE:
+                    fprintf(emit->out, "\t%%t%d =%s or %%t%d, %%t%d\n", t, ty, left, right);
                     break;
                 case TOK_EQEQ:
                     if (is_flt)
@@ -1140,6 +1144,25 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                         t, arg_temps[0]);
                 return t;
             }
+            if (strcmp(expr->call.name, "poke_f32") == 0 && expr->call.arg_count == 3) {
+                // Convert arg to double if it's an int
+                int val_temp = arg_temps[2];
+                MixType *atype = expr->call.args[2]->resolved_type;
+                if (atype && type_is_integer(atype)) {
+                    int conv = next_temp(emit);
+                    fprintf(emit->out, "\t%%t%d =d sltof %%t%d\n", conv, val_temp);
+                    val_temp = conv;
+                }
+                fprintf(emit->out, "\tcall $mix_poke_f32(l %%t%d, l %%t%d, d %%t%d)\n",
+                        arg_temps[0], arg_temps[1], val_temp);
+                fprintf(emit->out, "\t%%t%d =l copy 0\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "list_to_f32") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_list_to_f32(l %%t%d)\n",
+                        t, arg_temps[0]);
+                return t;
+            }
             if (strcmp(expr->call.name, "free_mem") == 0 && expr->call.arg_count == 1) {
                 fprintf(emit->out, "\tcall $mix_free(l %%t%d)\n", arg_temps[0]);
                 fprintf(emit->out, "\t%%t%d =l copy 0\n", t);
@@ -1188,6 +1211,16 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 // Indirect call through variable holding function pointer
                 int fptr = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l copy %%v.%s\n", fptr, expr->call.name);
+                if (has_return) {
+                    fprintf(emit->out, "\t%%t%d =%s call %%t%d(", t, ret_sig, fptr);
+                } else {
+                    fprintf(emit->out, "\tcall %%t%d(", fptr);
+                }
+            } else if (fn_sym && fn_sym->c_name) {
+                // Indirect call through function pointer global (e.g. GLAD)
+                // Load the function pointer: %fptr =l loadl $glad_glClear
+                int fptr = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =l loadl $%s\n", fptr, fn_sym->c_name);
                 if (has_return) {
                     fprintf(emit->out, "\t%%t%d =%s call %%t%d(", t, ret_sig, fptr);
                 } else {
@@ -2629,7 +2662,7 @@ void qbe_emit_program(QbeEmitter *emit, AstNode *program) {
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
         if (decl->kind == NODE_CONST_DECL) {
-            if (emit->const_count < 4096) {
+            if (emit->const_count < 8192) {
                 emit->constants[emit->const_count].name = decl->const_decl.name;
                 emit->constants[emit->const_count].value = decl->const_decl.value;
                 emit->constants[emit->const_count].cached_temp = -1;

@@ -10,6 +10,7 @@
 
 typedef struct {
     char name[256];
+    char c_name[256];   // optional C symbol name (for aliased functions like glad_glClear)
     char ret_mix[64];
     char params_mix[2048];
     bool is_variadic;
@@ -35,7 +36,7 @@ typedef struct {
 } CShape;
 
 #define MAX_FUNCS  4096
-#define MAX_CONSTS 4096
+#define MAX_CONSTS 16384
 #define MAX_SHAPES 512
 #define MAX_BUF    (16 * 1024 * 1024) // 16MB preprocessor output limit
 
@@ -258,8 +259,9 @@ static char *run_command(const char *cmd, bool verbose) {
     return buf;
 }
 
-// Resolve a header path by searching CPPFLAGS -I directories.
-// If the file exists as-is, returns a copy. Otherwise tries each -I<dir>/<path>.
+// Resolve a header path by searching CPPFLAGS -I directories and vendor dirs.
+// If the file exists as-is, returns a copy. Otherwise tries each -I<dir>/<path>,
+// then searches lib/vendor/*/include/<path>.
 // Returns a malloc'd string or NULL if not found.
 static char *resolve_header_path(const char *path) {
     // If file exists directly, use it as-is
@@ -268,30 +270,73 @@ static char *resolve_header_path(const char *path) {
 
     // Parse -I flags from CPPFLAGS
     const char *cppflags = getenv("CPPFLAGS");
-    if (!cppflags || !cppflags[0]) return NULL;
-
-    char *buf = strdup(cppflags);
-    char *tok = strtok(buf, " \t");
-    while (tok) {
-        const char *dir = NULL;
-        if (strncmp(tok, "-I", 2) == 0 && tok[2] != '\0') {
-            dir = tok + 2;  // -I/path (no space)
-        } else if (strcmp(tok, "-I") == 0) {
-            tok = strtok(NULL, " \t");  // -I /path (with space)
-            if (tok) dir = tok;
+    if (cppflags && cppflags[0]) {
+        char *buf = strdup(cppflags);
+        char *tok = strtok(buf, " \t");
+        while (tok) {
+            const char *dir = NULL;
+            if (strncmp(tok, "-I", 2) == 0 && tok[2] != '\0') {
+                dir = tok + 2;
+            } else if (strcmp(tok, "-I") == 0) {
+                tok = strtok(NULL, " \t");
+                if (tok) dir = tok;
+            }
+            if (dir) {
+                char full[2048];
+                snprintf(full, sizeof(full), "%s/%s", dir, path);
+                if (stat(full, &st) == 0) {
+                    free(buf);
+                    return strdup(full);
+                }
+            }
+            tok = strtok(NULL, " \t");
         }
-        if (dir) {
-            char full[2048];
-            snprintf(full, sizeof(full), "%s/%s", dir, path);
-            if (stat(full, &st) == 0) {
-                free(buf);
-                return strdup(full);
+        free(buf);
+    }
+
+    // Search lib/vendor/*/include/<path> relative to CWD
+    {
+        DIR *vdir = opendir("lib/vendor");
+        if (vdir) {
+            struct dirent *entry;
+            while ((entry = readdir(vdir)) != NULL) {
+                if (entry->d_name[0] == '.') continue;
+                char full[2048];
+                snprintf(full, sizeof(full), "lib/vendor/%s/include/%s",
+                         entry->d_name, path);
+                if (stat(full, &st) == 0) {
+                    closedir(vdir);
+                    return strdup(full);
+                }
+            }
+            closedir(vdir);
+        }
+    }
+
+    return NULL;
+}
+
+// Build -I flags for all vendor include directories found in lib/vendor/*/include/.
+// Writes into buf (space-separated, e.g. "-Ilib/vendor/glad/include").
+static void build_vendor_iflags(char *buf, size_t buf_size) {
+    buf[0] = '\0';
+    DIR *vdir = opendir("lib/vendor");
+    if (!vdir) return;
+    struct dirent *entry;
+    while ((entry = readdir(vdir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        char inc_dir[512];
+        snprintf(inc_dir, sizeof(inc_dir), "lib/vendor/%s/include", entry->d_name);
+        struct stat st;
+        if (stat(inc_dir, &st) == 0 && S_ISDIR(st.st_mode)) {
+            char flag[540];
+            snprintf(flag, sizeof(flag), " -I\"%s\"", inc_dir);
+            if (strlen(buf) + strlen(flag) < buf_size - 1) {
+                strcat(buf, flag);
             }
         }
-        tok = strtok(NULL, " \t");
     }
-    free(buf);
-    return NULL;
+    closedir(vdir);
 }
 
 static char *preprocess_header(const char *path, bool verbose) {
@@ -314,12 +359,15 @@ static char *preprocess_header(const char *path, bool verbose) {
     char cmd[4096];
     const char *cppflags = getenv("CPPFLAGS");
     if (!cppflags) cppflags = "";
+    char vendor_flags[2048];
+    build_vendor_iflags(vendor_flags, sizeof(vendor_flags));
+    // -DGL_GLEXT_PROTOTYPES exposes GL 2.0+ function prototypes in glext.h
     if (include_dir[0])
-        snprintf(cmd, sizeof(cmd), "cc -E -P %s -I\"%s\" -x c \"%s\" 2>/dev/null",
-                 cppflags, include_dir, path);
+        snprintf(cmd, sizeof(cmd), "cc -E -P -DGL_GLEXT_PROTOTYPES %s%s -I\"%s\" -x c \"%s\" 2>/dev/null",
+                 cppflags, vendor_flags, include_dir, path);
     else
-        snprintf(cmd, sizeof(cmd), "cc -E -P %s -x c \"%s\" 2>/dev/null",
-                 cppflags, path);
+        snprintf(cmd, sizeof(cmd), "cc -E -P -DGL_GLEXT_PROTOTYPES %s%s -x c \"%s\" 2>/dev/null",
+                 cppflags, vendor_flags, path);
     return run_command(cmd, verbose);
 }
 
@@ -329,7 +377,9 @@ static int extract_defines(const char *path, bool verbose) {
     char cmd[4096];
     const char *cppflags = getenv("CPPFLAGS");
     if (!cppflags) cppflags = "";
-    snprintf(cmd, sizeof(cmd), "cc -E -dM %s -x c \"%s\" 2>/dev/null", cppflags, path);
+    char vendor_flags[2048];
+    build_vendor_iflags(vendor_flags, sizeof(vendor_flags));
+    snprintf(cmd, sizeof(cmd), "cc -E -dM %s%s -x c \"%s\" 2>/dev/null", cppflags, vendor_flags, path);
     char *text = run_command(cmd, verbose);
     if (!text) return 0;
 
@@ -372,6 +422,26 @@ static int extract_defines(const char *path, bool verbose) {
         // Get value
         while (*p && isspace((unsigned char)*p)) p++;
         if (*p == '\0') { line = strtok(NULL, "\n"); continue; }
+
+        // Strip integer constant wrapper macros: SDL_UINT64_C(val), UINT64_C(val), etc.
+        char val_buf[256];
+        strncpy(val_buf, p, sizeof(val_buf) - 1);
+        val_buf[sizeof(val_buf) - 1] = '\0';
+        {
+            char *wp = val_buf;
+            // Match patterns like XXX_C(value) or XXXX(value)
+            char *paren = strchr(wp, '(');
+            if (paren && (strstr(wp, "_C(") || strstr(wp, "INT64_C(") || strstr(wp, "INT32_C("))) {
+                // Extract the value inside parentheses
+                char *inner = paren + 1;
+                char *close = strrchr(inner, ')');
+                if (close) {
+                    *close = '\0';
+                    memmove(wp, inner, strlen(inner) + 1);
+                }
+            }
+        }
+        p = val_buf;
 
         // Try integer parse
         char *endp;
@@ -1220,6 +1290,7 @@ static int parse_prototypes(const char *text) {
         if (func_count >= MAX_FUNCS) break;
 
         strncpy(funcs[func_count].name, fname, 255);
+        funcs[func_count].c_name[0] = '\0';
         strncpy(funcs[func_count].ret_mix, ret_mix, 63);
         strncpy(funcs[func_count].params_mix, params_mix, sizeof(funcs[func_count].params_mix) - 1);
         funcs[func_count].is_variadic = is_variadic;
@@ -1228,6 +1299,256 @@ static int parse_prototypes(const char *text) {
     }
 
     return added;
+}
+
+// ---- Function pointer typedef/global parsing (for GLAD-style headers) ----
+
+// Stores parsed function pointer typedefs: e.g. PFNGLCLEARPROC -> {ret: "", params: "mask: uint32"}
+#define MAX_FP_TYPEDEFS 4096
+static struct {
+    char typedef_name[128];    // e.g. "PFNGLCLEARPROC"
+    char ret_mix[64];          // MIX return type
+    char params_mix[2048];     // MIX parameter list
+} fp_typedefs[MAX_FP_TYPEDEFS];
+static int fp_typedef_count = 0;
+
+// Parse function pointer typedefs from preprocessed output:
+// typedef void (* PFNGLCLEARPROC)(GLbitfield mask);
+// typedef void (APIENTRYP PFNGLCLEARPROC)(GLbitfield mask);
+// After preprocessing, APIENTRYP expands to *, so pattern is:
+// typedef <ret> (* <NAME>)(<params>);
+static void parse_func_ptr_typedefs(const char *text) {
+    const char *p = text;
+    while (*p) {
+        // Find "typedef "
+        const char *tdef = strstr(p, "typedef ");
+        if (!tdef) break;
+        p = tdef + 8; // skip "typedef "
+
+        // Skip whitespace
+        while (*p && isspace((unsigned char)*p)) p++;
+
+        // Collect return type up to '('
+        char ret_str[256];
+        int ri = 0;
+        while (*p && *p != '(' && ri < (int)sizeof(ret_str) - 1) {
+            ret_str[ri++] = *p++;
+        }
+        ret_str[ri] = '\0';
+        if (*p != '(') continue;
+        p++; // skip '('
+
+        // Inside parens: expect "* NAME" or just "* NAME" (APIENTRYP expanded to *)
+        while (*p && isspace((unsigned char)*p)) p++;
+        if (*p == '*') p++;
+        else { continue; } // not a function pointer typedef
+        while (*p && isspace((unsigned char)*p)) p++;
+
+        // Collect typedef name (e.g. PFNGLCLEARPROC)
+        char tname[128];
+        int ti = 0;
+        while (*p && is_ident_char(*p) && ti < (int)sizeof(tname) - 1) {
+            tname[ti++] = *p++;
+        }
+        tname[ti] = '\0';
+        if (ti == 0) continue;
+
+        // Must be followed by )( for parameter list
+        while (*p && isspace((unsigned char)*p)) p++;
+        if (*p != ')') continue;
+        p++;
+        if (*p != '(') continue;
+        p++;
+
+        // Collect parameter list until matching ')'
+        char params_raw[2048];
+        int pi2 = 0;
+        int depth = 1;
+        while (*p && depth > 0 && pi2 < (int)sizeof(params_raw) - 1) {
+            if (*p == '(') depth++;
+            else if (*p == ')') { depth--; if (depth == 0) break; }
+            params_raw[pi2++] = *p++;
+        }
+        params_raw[pi2] = '\0';
+        if (*p == ')') p++;
+
+        // Only care about PFN* typedefs (GLAD pattern)
+        if (!starts_with(tname, "PFN")) continue;
+
+        // Map return type
+        trim(ret_str);
+        const char *ret_mix = c_type_to_mix(ret_str);
+        if (!ret_mix) continue;
+
+        // Parse parameters
+        trim(params_raw);
+        char params_mix[2048] = "";
+        int param_idx = 0;
+        bool skip_func = false;
+
+        if (strlen(params_raw) > 0 && strcmp(params_raw, "void") != 0) {
+            // Split on commas
+            char params_copy[2048];
+            strncpy(params_copy, params_raw, sizeof(params_copy) - 1);
+            params_copy[sizeof(params_copy) - 1] = '\0';
+
+            char *param_strs[64];
+            int param_count = 0;
+            char *ps = params_copy;
+            int pdepth = 0;
+            char *start = ps;
+            while (*ps) {
+                if (*ps == '(' || *ps == '<') pdepth++;
+                else if (*ps == ')' || *ps == '>') pdepth--;
+                else if (*ps == ',' && pdepth == 0) {
+                    *ps = '\0';
+                    if (param_count < 64) param_strs[param_count++] = start;
+                    start = ps + 1;
+                }
+                ps++;
+            }
+            if (param_count < 64) param_strs[param_count++] = start;
+
+            for (int i = 0; i < param_count && !skip_func; i++) {
+                char param[512];
+                strncpy(param, param_strs[i], sizeof(param) - 1);
+                param[sizeof(param) - 1] = '\0';
+                trim(param);
+                strip_attributes(param);
+                trim(param);
+
+                if (strcmp(param, "...") == 0) continue;
+                if (strcmp(param, "void") == 0) continue;
+
+                // Extract param name (last identifier)
+                char pname[128] = "";
+                char ptype[512];
+                int len = (int)strlen(param);
+                int end = len - 1;
+                while (end >= 0 && isspace((unsigned char)param[end])) end--;
+                int name_end = end;
+                while (end >= 0 && is_ident_char(param[end])) end--;
+                int name_start = end + 1;
+                if (name_start <= name_end) {
+                    int nlen = name_end - name_start + 1;
+                    memcpy(pname, param + name_start, nlen);
+                    pname[nlen] = '\0';
+                    memcpy(ptype, param, name_start);
+                    ptype[name_start] = '\0';
+                } else {
+                    strncpy(ptype, param, sizeof(ptype) - 1);
+                    snprintf(pname, sizeof(pname), "p%d", i);
+                }
+                trim(ptype);
+
+                const char *pmix = c_type_to_mix(ptype);
+                if (!pmix) { skip_func = true; continue; }
+
+                // Make name safe
+                if (is_reserved_word(pname)) {
+                    char safe[140];
+                    snprintf(safe, sizeof(safe), "%s_", pname);
+                    strncpy(pname, safe, sizeof(pname) - 1);
+                }
+
+                if (param_idx > 0) strcat(params_mix, ", ");
+                char entry[256];
+                snprintf(entry, sizeof(entry), "%s: %s", pname, pmix);
+                strcat(params_mix, entry);
+                param_idx++;
+            }
+        }
+
+        if (skip_func) continue;
+        if (fp_typedef_count >= MAX_FP_TYPEDEFS) continue;
+
+        strncpy(fp_typedefs[fp_typedef_count].typedef_name, tname,
+                sizeof(fp_typedefs[0].typedef_name) - 1);
+        strncpy(fp_typedefs[fp_typedef_count].ret_mix, ret_mix,
+                sizeof(fp_typedefs[0].ret_mix) - 1);
+        strncpy(fp_typedefs[fp_typedef_count].params_mix, params_mix,
+                sizeof(fp_typedefs[0].params_mix) - 1);
+        fp_typedef_count++;
+    }
+}
+
+// Parse function pointer global declarations and add to funcs[]:
+// GLAPI PFNGLCLEARPROC glad_glClear;
+// After preprocessing: extern PFNGLCLEARPROC glad_glClear;
+// Transform name: glad_glClear -> gl_Clear (strip "glad_gl", add "gl_")
+static void parse_func_ptr_globals(const char *text) {
+    const char *p = text;
+    while (*p) {
+        // Look for lines containing "glad_gl"
+        const char *line_start = p;
+        // Find end of line
+        const char *eol = strchr(p, '\n');
+        if (!eol) eol = p + strlen(p);
+
+        char line[2048];
+        int llen = (int)(eol - line_start);
+        if (llen >= (int)sizeof(line)) llen = (int)sizeof(line) - 1;
+        memcpy(line, line_start, llen);
+        line[llen] = '\0';
+        p = (*eol) ? eol + 1 : eol;
+
+        // Look for pattern: [extern] PFNXXX glad_glYYY ;
+        char *glad_pos = strstr(line, "glad_gl");
+        if (!glad_pos) continue;
+
+        // Extract the variable name
+        char varname[256];
+        int vi = 0;
+        char *vp = glad_pos;
+        while (*vp && is_ident_char(*vp) && vi < (int)sizeof(varname) - 1) {
+            varname[vi++] = *vp++;
+        }
+        varname[vi] = '\0';
+
+        // Find the typedef name (word before glad_gl)
+        char *before = glad_pos - 1;
+        while (before > line && isspace((unsigned char)*before)) before--;
+        char tname[128];
+        char *te = before;
+        while (te >= line && is_ident_char(*te)) te--;
+        te++;
+        int tlen = (int)(before - te + 1);
+        if (tlen > 0 && tlen < (int)sizeof(tname)) {
+            memcpy(tname, te, tlen);
+            tname[tlen] = '\0';
+        } else {
+            continue;
+        }
+
+        // Look up typedef
+        int fp_idx = -1;
+        for (int i = 0; i < fp_typedef_count; i++) {
+            if (strcmp(fp_typedefs[i].typedef_name, tname) == 0) {
+                fp_idx = i;
+                break;
+            }
+        }
+        if (fp_idx < 0) continue;
+
+        // Transform name: glad_glClear -> gl_Clear
+        // Strip "glad_gl" prefix, add "gl_"
+        char mix_name[256];
+        const char *after_prefix = varname + 7; // skip "glad_gl"
+        snprintf(mix_name, sizeof(mix_name), "gl_%s", after_prefix);
+
+        // Skip if already recorded
+        if (func_exists(mix_name)) continue;
+        if (func_count >= MAX_FUNCS) continue;
+
+        strncpy(funcs[func_count].name, mix_name, sizeof(funcs[0].name) - 1);
+        strncpy(funcs[func_count].c_name, varname, sizeof(funcs[0].c_name) - 1);
+        strncpy(funcs[func_count].ret_mix, fp_typedefs[fp_idx].ret_mix,
+                sizeof(funcs[0].ret_mix) - 1);
+        strncpy(funcs[func_count].params_mix, fp_typedefs[fp_idx].params_mix,
+                sizeof(funcs[0].params_mix) - 1);
+        funcs[func_count].is_variadic = false;
+        func_count++;
+    }
 }
 
 // ---- Output writer ----
@@ -1252,7 +1573,11 @@ static void write_mix_output(FILE *out, const char *lib_name, const char *source
             if (funcs[i].is_variadic) {
                 fprintf(out, "    // variadic\n");
             }
-            fprintf(out, "    %s(%s)", funcs[i].name, funcs[i].params_mix);
+            fprintf(out, "    %s", funcs[i].name);
+            if (funcs[i].c_name[0]) {
+                fprintf(out, " \"%s\"", funcs[i].c_name);
+            }
+            fprintf(out, "(%s)", funcs[i].params_mix);
             if (strlen(funcs[i].ret_mix) > 0) {
                 fprintf(out, " -> %s", funcs[i].ret_mix);
             }
@@ -1319,6 +1644,7 @@ int cbind_generate(const char *header_path, const char *out_path,
     shape_count = 0;
     typedef_count = 0;
     typedef_count = 0;
+    fp_typedef_count = 0;
 
     // Derive lib name if not provided
     char derived_lib[256] = "";
@@ -1393,6 +1719,8 @@ int cbind_generate(const char *header_path, const char *out_path,
         parse_structs(text);
         parse_unions(text);
         parse_enums(text);
+        parse_func_ptr_typedefs(text);
+        parse_func_ptr_globals(text);
         parse_prototypes(text);
         free(text);
         extract_defines(header_path, verbose);
@@ -1474,6 +1802,8 @@ char *cbind_generate_string(const char *header_path, const char *lib_name, bool 
         parse_structs(text);
         parse_unions(text);
         parse_enums(text);
+        parse_func_ptr_typedefs(text);
+        parse_func_ptr_globals(text);
         parse_prototypes(text);
         free(text);
         extract_defines(header_path, verbose);

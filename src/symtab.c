@@ -26,6 +26,7 @@ void symtab_pop_scope(SymTab *st) {
 void symtab_insert(SymTab *st, const char *name, MixType *type, bool is_mutable) {
     Symbol *sym = arena_alloc(st->arena, sizeof(Symbol));
     sym->name = arena_strdup(st->arena, name);
+    sym->c_name = NULL;
     sym->type = type;
     sym->is_mutable = is_mutable;
     sym->next = st->current->symbols;

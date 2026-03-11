@@ -82,6 +82,12 @@ uint32_t mix_peek_u32(const void *ptr) {
     return *(const uint32_t *)ptr;
 }
 
+// Write a float32 to a pointer at byte offset (for OpenGL vertex buffers)
+void mix_poke_f32(void *ptr, int64_t offset, double val) {
+    float f = (float)val;
+    *(float *)((char *)ptr + offset) = f;
+}
+
 // ---- Lists ----
 // List layout: { int64_t len; int64_t cap; int64_t elem_size; void *data; }
 // All elements stored as 8-byte (int64_t) values for simplicity.
@@ -269,6 +275,21 @@ static int cmp_float(const void *a, const void *b) {
 void mix_list_sort_float(void *list_ptr) {
     MixList *list = list_ptr;
     qsort(list->data, list->len, sizeof(int64_t), cmp_float);
+}
+
+// Convert a MIX float list to a packed float32 array (for OpenGL buffers).
+// Returns a malloc'd array of float32 values. Caller must free.
+void *mix_list_to_f32(void *list_ptr) {
+    MixList *list = (MixList *)list_ptr;
+    if (!list || list->len == 0) return NULL;
+    float *buf = malloc(list->len * sizeof(float));
+    if (!buf) mix_panic("out of memory");
+    for (int64_t i = 0; i < list->len; i++) {
+        double d;
+        memcpy(&d, &list->data[i], sizeof(double));
+        buf[i] = (float)d;
+    }
+    return buf;
 }
 
 void mix_list_reverse(void *list_ptr) {

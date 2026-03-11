@@ -154,6 +154,7 @@ typedef enum {
     PREC_NONE = 0,
     PREC_OR,          // or
     PREC_AND,         // and
+    PREC_BIT_OR,      // |
     PREC_EQUALITY,    // == !=
     PREC_COMPARISON,  // < > <= >=
     PREC_RANGE,       // ..  ..=
@@ -167,6 +168,7 @@ static Precedence get_precedence(TokenKind kind) {
     switch (kind) {
         case TOK_OR:       return PREC_OR;
         case TOK_AND:      return PREC_AND;
+        case TOK_PIPE:     return PREC_BIT_OR;
         case TOK_EQEQ: case TOK_NEQ: return PREC_EQUALITY;
         case TOK_LT: case TOK_GT: case TOK_LTE: case TOK_GTE: return PREC_COMPARISON;
         case TOK_DOTDOT: case TOK_DOTDOT_EQ: return PREC_RANGE;
@@ -1164,6 +1166,13 @@ static AstNode *parse_extern_fn_decl(Parser *p) {
 
     AstNode *node = ast_new(p->arena, NODE_EXTERN_FN_DECL, loc);
     node->extern_fn_decl.name = tok_str(p, name_tok);
+
+    // Optional C symbol name: gl_Clear "glad_glClear" (...)
+    if (check(p, TOK_STRING_LIT)) {
+        Token *cname_tok = advance_tok(p);
+        node->extern_fn_decl.c_name = arena_strndup(p->arena, cname_tok->start, cname_tok->length);
+    }
+
     node->extern_fn_decl.params = parse_params(p, &node->extern_fn_decl.param_count);
 
     if (match_tok(p, TOK_ARROW)) {
@@ -1429,12 +1438,20 @@ static AstNode *parse_top_level(Parser *p) {
             AstNode *node = ast_new(p->arena, NODE_USE_C_DECL, loc);
             node->use_c_decl.header_path = arena_strndup(p->arena, header_tok->start, header_tok->length);
             node->use_c_decl.lib_name = NULL;
+            node->use_c_decl.source_path = NULL;
             // Optional: link "libname"
             if (check(p, TOK_IDENT) && current(p)->length == 4
                 && strncmp(current(p)->start, "link", 4) == 0) {
                 advance_tok(p); // skip 'link'
                 Token *lib_tok = expect(p, TOK_STRING_LIT);
                 node->use_c_decl.lib_name = arena_strndup(p->arena, lib_tok->start, lib_tok->length);
+            }
+            // Optional: source "file.c"
+            if (check(p, TOK_IDENT) && current(p)->length == 6
+                && strncmp(current(p)->start, "source", 6) == 0) {
+                advance_tok(p); // skip 'source'
+                Token *src_tok = expect(p, TOK_STRING_LIT);
+                node->use_c_decl.source_path = arena_strndup(p->arena, src_tok->start, src_tok->length);
             }
             return node;
         }

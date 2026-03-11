@@ -1,0 +1,91 @@
+// SDL3 OpenGL Triangle
+// A colored triangle rendered with shaders
+//
+// Build:
+//   CPPFLAGS="-I/opt/homebrew/include" LDFLAGS="-L/opt/homebrew/lib" \
+//   mix build examples/opengl_triangle.mix -framework OpenGL
+
+use c "SDL3/SDL.h" link "SDL3"
+use c "SDL3/SDL_opengl.h"
+
+main()
+    SDL_Init(SDL_INIT_VIDEO)
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG)
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE)
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4)
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1)
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1)
+
+    win = SDL_CreateWindow("MIX OpenGL Triangle", 800, 600, SDL_WINDOW_OPENGL)
+    ctx = SDL_GL_CreateContext(win)
+    SDL_GL_SetSwapInterval(1)
+
+    src_ptr = alloc(8)
+    vert_src = file_read_all("triangle.vert")
+    vs = glCreateShader(GL_VERTEX_SHADER)
+    unsafe
+        *src_ptr = vert_src
+    glShaderSource(vs, 1, src_ptr, 0)
+    glCompileShader(vs)
+
+    frag_src = file_read_all("triangle.frag")
+    fs = glCreateShader(GL_FRAGMENT_SHADER)
+    unsafe
+        *src_ptr = frag_src
+    glShaderSource(fs, 1, src_ptr, 0)
+    glCompileShader(fs)
+    free_mem(src_ptr)
+
+    prog = glCreateProgram()
+    glAttachShader(prog, vs)
+    glAttachShader(prog, fs)
+    glLinkProgram(prog)
+    glDeleteShader(vs)
+    glDeleteShader(fs)
+
+    vertices = [
+        0.0,  0.5, 0.0,   1.0, 0.0, 0.0,
+       -0.5, -0.5, 0.0,   0.0, 1.0, 0.0,
+        0.5, -0.5, 0.0,   0.0, 0.0, 1.0
+    ]
+    verts = list_to_f32(vertices)
+
+    vao_buf = alloc(4)
+    vbo_buf = alloc(4)
+    unsafe
+        glGenVertexArrays(1, vao_buf)
+        glGenBuffers(1, vbo_buf)
+    vao_id = peek_u32(vao_buf)
+    vbo_id = peek_u32(vbo_buf)
+
+    glBindVertexArray(vao_id)
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_id)
+    glBufferData(GL_ARRAY_BUFFER, 72, verts, GL_STATIC_DRAW)
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 24, 0)
+    glEnableVertexAttribArray(0)
+    unsafe
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 24, 0 + 12)
+    glEnableVertexAttribArray(1)
+
+    glClearColor(0.2, 0.3, 0.3, 1.0)
+    glUseProgram(prog)
+
+    evt = SDL_Event()
+    running! = true
+    while running
+        while SDL_PollEvent(evt) != 0
+            if evt.type_ == SDL_EVENT_QUIT
+                running! = false
+        glClear(GL_COLOR_BUFFER_BIT)
+        glBindVertexArray(vao_id)
+        glDrawArrays(GL_TRIANGLES, 0, 3)
+        SDL_GL_SwapWindow(win)
+
+    free_mem(verts)
+    free_mem(vao_buf)
+    free_mem(vbo_buf)
+    glDeleteProgram(prog)
+    SDL_GL_DestroyContext(ctx)
+    SDL_DestroyWindow(win)
+    SDL_Quit()

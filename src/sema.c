@@ -1193,6 +1193,12 @@ static void register_extern_fn(Sema *sema, AstNode *fn) {
     }
 
     symtab_insert(&sema->symtab, fn->extern_fn_decl.name, func_type, false);
+
+    // Store optional C symbol alias
+    if (fn->extern_fn_decl.c_name) {
+        Symbol *sym = symtab_lookup(&sema->symtab, fn->extern_fn_decl.name);
+        if (sym) sym->c_name = arena_strdup(sema->arena, fn->extern_fn_decl.c_name);
+    }
 }
 
 void sema_analyze(Sema *sema, AstNode *program) {
@@ -1495,6 +1501,32 @@ void sema_analyze(Sema *sema, AstNode *program) {
         ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
         ft->func.param_types[0] = ptr_byte;
         symtab_insert(&sema->symtab, "peek_u32", ft, false);
+    }
+    {
+        MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
+
+        // poke_f32(ptr: *byte, offset: int, val: float) ~
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_VOID);
+        ft->func.param_count = 3;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*) * 3);
+        ft->func.param_types[0] = ptr_byte;
+        ft->func.param_types[1] = make_type(sema->arena, TYPE_INT);
+        ft->func.param_types[2] = make_type(sema->arena, TYPE_FLOAT);
+        symtab_insert(&sema->symtab, "poke_f32", ft, false);
+    }
+    {
+        MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
+
+        // list_to_f32(list: [float]) -> *byte
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = ptr_byte;
+        MixType *float_list = make_type(sema->arena, TYPE_LIST);
+        float_list->list.elem_type = make_type(sema->arena, TYPE_FLOAT);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = float_list;
+        symtab_insert(&sema->symtab, "list_to_f32", ft, false);
     }
     {
         MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));

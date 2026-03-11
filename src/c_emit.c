@@ -201,6 +201,8 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void mix_free(void *);\n"
         "extern void *mix_bytes(int64_t);\n"
         "extern uint32_t mix_peek_u32(const void *);\n"
+        "extern void mix_poke_f32(void *, int64_t, double);\n"
+        "extern void *mix_list_to_f32(void *);\n"
         "\n"
     );
 }
@@ -660,6 +662,7 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                     case TOK_STAR:    result = lv * rv; break;
                     case TOK_SLASH:   result = rv != 0 ? lv / rv : 0; break;
                     case TOK_PERCENT: result = rv != 0 ? lv % rv : 0; break;
+                    case TOK_PIPE:    result = lv | rv; break;
                     default: folded = false; break;
                 }
                 if (folded) {
@@ -775,6 +778,8 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                     ind(emit); fprintf(emit->out, "%s t%d = t%d / t%d;\n", ty, t, left, right); break;
                 case TOK_PERCENT:
                     ind(emit); fprintf(emit->out, "%s t%d = t%d %% t%d;\n", ty, t, left, right); break;
+                case TOK_PIPE:
+                    ind(emit); fprintf(emit->out, "%s t%d = t%d | t%d;\n", ty, t, left, right); break;
                 case TOK_EQEQ:
                     ind(emit); fprintf(emit->out, "%s t%d = (t%d == t%d);\n", resty, t, left, right); break;
                 case TOK_NEQ:
@@ -1073,6 +1078,16 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 ind(emit); fprintf(emit->out, "uint32_t t%d = mix_peek_u32(t%d);\n", t, arg_temps[0]);
                 return t;
             }
+            if (strcmp(expr->call.name, "poke_f32") == 0 && expr->call.arg_count == 3) {
+                ind(emit); fprintf(emit->out, "mix_poke_f32(t%d, (int64_t)t%d, (double)t%d);\n",
+                        arg_temps[0], arg_temps[1], arg_temps[2]);
+                ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "list_to_f32") == 0 && expr->call.arg_count == 1) {
+                ind(emit); fprintf(emit->out, "void *t%d = mix_list_to_f32(t%d);\n", t, arg_temps[0]);
+                return t;
+            }
             if (strcmp(expr->call.name, "free_mem") == 0 && expr->call.arg_count == 1) {
                 ind(emit); fprintf(emit->out, "mix_free(t%d);\n", arg_temps[0]);
                 ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
@@ -1126,10 +1141,11 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 }
             } else {
                 ind(emit);
+                const char *call_name = (fn_sym && fn_sym->c_name) ? fn_sym->c_name : expr->call.name;
                 if (has_return) {
-                    fprintf(emit->out, "%s t%d = %s(", ret_ty, t, expr->call.name);
+                    fprintf(emit->out, "%s t%d = %s(", ret_ty, t, call_name);
                 } else {
-                    fprintf(emit->out, "%s(", expr->call.name);
+                    fprintf(emit->out, "%s(", call_name);
                 }
                 for (int i = 0; i < expr->call.arg_count; i++) {
                     if (i > 0) fprintf(emit->out, ", ");
@@ -2247,7 +2263,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
     /* Register constants */
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
-        if (decl->kind == NODE_CONST_DECL && emit->const_count < 4096) {
+        if (decl->kind == NODE_CONST_DECL && emit->const_count < 8192) {
             emit->constants[emit->const_count].name = decl->const_decl.name;
             emit->constants[emit->const_count].value = decl->const_decl.value;
             emit->constants[emit->const_count].cached_temp = -1;
@@ -2368,7 +2384,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                     "to_float","to_set","str_reverse","str_count","file_open","file_read",
                     "file_write","file_close","file_read_all","file_write_all","file_exists",
                     "list_dir","shell","shell_output","env","exit","getcwd","mkdir","args",
-                    "ord","chr","alloc","bytes","peek_u32","free_mem",NULL};
+                    "ord","chr","alloc","bytes","peek_u32","poke_f32","list_to_f32","free_mem",NULL};
                 for (int b = 0; builtins[b]; b++) {
                     if (strcmp(sym->name, builtins[b]) == 0) { is_local = true; break; }
                 }
@@ -2404,7 +2420,12 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                 const char *rs = rt ? c_type(rt) : "void";
                 if (rt && (rt->kind == TYPE_RESULT || rt->kind == TYPE_OPTIONAL)) rs = "void *";
                 else if (rt && rt->kind == TYPE_SHAPE) rs = "void *";
-                fprintf(emit->out, "extern %s %s(", rs, efn->extern_fn_decl.name);
+                if (efn->extern_fn_decl.c_name) {
+                    // Function pointer global (e.g. GLAD): extern void (*glad_glClear)(unsigned int);
+                    fprintf(emit->out, "extern %s (*%s)(", rs, efn->extern_fn_decl.c_name);
+                } else {
+                    fprintf(emit->out, "extern %s %s(", rs, efn->extern_fn_decl.name);
+                }
                 for (int k = 0; k < sym->type->func.param_count; k++) {
                     if (k > 0) fprintf(emit->out, ", ");
                     MixType *pt = sym->type->func.param_types[k];

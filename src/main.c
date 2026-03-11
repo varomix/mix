@@ -502,13 +502,19 @@ int main(int argc, char **argv) {
             backend = argv[++i];
         } else if (strcmp(argv[i], "--lib") == 0 && i + 1 < argc) {
             bind_lib = argv[++i];
-    } else if (strncmp(argv[i], "-l", 2) == 0 || strncmp(argv[i], "-L", 2) == 0 ||
-                   strncmp(argv[i], "-framework", 10) == 0) {
+    } else if (strncmp(argv[i], "-l", 2) == 0 || strncmp(argv[i], "-L", 2) == 0) {
             if (link_flag_count >= MAX_LINK_FLAGS) {
                 fprintf(stderr, "mix: too many linker flags (max %d)\n", MAX_LINK_FLAGS);
                 return 1;
             }
             link_flags[link_flag_count++] = argv[i];
+        } else if (strcmp(argv[i], "-framework") == 0 && i + 1 < argc) {
+            if (link_flag_count + 1 >= MAX_LINK_FLAGS) {
+                fprintf(stderr, "mix: too many linker flags (max %d)\n", MAX_LINK_FLAGS);
+                return 1;
+            }
+            link_flags[link_flag_count++] = argv[i];
+            link_flags[link_flag_count++] = argv[++i];
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "mix: unknown option '%s'\n", argv[i]);
             usage();
@@ -646,6 +652,16 @@ int main(int argc, char **argv) {
     char *module_asm_files[MAX_MODULES];
     int module_count = 0;
 
+    // Source files to compile and link (from use c ... source "file.c")
+    #define MAX_SOURCE_FILES 16
+    const char *source_files[MAX_SOURCE_FILES];
+    int source_file_count = 0;
+
+    // Vendor include directories (from lib/vendor/*/include/)
+    #define MAX_VENDOR_IDIRS 16
+    const char *vendor_idirs[MAX_VENDOR_IDIRS];
+    int vendor_idir_count = 0;
+
     Sema sema = sema_create(&arena);
     sema.debug_mode = debug_mode;
 
@@ -734,6 +750,84 @@ int main(int argc, char **argv) {
                 char *lflag = arena_alloc(&arena, strlen(lib) + 3);
                 sprintf(lflag, "-l%s", lib);
                 link_flags[link_flag_count++] = lflag;
+            }
+
+            // Collect source file for compilation (e.g. source "glad/glad.c")
+            const char *src_path = decl->use_c_decl.source_path;
+            if (src_path && source_file_count < MAX_SOURCE_FILES) {
+                struct stat src_st;
+                if (stat(src_path, &src_st) == 0) {
+                    source_files[source_file_count++] = arena_strdup(&arena, src_path);
+                } else {
+                    bool found_src = false;
+                    // Extract first component and rest: "glad/glad.c" -> "glad" + "glad.c"
+                    const char *src_slash = strchr(src_path, '/');
+                    const char *src_rest = src_slash ? src_slash + 1 : NULL;
+
+                    DIR *vdir = opendir("lib/vendor");
+                    if (vdir) {
+                        struct dirent *ventry;
+                        while ((ventry = readdir(vdir)) != NULL) {
+                            if (ventry->d_name[0] == '.') continue;
+                            char try_paths[5][1024];
+                            int try_count = 0;
+                            // Try full path under vendor subdirs
+                            snprintf(try_paths[try_count++], 1024,
+                                     "lib/vendor/%s/src/%s", ventry->d_name, src_path);
+                            snprintf(try_paths[try_count++], 1024,
+                                     "lib/vendor/%s/%s", ventry->d_name, src_path);
+                            // If first component matches vendor name, try rest only
+                            if (src_rest && src_slash > src_path) {
+                                int prefix_len = (int)(src_slash - src_path);
+                                if ((int)strlen(ventry->d_name) == prefix_len &&
+                                    strncmp(ventry->d_name, src_path, prefix_len) == 0) {
+                                    snprintf(try_paths[try_count++], 1024,
+                                             "lib/vendor/%s/src/%s", ventry->d_name, src_rest);
+                                    snprintf(try_paths[try_count++], 1024,
+                                             "lib/vendor/%s/%s", ventry->d_name, src_rest);
+                                }
+                            }
+                            for (int tp = 0; tp < try_count; tp++) {
+                                if (stat(try_paths[tp], &src_st) == 0) {
+                                    source_files[source_file_count++] = arena_strdup(&arena, try_paths[tp]);
+                                    found_src = true;
+                                    break;
+                                }
+                            }
+                            if (found_src) break;
+                        }
+                        closedir(vdir);
+                    }
+                    if (!found_src) {
+                        fprintf(stderr, "mix: source file '%s' not found\n", src_path);
+                        return 1;
+                    }
+                }
+            }
+
+            // Collect vendor -I directories for the linker/compile step
+            {
+                DIR *vdir = opendir("lib/vendor");
+                if (vdir) {
+                    struct dirent *ventry;
+                    while ((ventry = readdir(vdir)) != NULL) {
+                        if (ventry->d_name[0] == '.') continue;
+                        char inc_dir[512];
+                        snprintf(inc_dir, sizeof(inc_dir), "lib/vendor/%s/include", ventry->d_name);
+                        struct stat vst;
+                        if (stat(inc_dir, &vst) == 0 && S_ISDIR(vst.st_mode)) {
+                            // Check if already in list
+                            bool already = false;
+                            for (int vi = 0; vi < vendor_idir_count; vi++) {
+                                if (strcmp(vendor_idirs[vi], inc_dir) == 0) { already = true; break; }
+                            }
+                            if (!already && vendor_idir_count < MAX_VENDOR_IDIRS) {
+                                vendor_idirs[vendor_idir_count++] = arena_strdup(&arena, inc_dir);
+                            }
+                        }
+                    }
+                    closedir(vdir);
+                }
             }
         } else if (decl->kind == NODE_USE_DECL) {
             char *mod_path = resolve_module_path(&arena, base_dir,
@@ -866,6 +960,9 @@ int main(int argc, char **argv) {
     link_argv[ai++] = use_c_backend ? gen_path : asm_path;
     for (int i = 0; i < module_count && ai < MAX_LINK_ARGV - 8; i++)
         link_argv[ai++] = module_asm_files[i];
+    // Add source files (e.g. glad.c)
+    for (int i = 0; i < source_file_count && ai < MAX_LINK_ARGV - 8; i++)
+        link_argv[ai++] = source_files[i];
     if (runtime_path)
         link_argv[ai++] = runtime_path;
     link_argv[ai++] = "-o";
@@ -873,6 +970,12 @@ int main(int argc, char **argv) {
     link_argv[ai++] = "-lm";
     for (int i = 0; i < link_flag_count && ai < MAX_LINK_ARGV - 2; i++)
         link_argv[ai++] = link_flags[i];
+    // Add vendor -I directories
+    for (int i = 0; i < vendor_idir_count && ai < MAX_LINK_ARGV - 2; i++) {
+        char *iflag = arena_alloc(&arena, strlen(vendor_idirs[i]) + 3);
+        sprintf(iflag, "-I%s", vendor_idirs[i]);
+        link_argv[ai++] = iflag;
+    }
 
     // LDFLAGS: split by whitespace since execvp doesn't use a shell.
     // Tokenize a mutable copy so each flag becomes a separate argv entry.

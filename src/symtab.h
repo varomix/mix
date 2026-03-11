@@ -6,6 +6,7 @@
 
 typedef struct Symbol {
     char *name;
+    char *c_name;       // optional C symbol name for aliased extern functions
     MixType *type;
     bool is_mutable;
     struct Symbol *next;

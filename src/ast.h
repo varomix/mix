@@ -135,6 +135,7 @@ struct AstNode {
         // NODE_EXTERN_FN_DECL
         struct {
             char *name;
+            char *c_name;       // optional C symbol name (e.g. "glad_glClear")
             Param *params;
             int param_count;
             AstNode *return_type;
@@ -235,10 +236,11 @@ struct AstNode {
             int import_count;
         } use_decl;
 
-        // NODE_USE_C_DECL — use c "header.h" link "lib"
+        // NODE_USE_C_DECL — use c "header.h" link "lib" source "file.c"
         struct {
             char *header_path;   // "SDL3/SDL.h"
             char *lib_name;      // "SDL3" (NULL if no link clause)
+            char *source_path;   // "glad/glad.c" (NULL if no source clause)
         } use_c_decl;
 
         // NODE_INT_LIT

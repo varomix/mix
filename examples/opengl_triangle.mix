@@ -16,7 +16,7 @@ main()
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1)
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1)
 
-    win = SDL_CreateWindow("MIX OpenGL Triangle", 800, 600, SDL_WINDOW_OPENGL)
+    win = SDL_CreateWindow("MIX OpenGL Triangle", 800, 600, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE)
     ctx = SDL_GL_CreateContext(win)
     SDL_GL_SetSwapInterval(1)
 

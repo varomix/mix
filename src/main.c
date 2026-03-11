@@ -977,6 +977,27 @@ int main(int argc, char **argv) {
         link_argv[ai++] = iflag;
     }
 
+    // CPPFLAGS -I flags: pass to linker so source files can find includes
+    const char *env_cppflags = getenv("CPPFLAGS");
+    if (env_cppflags && env_cppflags[0]) {
+        char *cppbuf = strdup(env_cppflags);
+        char *tok = strtok(cppbuf, " \t");
+        while (tok && ai < MAX_LINK_ARGV - 1) {
+            if (strncmp(tok, "-I", 2) == 0) {
+                link_argv[ai++] = arena_strdup(&arena, tok);
+            } else if (strcmp(tok, "-I") == 0) {
+                tok = strtok(NULL, " \t");
+                if (tok && ai < MAX_LINK_ARGV - 2) {
+                    char *iflag = arena_alloc(&arena, strlen(tok) + 3);
+                    sprintf(iflag, "-I%s", tok);
+                    link_argv[ai++] = iflag;
+                }
+            }
+            tok = strtok(NULL, " \t");
+        }
+        free(cppbuf);
+    }
+
     // LDFLAGS: split by whitespace since execvp doesn't use a shell.
     // Tokenize a mutable copy so each flag becomes a separate argv entry.
     char *ldflags_buf = NULL;

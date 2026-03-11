@@ -1,0 +1,62 @@
+// SDL3 GPU API - Rotating Triangle
+// Uses the modern SDL_GPU API with pre-compiled MSL shaders
+//
+// Build shaders:
+//   glslc -fshader-stage=vertex triangle.vert.glsl -o triangle.vert.spv
+//   glslc -fshader-stage=fragment triangle.frag.glsl -o triangle.frag.spv
+//   shadercross triangle.vert.spv -s SPIRV -d MSL -t vertex -o triangle.vert.msl
+//   shadercross triangle.frag.spv -s SPIRV -d MSL -t fragment -o triangle.frag.msl
+//
+// Build and run:
+//   cd examples/gpu_triangle
+//   mix run gpu_triangle.mix
+
+use c "SDL3/SDL.h" link "SDL3"
+use c "gpu_helper.h" source "gpu_helper.c"
+
+main()
+    SDL_Init(SDL_INIT_VIDEO)
+
+    win = SDL_CreateWindow("MIX GPU Triangle", 800, 600, 0)
+    device = gpu_create_device(win)
+
+    // Load pre-compiled MSL shaders
+    // Stage 0 = vertex, 1 = fragment
+    vert = gpu_load_shader(device, "triangle.vert.msl", 0, 1)
+    frag = gpu_load_shader(device, "triangle.frag.msl", 1, 0)
+
+    // Create pipeline
+    swapchain_fmt = SDL_GetGPUSwapchainTextureFormat(device, win)
+    pipeline = gpu_create_triangle_pipeline(device, vert, frag, swapchain_fmt)
+    SDL_ReleaseGPUShader(device, vert)
+    SDL_ReleaseGPUShader(device, frag)
+
+    // Triangle: position(x,y,z) + color(r,g,b,a)
+    vertices = [
+        0.0,  0.5, 0.0,   1.0, 0.0, 0.0, 1.0,
+       -0.5, -0.5, 0.0,   0.0, 1.0, 0.0, 1.0,
+        0.5, -0.5, 0.0,   0.0, 0.0, 1.0, 1.0
+    ]
+    verts_f32 = list_to_f32(vertices)
+    vbuf = gpu_create_vertex_buffer(device, verts_f32, 21)
+    free_mem(verts_f32)
+
+    // Render loop
+    angle! = 0.0
+    evt = SDL_Event()
+    running! = true
+
+    while running
+        while SDL_PollEvent(evt) != 0
+            if evt.type_ == SDL_EVENT_QUIT
+                running! = false
+
+        angle! = angle + 0.02
+        gpu_draw_frame(device, win, pipeline, vbuf, angle)
+
+    // Cleanup
+    SDL_ReleaseGPUBuffer(device, vbuf)
+    SDL_ReleaseGPUGraphicsPipeline(device, pipeline)
+    SDL_DestroyGPUDevice(device)
+    SDL_DestroyWindow(win)
+    SDL_Quit()

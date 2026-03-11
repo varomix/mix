@@ -1169,6 +1169,23 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 fprintf(emit->out, "\t%%t%d =l copy 0\n", t);
                 return t;
             }
+            if (strcmp(expr->call.name, "poke_u32") == 0 && expr->call.arg_count == 3) {
+                fprintf(emit->out, "\tcall $mix_poke_u32(l %%t%d, l %%t%d, l %%t%d)\n",
+                        arg_temps[0], arg_temps[1], arg_temps[2]);
+                fprintf(emit->out, "\t%%t%d =l copy 0\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "poke_ptr") == 0 && expr->call.arg_count == 3) {
+                fprintf(emit->out, "\tcall $mix_poke_ptr(l %%t%d, l %%t%d, l %%t%d)\n",
+                        arg_temps[0], arg_temps[1], arg_temps[2]);
+                fprintf(emit->out, "\t%%t%d =l copy 0\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "peek_ptr") == 0 && expr->call.arg_count == 2) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_peek_ptr(l %%t%d, l %%t%d)\n",
+                        t, arg_temps[0], arg_temps[1]);
+                return t;
+            }
             if (strcmp(expr->call.name, "list_to_f32") == 0 && expr->call.arg_count == 1) {
                 fprintf(emit->out, "\t%%t%d =l call $mix_list_to_f32(l %%t%d)\n",
                         t, arg_temps[0]);

@@ -1,0 +1,175 @@
+// SDL3 GPU API - Rotating Triangle (Pure MIX)
+// No C helper - drives SDL_GPU directly using poke/peek for C structs
+//
+// Build shaders:
+//   glslc -fshader-stage=vertex triangle.vert.glsl -o triangle.vert.spv
+//   glslc -fshader-stage=fragment triangle.frag.glsl -o triangle.frag.spv
+//   shadercross triangle.vert.spv -s SPIRV -d MSL -t vertex -o triangle.vert.msl
+//   shadercross triangle.frag.spv -s SPIRV -d MSL -t fragment -o triangle.frag.msl
+//
+// Build and run:
+//   cd examples/gpu_triangle_mix
+//   mix run gpu_triangle.mix
+
+use c "SDL3/SDL.h" link "SDL3"
+
+main()
+    SDL_Init(SDL_INIT_VIDEO)
+    win = SDL_CreateWindow("MIX GPU Triangle (Pure)", 800, 600, 0)
+    device = SDL_CreateGPUDevice(16, true, 0)
+    SDL_ClaimWindowForGPUDevice(device, win)
+
+    // ---- Load shaders ----
+    // SDL_GPUShaderCreateInfo: code_size@0 code@8 entrypoint@16 format@24 stage@28 num_uniform_buffers@44
+    sz_ptr = alloc(8)
+    vc = SDL_LoadFile("triangle.vert.msl", sz_ptr)
+    vcs = peek_ptr(sz_ptr, 0)
+    vi = bytes(56)
+    poke_ptr(vi, 0, vcs)
+    poke_ptr(vi, 8, vc)
+    poke_ptr(vi, 16, "main0")
+    poke_u32(vi, 24, 16)
+    poke_u32(vi, 28, 0)
+    poke_u32(vi, 44, 1)
+    vert = SDL_CreateGPUShader(device, vi)
+    SDL_free(vc)
+    free_mem(vi)
+
+    fc = SDL_LoadFile("triangle.frag.msl", sz_ptr)
+    fcs = peek_ptr(sz_ptr, 0)
+    fi = bytes(56)
+    poke_ptr(fi, 0, fcs)
+    poke_ptr(fi, 8, fc)
+    poke_ptr(fi, 16, "main0")
+    poke_u32(fi, 24, 16)
+    poke_u32(fi, 28, 1)
+    frag = SDL_CreateGPUShader(device, fi)
+    SDL_free(fc)
+    free_mem(fi)
+    free_mem(sz_ptr)
+
+    // ---- Create pipeline ----
+    fmt = SDL_GetGPUSwapchainTextureFormat(device, win)
+
+    // Vertex attributes: position(float3) + color(float4)
+    at = bytes(32)
+    poke_u32(at, 8, 11)
+    poke_u32(at, 16, 1)
+    poke_u32(at, 24, 12)
+    poke_u32(at, 28, 12)
+
+    // Vertex buffer description: pitch=28 (7 floats)
+    vd = bytes(16)
+    poke_u32(vd, 4, 28)
+
+    // Color target description
+    cd = bytes(36)
+    poke_u32(cd, 0, fmt)
+
+    // Pipeline create info (168 bytes)
+    pp = bytes(168)
+    poke_ptr(pp, 0, vert)
+    poke_ptr(pp, 8, frag)
+    poke_ptr(pp, 16, vd)
+    poke_u32(pp, 24, 1)
+    poke_ptr(pp, 32, at)
+    poke_u32(pp, 40, 2)
+    poke_ptr(pp, 136, cd)
+    poke_u32(pp, 144, 1)
+    pipeline = SDL_CreateGPUGraphicsPipeline(device, pp)
+    free_mem(at)
+    free_mem(vd)
+    free_mem(cd)
+    free_mem(pp)
+    SDL_ReleaseGPUShader(device, vert)
+    SDL_ReleaseGPUShader(device, frag)
+
+    // ---- Upload vertex data ----
+    // position(xyz) + color(rgba) = 7 floats per vertex, 3 vertices = 84 bytes
+    vf = list_to_f32([
+        0.0,  0.5, 0.0,   1.0, 0.0, 0.0, 1.0,
+       -0.5, -0.5, 0.0,   0.0, 1.0, 0.0, 1.0,
+        0.5, -0.5, 0.0,   0.0, 0.0, 1.0, 1.0
+    ])
+
+    bi = bytes(12)
+    poke_u32(bi, 0, 1)
+    poke_u32(bi, 4, 84)
+    vbuf = SDL_CreateGPUBuffer(device, bi)
+    free_mem(bi)
+
+    ti = bytes(12)
+    poke_u32(ti, 4, 84)
+    tb = SDL_CreateGPUTransferBuffer(device, ti)
+    free_mem(ti)
+
+    mp = SDL_MapGPUTransferBuffer(device, tb, false)
+    SDL_memcpy(mp, vf, 84)
+    SDL_UnmapGPUTransferBuffer(device, tb)
+    free_mem(vf)
+
+    uc = SDL_AcquireGPUCommandBuffer(device)
+    cp = SDL_BeginGPUCopyPass(uc)
+    sl = bytes(16)
+    poke_ptr(sl, 0, tb)
+    dr = bytes(16)
+    poke_ptr(dr, 0, vbuf)
+    poke_u32(dr, 12, 84)
+    SDL_UploadToGPUBuffer(cp, sl, dr, false)
+    SDL_EndGPUCopyPass(cp)
+    SDL_SubmitGPUCommandBuffer(uc)
+    SDL_ReleaseGPUTransferBuffer(device, tb)
+    free_mem(sl)
+    free_mem(dr)
+
+    // ---- Render loop ----
+    angle! = 0.0
+    evt = alloc(128)
+    running! = true
+
+    while running
+        while SDL_PollEvent(evt) != 0
+            if peek_u32(evt) == SDL_EVENT_QUIT
+                running! = false
+
+        angle! = angle + 0.02
+        cmd = SDL_AcquireGPUCommandBuffer(device)
+        tp = alloc(8)
+        SDL_AcquireGPUSwapchainTexture(cmd, win, tp, 0, 0)
+        tex = peek_ptr(tp, 0)
+        free_mem(tp)
+
+        if tex != 0
+            un = bytes(16)
+            poke_f32(un, 0, angle)
+            SDL_PushGPUVertexUniformData(cmd, 0, un, 16)
+            free_mem(un)
+
+            ci = bytes(64)
+            poke_ptr(ci, 0, tex)
+            poke_f32(ci, 16, 0.15)
+            poke_f32(ci, 20, 0.15)
+            poke_f32(ci, 24, 0.15)
+            poke_f32(ci, 28, 1.0)
+            poke_u32(ci, 32, 1)
+            pass = SDL_BeginGPURenderPass(cmd, ci, 1, 0)
+            SDL_BindGPUGraphicsPipeline(pass, pipeline)
+
+            bn = bytes(16)
+            poke_ptr(bn, 0, vbuf)
+            SDL_BindGPUVertexBuffers(pass, 0, bn, 1)
+            free_mem(bn)
+
+            SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0)
+            SDL_EndGPURenderPass(pass)
+            free_mem(ci)
+
+        SDL_SubmitGPUCommandBuffer(cmd)
+
+    // ---- Cleanup ----
+    free_mem(evt)
+    SDL_ReleaseGPUBuffer(device, vbuf)
+    SDL_ReleaseGPUGraphicsPipeline(device, pipeline)
+    SDL_DestroyGPUDevice(device)
+    SDL_DestroyWindow(win)
+    SDL_Quit()

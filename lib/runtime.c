@@ -88,6 +88,21 @@ void mix_poke_f32(void *ptr, int64_t offset, double val) {
     *(float *)((char *)ptr + offset) = f;
 }
 
+// Write a uint32 to a pointer at byte offset (for C struct fields)
+void mix_poke_u32(void *ptr, int64_t offset, int64_t val) {
+    *(uint32_t *)((char *)ptr + offset) = (uint32_t)val;
+}
+
+// Write a pointer/uint64 to a pointer at byte offset (for C struct pointer/size fields)
+void mix_poke_ptr(void *ptr, int64_t offset, int64_t val) {
+    *(int64_t *)((char *)ptr + offset) = val;
+}
+
+// Read a pointer from a pointer at byte offset
+int64_t mix_peek_ptr(const void *ptr, int64_t offset) {
+    return *(const int64_t *)((char *)ptr + offset);
+}
+
 // ---- Lists ----
 // List layout: { int64_t len; int64_t cap; int64_t elem_size; void *data; }
 // All elements stored as 8-byte (int64_t) values for simplicity.

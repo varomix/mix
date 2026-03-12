@@ -82,6 +82,25 @@ uint32_t mix_peek_u32(const void *ptr) {
     return *(const uint32_t *)ptr;
 }
 
+// Pack 2 structs contiguously. Returns malloc'd buffer with both copied.
+void *mix_pack2(void *a, void *b, int64_t elem_size) {
+    void *buf = calloc(2, elem_size);
+    if (!buf) mix_panic("out of memory");
+    memcpy(buf, a, elem_size);
+    memcpy((char *)buf + elem_size, b, elem_size);
+    return buf;
+}
+
+// Pack 3 structs contiguously.
+void *mix_pack3(void *a, void *b, void *c, int64_t elem_size) {
+    void *buf = calloc(3, elem_size);
+    if (!buf) mix_panic("out of memory");
+    memcpy(buf, a, elem_size);
+    memcpy((char *)buf + elem_size, b, elem_size);
+    memcpy((char *)buf + 2 * elem_size, c, elem_size);
+    return buf;
+}
+
 // Write a float32 to a pointer at byte offset (for OpenGL vertex buffers)
 void mix_poke_f32(void *ptr, int64_t offset, double val) {
     float f = (float)val;

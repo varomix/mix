@@ -1,5 +1,5 @@
 // SDL3 GPU API - Rotating Triangle (Pure MIX)
-// Uses MIX shape constructors to fill C structs directly
+// Uses MIX shape constructors for all C structs
 //
 // Build shaders:
 //   glslc -fshader-stage=vertex triangle.vert.glsl -o triangle.vert.spv
@@ -13,46 +13,56 @@
 
 use c "SDL3/SDL.h" link "SDL3"
 
-load_shader(device: *byte, path: str, stage: int, num_uniforms: int) -> *byte ~
-    sz_ptr = alloc(8)
-    code = SDL_LoadFile(path, sz_ptr)
-    code_sz = peek_ptr(sz_ptr, 0)
-    free_mem(sz_ptr)
-    info = SDL_GPUShaderCreateInfo(
-        code_size: code_sz,
-        code: code,
-        entrypoint: "main0",
-        format: SDL_GPU_SHADERFORMAT_MSL,
-        stage: stage,
-        num_uniform_buffers: num_uniforms
-    )
-    shader = SDL_CreateGPUShader(device, info)
-    SDL_free(code)
-    done shader
-
 main()
     SDL_Init(SDL_INIT_VIDEO)
     win = SDL_CreateWindow("MIX GPU Triangle (Pure)", 800, 600, 0)
     device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_MSL, true, 0)
     SDL_ClaimWindowForGPUDevice(device, win)
 
-    // Load shaders
-    vert = load_shader(device, "triangle.vert.msl", SDL_GPU_SHADERSTAGE_VERTEX, 1)
-    frag = load_shader(device, "triangle.frag.msl", SDL_GPU_SHADERSTAGE_FRAGMENT, 0)
+    // Load vertex shader
+    sz_ptr = alloc(8)
+    vc = SDL_LoadFile("triangle.vert.msl", sz_ptr)
+    vcs = peek_ptr(sz_ptr, 0)
+    vi = SDL_GPUShaderCreateInfo(
+        code_size: vcs, code: vc, entrypoint: "main0",
+        format: SDL_GPU_SHADERFORMAT_MSL,
+        stage: SDL_GPU_SHADERSTAGE_VERTEX,
+        num_uniform_buffers: 1
+    )
+    vert = SDL_CreateGPUShader(device, vi)
+    SDL_free(vc)
 
-    // Create pipeline
-    fmt = SDL_GetGPUSwapchainTextureFormat(device, win)
+    // Load fragment shader
+    fc = SDL_LoadFile("triangle.frag.msl", sz_ptr)
+    fcs = peek_ptr(sz_ptr, 0)
+    fi = SDL_GPUShaderCreateInfo(
+        code_size: fcs, code: fc, entrypoint: "main0",
+        format: SDL_GPU_SHADERFORMAT_MSL,
+        stage: SDL_GPU_SHADERSTAGE_FRAGMENT
+    )
+    frag = SDL_CreateGPUShader(device, fi)
+    SDL_free(fc)
+    free_mem(sz_ptr)
 
-    attr0 = SDL_GPUVertexAttribute(location: 0, format: SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offset: 0)
+    // Vertex attributes: position(float3) + color(float4)
+    attr0 = SDL_GPUVertexAttribute(format: SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3)
     attr1 = SDL_GPUVertexAttribute(location: 1, format: SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offset: 12)
+    attrs = pack2(attr0, attr1, 16)
+    defer free_mem(attrs)
+
+    // Pipeline
+    fmt = SDL_GetGPUSwapchainTextureFormat(device, win)
     vbuf_desc = SDL_GPUVertexBufferDescription(pitch: 28)
     color_desc = SDL_GPUColorTargetDescription(format: fmt)
-    target = SDL_GPUGraphicsPipelineTargetInfo(color_target_descriptions: color_desc, num_color_targets: 1)
     vinput = SDL_GPUVertexInputState(
         vertex_buffer_descriptions: vbuf_desc,
         num_vertex_buffers: 1,
-        vertex_attributes: attr0,
+        vertex_attributes: attrs,
         num_vertex_attributes: 2
+    )
+    target = SDL_GPUGraphicsPipelineTargetInfo(
+        color_target_descriptions: color_desc,
+        num_color_targets: 1
     )
     pip_info = SDL_GPUGraphicsPipelineCreateInfo(
         vertex_shader: vert,
@@ -64,7 +74,7 @@ main()
     SDL_ReleaseGPUShader(device, vert)
     SDL_ReleaseGPUShader(device, frag)
 
-    // Upload vertex data: pos(xyz) + color(rgba)
+    // Upload vertex data: pos(xyz) + color(rgba) = 84 bytes
     verts = list_to_f32([
         0.0,  0.5, 0.0,   1.0, 0.0, 0.0, 1.0,
        -0.5, -0.5, 0.0,   0.0, 1.0, 0.0, 1.0,

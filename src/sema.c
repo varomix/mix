@@ -1518,6 +1518,33 @@ void sema_analyze(Sema *sema, AstNode *program) {
     {
         MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
 
+        // pack2(a: *byte, b: *byte, elem_size: int) -> *byte
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = ptr_byte;
+        ft->func.param_count = 3;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*) * 3);
+        ft->func.param_types[0] = ptr_byte;
+        ft->func.param_types[1] = ptr_byte;
+        ft->func.param_types[2] = make_type(sema->arena, TYPE_INT);
+        symtab_insert(&sema->symtab, "pack2", ft, false);
+    }
+    {
+        MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
+
+        // pack3(a: *byte, b: *byte, c: *byte, elem_size: int) -> *byte
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = ptr_byte;
+        ft->func.param_count = 4;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*) * 4);
+        ft->func.param_types[0] = ptr_byte;
+        ft->func.param_types[1] = ptr_byte;
+        ft->func.param_types[2] = ptr_byte;
+        ft->func.param_types[3] = make_type(sema->arena, TYPE_INT);
+        symtab_insert(&sema->symtab, "pack3", ft, false);
+    }
+    {
+        MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
+
         // poke_u32(ptr: *byte, offset: int, val: int) ~
         MixType *ft = make_type(sema->arena, TYPE_FUNC);
         ft->func.return_type = make_type(sema->arena, TYPE_VOID);

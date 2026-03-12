@@ -205,6 +205,8 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void mix_poke_u32(void *, int64_t, int64_t);\n"
         "extern void mix_poke_ptr(void *, int64_t, int64_t);\n"
         "extern int64_t mix_peek_ptr(const void *, int64_t);\n"
+        "extern void *mix_pack2(void *, void *, int64_t);\n"
+        "extern void *mix_pack3(void *, void *, void *, int64_t);\n"
         "extern void *mix_list_to_f32(void *);\n"
         "\n"
     );
@@ -1110,6 +1112,16 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             if (strcmp(expr->call.name, "peek_ptr") == 0 && expr->call.arg_count == 2) {
                 ind(emit); fprintf(emit->out, "int64_t t%d = mix_peek_ptr(t%d, (int64_t)t%d);\n",
                         t, arg_temps[0], arg_temps[1]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "pack2") == 0 && expr->call.arg_count == 3) {
+                ind(emit); fprintf(emit->out, "void *t%d = mix_pack2(t%d, t%d, (int64_t)t%d);\n",
+                        t, arg_temps[0], arg_temps[1], arg_temps[2]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "pack3") == 0 && expr->call.arg_count == 4) {
+                ind(emit); fprintf(emit->out, "void *t%d = mix_pack3(t%d, t%d, t%d, (int64_t)t%d);\n",
+                        t, arg_temps[0], arg_temps[1], arg_temps[2], arg_temps[3]);
                 return t;
             }
             if (strcmp(expr->call.name, "list_to_f32") == 0 && expr->call.arg_count == 1) {
@@ -2412,7 +2424,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                     "to_float","to_set","str_reverse","str_count","file_open","file_read",
                     "file_write","file_close","file_read_all","file_write_all","file_exists",
                     "list_dir","shell","shell_output","env","exit","getcwd","mkdir","args",
-                    "ord","chr","alloc","bytes","peek_u32","peek_ptr","poke_f32","poke_u32","poke_ptr","list_to_f32","free_mem",NULL};
+                    "ord","chr","alloc","bytes","peek_u32","peek_ptr","poke_f32","poke_u32","poke_ptr","pack2","pack3","list_to_f32","free_mem",NULL};
                 for (int b = 0; builtins[b]; b++) {
                     if (strcmp(sym->name, builtins[b]) == 0) { is_local = true; break; }
                 }

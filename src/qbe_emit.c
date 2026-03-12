@@ -1186,6 +1186,16 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                         t, arg_temps[0], arg_temps[1]);
                 return t;
             }
+            if (strcmp(expr->call.name, "pack2") == 0 && expr->call.arg_count == 3) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_pack2(l %%t%d, l %%t%d, l %%t%d)\n",
+                        t, arg_temps[0], arg_temps[1], arg_temps[2]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "pack3") == 0 && expr->call.arg_count == 4) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_pack3(l %%t%d, l %%t%d, l %%t%d, l %%t%d)\n",
+                        t, arg_temps[0], arg_temps[1], arg_temps[2], arg_temps[3]);
+                return t;
+            }
             if (strcmp(expr->call.name, "list_to_f32") == 0 && expr->call.arg_count == 1) {
                 fprintf(emit->out, "\t%%t%d =l call $mix_list_to_f32(l %%t%d)\n",
                         t, arg_temps[0]);
@@ -1546,15 +1556,24 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     ShapeFieldInfo *fi = type_find_field(stype, expr->shape_lit.field_names[i]);
                     if (!fi) continue;
                     int val = emit_expr(emit, expr->shape_lit.field_values[i]);
-                    val = coerce_to_field_type(emit, val,
-                            expr->shape_lit.field_values[i]->resolved_type, fi->type);
-                    const char *mem_ty = type_to_qbe_mem(fi->type);
-                    if (fi->offset == 0) {
-                        fprintf(emit->out, "\tstore%s %%t%d, %%t%d\n", mem_ty, val, t);
+
+                    // Inline sub-struct: memcpy the sub-shape's data into parent
+                    if (fi->type && fi->type->kind == TYPE_SHAPE) {
+                        int dst_addr = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =l add %%t%d, %d\n", dst_addr, t, fi->offset);
+                        fprintf(emit->out, "\tcall $memcpy(l %%t%d, l %%t%d, l %d)\n",
+                                dst_addr, val, fi->type->shape.total_size);
                     } else {
-                        int addr = next_temp(emit);
-                        fprintf(emit->out, "\t%%t%d =l add %%t%d, %d\n", addr, t, fi->offset);
-                        fprintf(emit->out, "\tstore%s %%t%d, %%t%d\n", mem_ty, val, addr);
+                        val = coerce_to_field_type(emit, val,
+                                expr->shape_lit.field_values[i]->resolved_type, fi->type);
+                        const char *mem_ty = type_to_qbe_mem(fi->type);
+                        if (fi->offset == 0) {
+                            fprintf(emit->out, "\tstore%s %%t%d, %%t%d\n", mem_ty, val, t);
+                        } else {
+                            int addr = next_temp(emit);
+                            fprintf(emit->out, "\t%%t%d =l add %%t%d, %d\n", addr, t, fi->offset);
+                            fprintf(emit->out, "\tstore%s %%t%d, %%t%d\n", mem_ty, val, addr);
+                        }
                     }
                 }
             }

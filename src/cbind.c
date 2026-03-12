@@ -52,6 +52,11 @@ static int shape_count = 0;
 static struct { char alias[128]; char target[128]; } typedefs[MAX_TYPEDEFS];
 static int typedef_count = 0;
 
+// Enum typedef names (for resolving enum types to int32 in c_type_to_mix)
+#define MAX_ENUM_NAMES 1024
+static char enum_names[MAX_ENUM_NAMES][256];
+static int enum_name_count = 0;
+
 // ---- Helpers ----
 
 static void trim(char *s) {
@@ -202,6 +207,11 @@ static const char *c_type_to_mix(const char *ctype) {
         if (strcmp(typedefs[i].alias, buf) == 0) {
             return c_type_to_mix(typedefs[i].target);
         }
+    }
+
+    // Check if this is a known enum type name
+    for (int i = 0; i < enum_name_count; i++) {
+        if (strcmp(enum_names[i], buf) == 0) return "int32";
     }
 
     // Unknown type — treat as opaque pointer (*byte)
@@ -362,12 +372,14 @@ static char *preprocess_header(const char *path, bool verbose) {
     char vendor_flags[2048];
     build_vendor_iflags(vendor_flags, sizeof(vendor_flags));
     // -DGL_GLEXT_PROTOTYPES exposes GL 2.0+ function prototypes in glext.h
+    const char *gl_ext = (strstr(path, "opengl") || strstr(path, "OpenGL") ||
+                          strstr(path, "glext")) ? "-DGL_GLEXT_PROTOTYPES " : "";
     if (include_dir[0])
-        snprintf(cmd, sizeof(cmd), "cc -E -P -DGL_GLEXT_PROTOTYPES %s%s -I\"%s\" -x c \"%s\" 2>/dev/null",
-                 cppflags, vendor_flags, include_dir, path);
+        snprintf(cmd, sizeof(cmd), "cc -E -P %s%s%s -I\"%s\" -x c \"%s\" 2>/dev/null",
+                 gl_ext, cppflags, vendor_flags, include_dir, path);
     else
-        snprintf(cmd, sizeof(cmd), "cc -E -P -DGL_GLEXT_PROTOTYPES %s%s -x c \"%s\" 2>/dev/null",
-                 cppflags, vendor_flags, path);
+        snprintf(cmd, sizeof(cmd), "cc -E -P %s%s%s -x c \"%s\" 2>/dev/null",
+                 gl_ext, cppflags, vendor_flags, path);
     return run_command(cmd, verbose);
 }
 
@@ -1126,7 +1138,25 @@ static int parse_enums(const char *text) {
             while (*p && *p != ',' && *p != '}') p++;
         }
 
-        if (*p == '}') p++;
+        if (*p == '}') {
+            p++;
+            // Capture typedef name: } TypeName ;
+            const char *save_p = p;
+            while (*p && isspace((unsigned char)*p)) p++;
+            if (is_ident_char(*p)) {
+                char tname[256];
+                int ti = 0;
+                while (*p && is_ident_char(*p) && ti < (int)sizeof(tname) - 1)
+                    tname[ti++] = *p++;
+                tname[ti] = '\0';
+                if (ti > 0 && enum_name_count < MAX_ENUM_NAMES) {
+                    strncpy(enum_names[enum_name_count], tname, 255);
+                    enum_name_count++;
+                }
+            } else {
+                p = save_p;
+            }
+        }
     }
 
     return added;
@@ -1645,6 +1675,7 @@ int cbind_generate(const char *header_path, const char *out_path,
     typedef_count = 0;
     typedef_count = 0;
     fp_typedef_count = 0;
+    enum_name_count = 0;
 
     // Derive lib name if not provided
     char derived_lib[256] = "";
@@ -1716,9 +1747,9 @@ int cbind_generate(const char *header_path, const char *out_path,
             return 1;
         }
         parse_typedefs(text);
+        parse_enums(text);
         parse_structs(text);
         parse_unions(text);
-        parse_enums(text);
         parse_func_ptr_typedefs(text);
         parse_func_ptr_globals(text);
         parse_prototypes(text);
@@ -1799,9 +1830,9 @@ char *cbind_generate_string(const char *header_path, const char *lib_name, bool 
             return NULL;
         }
         parse_typedefs(text);
+        parse_enums(text);
         parse_structs(text);
         parse_unions(text);
-        parse_enums(text);
         parse_func_ptr_typedefs(text);
         parse_func_ptr_globals(text);
         parse_prototypes(text);

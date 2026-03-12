@@ -1513,11 +1513,13 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             return t;
         }
         case NODE_SHAPE_LIT: {
-            // Allocate stack space for the shape
+            // Allocate stack space for the shape and zero-initialize
             MixType *stype = expr->resolved_type;
             int size = stype ? stype->shape.total_size : 16;
             int t = next_temp(emit);
             fprintf(emit->out, "\t%%t%d =l alloc8 %d\n", t, size);
+            // Zero-initialize (C struct interop requires unset fields = 0)
+            fprintf(emit->out, "\tcall $memset(l %%t%d, w 0, l %d)\n", t, size);
 
             if (stype && stype->kind == TYPE_SHAPE && stype->shape.is_tagged_union) {
                 // Tagged union construction: store tag + variant fields

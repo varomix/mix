@@ -455,6 +455,30 @@ static int extract_defines(const char *path, bool verbose) {
         }
         p = val_buf;
 
+        // Handle bit-shift expressions: (1u << N), (1 << N)
+        {
+            char *shift = strstr(val_buf, "<<");
+            if (shift) {
+                // Extract base and shift amount
+                char *bp = val_buf;
+                while (*bp && (*bp == '(' || isspace((unsigned char)*bp))) bp++;
+                char *endp2;
+                long long base = strtoll(bp, &endp2, 0);
+                // Skip trailing u/U/l/L
+                while (*endp2 == 'u' || *endp2 == 'U' || *endp2 == 'l' || *endp2 == 'L') endp2++;
+                if (endp2 <= shift) {
+                    char *sp = shift + 2;
+                    while (*sp && isspace((unsigned char)*sp)) sp++;
+                    long long amount = strtoll(sp, &endp2, 0);
+                    if (endp2 != sp) {
+                        long long result = base << amount;
+                        snprintf(val_buf, sizeof(val_buf), "%lld", result);
+                    }
+                }
+            }
+        }
+        p = val_buf;
+
         // Try integer parse
         char *endp;
         bool hex_prefix = (p[0] == '0' && (p[1] == 'x' || p[1] == 'X'));

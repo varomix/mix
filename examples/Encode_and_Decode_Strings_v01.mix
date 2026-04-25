@@ -26,4 +26,3 @@ main()
     print("encoded: {encoded_msg}")
     decoded_string = decode(encoded_msg)
     print(decoded_string)
-

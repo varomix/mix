@@ -144,12 +144,19 @@ static bool space_after(TokenKind k, TokenKind next) {
     if (next == TOK_BANG) return false;
     // @: directive prefix, no space after.
     if (k == TOK_AT) return false;
-    // Function-call open paren: no space between IDENT and (.
+    // Function-call open paren: no space between callee and (. Includes
+    // ordinary identifiers, the closing brackets of a chained expression,
+    // and type-keyword constructors like `int(0)` / `str("foo")`.
     if (next == TOK_LPAREN &&
         (k == TOK_IDENT || k == TOK_IDENT_MUT ||
-         k == TOK_RPAREN || k == TOK_RBRACKET)) return false;
+         k == TOK_RPAREN || k == TOK_RBRACKET ||
+         (k >= TOK_INT && k <= TOK_FLOAT64))) return false;
     // Type subscript: Ident[Type] — no space between IDENT and [.
-    if (next == TOK_LBRACKET && (k == TOK_IDENT || k == TOK_IDENT_MUT)) return false;
+    // Also `set[T]` for set type annotations.
+    if (next == TOK_LBRACKET &&
+        (k == TOK_IDENT || k == TOK_IDENT_MUT || k == TOK_SET)) return false;
+    // `set{...}` set literal — bind the `set` keyword to the opening brace.
+    if (next == TOK_LBRACE && k == TOK_SET) return false;
     // Colon: no space before, one space after.
     if (next == TOK_COLON) return false;
     if (k == TOK_COLON) return true;
@@ -322,9 +329,11 @@ static int format_tokens(Token *toks, int n_toks, FmtCommentList *cl, FILE *out)
 
         if (line_has_content) {
             bool space = space_after(prev_kind, t->kind);
-            // Suppress space between a unary prefix operator and its operand.
+            // Suppress space between a unary prefix sigil (`-`, `*`, `&`)
+            // and its operand. NOT excluded: `not` is a word-keyword that
+            // needs a space, otherwise `not X` becomes `notX`.
             if (space && (prev_kind == TOK_MINUS || prev_kind == TOK_STAR ||
-                          prev_kind == TOK_AMPERSAND || prev_kind == TOK_NOT) &&
+                          prev_kind == TOK_AMPERSAND) &&
                 is_unary_position(prev_prev_kind)) {
                 space = false;
             }

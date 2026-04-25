@@ -50,10 +50,41 @@ blank_count=$(echo "$out" | grep -c "^$")
     || ng "fmt: preserves intentional blank lines"
 rm -f /tmp/mix_fmt_blanks.mix
 
-# --- Real-world: stdlib must already be canonically formatted ---
+# --- `not X` keeps a space (was concatenating into `notX`) ---
+echo 'main()
+    while not done()
+        print("loop")
+done() -> bool
+    true' > /tmp/mix_not_kw.mix
+out=$("$MIXC" fmt /tmp/mix_not_kw.mix)
+echo "$out" | grep -q 'while not done' \
+    && ok "fmt: keyword 'not' keeps space before operand" \
+    || ng "fmt: keyword 'not' keeps space before operand"
+rm -f /tmp/mix_not_kw.mix
+
+# --- Type-keyword constructors: `int(0)`, `set{...}` ---
+echo 'main()
+    n = int(0)
+    s = set{"a", "b"}
+    print(n)
+    print(s.len)' > /tmp/mix_typector.mix
+out=$("$MIXC" fmt /tmp/mix_typector.mix)
+echo "$out" | grep -q 'int(0)' \
+    && ok "fmt: type-keyword constructor binds to (" \
+    || ng "fmt: type-keyword constructor binds to ("
+echo "$out" | grep -q 'set{"a"' \
+    && ok "fmt: set literal binds keyword to {" \
+    || ng "fmt: set literal binds keyword to {"
+rm -f /tmp/mix_typector.mix
+
+# --- Real-world: stdlib + examples must already be canonically formatted ---
 "$MIXC" fmt --check lib/std/ > /dev/null 2>&1
 [ "$?" = "0" ] && ok "fmt: stdlib is canonically formatted" \
     || ng "fmt: stdlib is canonically formatted"
+
+"$MIXC" fmt --check examples/*.mix > /dev/null 2>&1
+[ "$?" = "0" ] && ok "fmt: examples are canonically formatted" \
+    || ng "fmt: examples are canonically formatted"
 
 # --- Keywords as method names: `s.repeat(n)` keeps no space before ( ---
 echo 'main()

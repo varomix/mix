@@ -39,11 +39,7 @@ main()
     glDeleteShader(fs)
 
     // Triangle vertices: position(x,y,z) + color(r,g,b)
-    vertices = [
-        0.0,  0.5, 0.0,   1.0, 0.0, 0.0,
-       -0.5, -0.5, 0.0,   0.0, 1.0, 0.0,
-        0.5, -0.5, 0.0,   0.0, 0.0, 1.0
-    ]
+    vertices = [0.0, 0.5, 0.0, 1.0, 0.0, 0.0, -0.5, -0.5, 0.0, 0.0, 1.0, 0.0, 0.5, -0.5, 0.0, 0.0, 0.0, 1.0]
     verts = list_to_f32(vertices)
 
     // Create VAO and VBO

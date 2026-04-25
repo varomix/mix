@@ -15,7 +15,7 @@ extern "raylib"
 shape Color
     r, g, b, a: uint8
 
-add( x: int, y : int) -> int
+add(x: int, y: int) -> int
     x + y
 
 main()
@@ -31,4 +31,3 @@ main()
         EndDrawing()
 
     CloseWindow()
-    

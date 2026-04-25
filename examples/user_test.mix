@@ -2,4 +2,3 @@ main()
     fruits = ["orange", "apple", "strawberry"]
     print("Hell Oh Hell!!")
     print(fruits[..2])
-

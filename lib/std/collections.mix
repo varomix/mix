@@ -9,10 +9,10 @@
 pub shape Stack[T]
     items: [T]
 
-    push!(val: T)~
+    push!(val: T) ~
         items.push!(val)
 
-    pop!() -> T~
+    pop!() -> T ~
         items.pop!()
 
     peek() -> T
@@ -27,10 +27,10 @@ pub shape Stack[T]
 pub shape Queue[T]
     items: [T]
 
-    enqueue!(val: T)~
+    enqueue!(val: T) ~
         items.push!(val)
 
-    dequeue!() -> T~
+    dequeue!() -> T ~
         val = items[0]
         items.remove!(0)
         val

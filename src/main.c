@@ -123,8 +123,11 @@ static void usage(void) {
     fprintf(stderr, "  build [file.mix]    Compile to binary\n");
     fprintf(stderr, "  run [file.mix]      Compile and execute\n");
     fprintf(stderr, "  run -f <file.mix>   Compile and run specific file\n");
-    fprintf(stderr, "  fmt [file.mix]      Format source. Reads stdin if no file.\n");
-    fprintf(stderr, "                      `-w` overwrites the file in place.\n\n");
+    fprintf(stderr, "  fmt [path...]       Format source files or directories.\n");
+    fprintf(stderr, "                      Reads stdin if no path given.\n");
+    fprintf(stderr, "                      Flags: -w (write in place),\n");
+    fprintf(stderr, "                             --check (exit 1 if reformat needed),\n");
+    fprintf(stderr, "                             --diff (print unified diff)\n\n");
     fprintf(stderr, "  Running 'mix' with no command or file shows this help.\n");
     fprintf(stderr, "  'build' or 'run' without a file auto-discovers main().\n\n");
     fprintf(stderr, "Options:\n");
@@ -217,6 +220,184 @@ static void derive_output_name(const char *input_file, char *out, size_t out_siz
     if (dot && strcmp(dot, ".mix") == 0) {
         *dot = '\0';
     }
+}
+
+// --- mix fmt helpers ---
+
+// Format `src` to a freshly-allocated buffer. Returns NULL on failure.
+// Caller frees.
+static char *fmt_to_buf(const char *src, const char *path) {
+    char *buf = NULL;
+    size_t buf_size = 0;
+    FILE *mem = open_memstream(&buf, &buf_size);
+    if (!mem) return NULL;
+    int rc = mix_format(src, path, mem);
+    fclose(mem);
+    if (rc != 0) { free(buf); return NULL; }
+    return buf;
+}
+
+// Tiny line-based unified diff suitable for human review. Not a full
+// hunk-coalescing implementation — emits one hunk per file.
+static void fmt_print_diff(const char *path, const char *a, const char *b) {
+    printf("--- %s\n", path);
+    printf("+++ %s (formatted)\n", path);
+    const char *ap = a;
+    const char *bp = b;
+    while (*ap || *bp) {
+        const char *anl = strchr(ap, '\n');
+        const char *bnl = strchr(bp, '\n');
+        size_t alen = anl ? (size_t)(anl - ap) : strlen(ap);
+        size_t blen = bnl ? (size_t)(bnl - bp) : strlen(bp);
+        if (alen == blen && memcmp(ap, bp, alen) == 0) {
+            printf(" %.*s\n", (int)alen, ap);
+        } else {
+            if (*ap) printf("-%.*s\n", (int)alen, ap);
+            if (*bp) printf("+%.*s\n", (int)blen, bp);
+        }
+        if (anl) ap = anl + 1; else ap += alen;
+        if (bnl) bp = bnl + 1; else bp += blen;
+    }
+}
+
+// Skip directories that obviously hold generated/vendor content during a
+// recursive scan. Mirrors the workspace-cache rule in lsp_workspace.c.
+static bool fmt_skip_dir(const char *name) {
+    if (name[0] == '.') return true;
+    if (strcmp(name, "build") == 0) return true;
+    if (strcmp(name, "node_modules") == 0) return true;
+    if (strcmp(name, "out") == 0) return true;
+    if (strcmp(name, "target") == 0) return true;
+    return false;
+}
+
+static int fmt_one_file(const char *path, bool write_in_place,
+                        bool check, bool diff);
+
+static int fmt_walk_dir(const char *dir, bool write_in_place,
+                        bool check, bool diff) {
+    DIR *d = opendir(dir);
+    if (!d) {
+        fprintf(stderr, "mix fmt: cannot open '%s': %s\n", dir, strerror(errno));
+        return 1;
+    }
+    int worst = 0;
+    struct dirent *ent;
+    char path[1024];
+    // Strip trailing slash so we don't produce "dir//file"
+    int dir_len = (int)strlen(dir);
+    while (dir_len > 1 && dir[dir_len - 1] == '/') dir_len--;
+    while ((ent = readdir(d)) != NULL) {
+        if (fmt_skip_dir(ent->d_name)) continue;
+        snprintf(path, sizeof(path), "%.*s/%s", dir_len, dir, ent->d_name);
+        struct stat st;
+        if (stat(path, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            int rc = fmt_walk_dir(path, write_in_place, check, diff);
+            if (rc > worst) worst = rc;
+        } else if (S_ISREG(st.st_mode)) {
+            size_t n = strlen(ent->d_name);
+            if (n < 5 || strcmp(ent->d_name + n - 4, ".mix") != 0) continue;
+            int rc = fmt_one_file(path, write_in_place, check, diff);
+            if (rc > worst) worst = rc;
+        }
+    }
+    closedir(d);
+    return worst;
+}
+
+static int fmt_one_file(const char *path, bool write_in_place,
+                        bool check, bool diff) {
+    char *src = read_file(path);
+    if (!src) return 1;
+    char *out = fmt_to_buf(src, path);
+    if (!out) {
+        fprintf(stderr, "mix fmt: failed to format '%s'\n", path);
+        free(src);
+        return 1;
+    }
+
+    int rc = 0;
+    bool changed = (strcmp(src, out) != 0);
+
+    if (check) {
+        if (changed) { printf("%s\n", path); rc = 1; }
+    } else if (diff) {
+        if (changed) fmt_print_diff(path, src, out);
+    } else if (write_in_place) {
+        if (changed) {
+            char tmp[1024];
+            snprintf(tmp, sizeof(tmp), "%s.fmt.tmp", path);
+            FILE *f = fopen(tmp, "w");
+            if (!f) {
+                fprintf(stderr, "mix fmt: cannot create '%s': %s\n", tmp, strerror(errno));
+                rc = 1;
+            } else {
+                fputs(out, f);
+                fclose(f);
+                if (rename(tmp, path) != 0) {
+                    fprintf(stderr, "mix fmt: rename failed: %s\n", strerror(errno));
+                    unlink(tmp);
+                    rc = 1;
+                }
+            }
+        }
+    } else {
+        fputs(out, stdout);
+    }
+
+    free(src);
+    free(out);
+    return rc;
+}
+
+// Top-level fmt command: dispatches over the collected paths. With no
+// paths, reads stdin and writes to stdout. Returns the worst exit code.
+static int fmt_dispatch(const char **paths, int n_paths,
+                        bool write_in_place, bool check, bool diff) {
+    if (n_paths == 0) {
+        // Stdin mode — only --check makes sense besides default.
+        size_t cap = 8192, len = 0;
+        char *src = malloc(cap);
+        int c;
+        while ((c = getchar()) != EOF) {
+            if (len + 1 >= cap) { cap *= 2; src = realloc(src, cap); }
+            src[len++] = (char)c;
+        }
+        src[len] = '\0';
+        char *out = fmt_to_buf(src, NULL);
+        int rc = 0;
+        if (!out) {
+            fprintf(stderr, "mix fmt: failed to format stdin\n");
+            rc = 1;
+        } else if (check) {
+            rc = (strcmp(src, out) == 0) ? 0 : 1;
+        } else if (diff) {
+            if (strcmp(src, out) != 0) fmt_print_diff("<stdin>", src, out);
+        } else {
+            fputs(out, stdout);
+        }
+        free(src); free(out);
+        return rc;
+    }
+
+    int worst = 0;
+    for (int i = 0; i < n_paths; i++) {
+        struct stat st;
+        if (stat(paths[i], &st) != 0) {
+            fprintf(stderr, "mix fmt: cannot stat '%s': %s\n", paths[i], strerror(errno));
+            if (1 > worst) worst = 1;
+            continue;
+        }
+        int rc;
+        if (S_ISDIR(st.st_mode)) {
+            rc = fmt_walk_dir(paths[i], write_in_place, check, diff);
+        } else {
+            rc = fmt_one_file(paths[i], write_in_place, check, diff);
+        }
+        if (rc > worst) worst = rc;
+    }
+    return worst;
 }
 
 // Resolve module path: "math" -> "./math.mix", "engine.physics" -> "./engine/physics.mix"
@@ -502,6 +683,11 @@ int main(int argc, char **argv) {
     RunMode mode = MODE_NONE;
     bool output_set = false;
     bool fmt_write_in_place = false;
+    bool fmt_check = false;
+    bool fmt_diff = false;
+    #define MAX_FMT_PATHS 64
+    const char *fmt_paths[MAX_FMT_PATHS];
+    int fmt_path_count = 0;
 
     #define MAX_LINK_FLAGS 64
     char *link_flags[MAX_LINK_FLAGS];
@@ -554,6 +740,10 @@ int main(int argc, char **argv) {
             bind_lib = argv[++i];
         } else if (strcmp(argv[i], "-w") == 0) {
             fmt_write_in_place = true;
+        } else if (mode == MODE_FMT && strcmp(argv[i], "--check") == 0) {
+            fmt_check = true;
+        } else if (mode == MODE_FMT && strcmp(argv[i], "--diff") == 0) {
+            fmt_diff = true;
     } else if (strncmp(argv[i], "-l", 2) == 0 || strncmp(argv[i], "-L", 2) == 0) {
             if (link_flag_count >= MAX_LINK_FLAGS) {
                 fprintf(stderr, "mix: too many linker flags (max %d)\n", MAX_LINK_FLAGS);
@@ -570,6 +760,11 @@ int main(int argc, char **argv) {
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "mix: unknown option '%s'\n", argv[i]);
             usage();
+        } else if (mode == MODE_FMT) {
+            // fmt accepts multiple positional args (files or directories).
+            if (fmt_path_count < MAX_FMT_PATHS)
+                fmt_paths[fmt_path_count++] = argv[i];
+            input_file = argv[i];   // first one also fills input_file
         } else {
             input_file = argv[i];
         }
@@ -581,63 +776,9 @@ int main(int argc, char **argv) {
         return cbind_generate(bind_path, output_file, bind_lib, verbose);
     }
 
-    // Format mode: `mix fmt FILE` writes to stdout; `mix fmt -w FILE`
-    // overwrites the file in place. Reads stdin when no file given.
     if (mode == MODE_FMT) {
-        char *src = NULL;
-        if (input_file) {
-            src = read_file(input_file);
-            if (!src) return 1;
-        } else {
-            // Read stdin
-            size_t cap = 8192, len = 0;
-            src = malloc(cap);
-            int c;
-            while ((c = getchar()) != EOF) {
-                if (len + 1 >= cap) { cap *= 2; src = realloc(src, cap); }
-                src[len++] = (char)c;
-            }
-            src[len] = '\0';
-        }
-
-        if (fmt_write_in_place) {
-            if (!input_file) {
-                fprintf(stderr, "mix fmt: -w requires a file argument\n");
-                free(src);
-                return 1;
-            }
-            // Format to a temp file, then atomically rename.
-            char tmp_path[1024];
-            snprintf(tmp_path, sizeof(tmp_path), "%s.fmt.tmp", input_file);
-            FILE *out = fopen(tmp_path, "w");
-            if (!out) {
-                fprintf(stderr, "mix fmt: cannot create '%s': %s\n",
-                        tmp_path, strerror(errno));
-                free(src);
-                return 1;
-            }
-            int rc = mix_format(src, input_file, out);
-            fclose(out);
-            if (rc != 0) {
-                unlink(tmp_path);
-                fprintf(stderr, "mix fmt: failed to format '%s'\n", input_file);
-                free(src);
-                return rc;
-            }
-            if (rename(tmp_path, input_file) != 0) {
-                fprintf(stderr, "mix fmt: cannot rename '%s' -> '%s': %s\n",
-                        tmp_path, input_file, strerror(errno));
-                unlink(tmp_path);
-                free(src);
-                return 1;
-            }
-        } else {
-            int rc = mix_format(src, input_file, stdout);
-            free(src);
-            return rc;
-        }
-        free(src);
-        return 0;
+        return fmt_dispatch(fmt_paths, fmt_path_count,
+                            fmt_write_in_place, fmt_check, fmt_diff);
     }
 
     // Check MIX_BACKEND env var

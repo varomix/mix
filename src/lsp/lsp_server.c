@@ -4,6 +4,9 @@
 #include "lsp_hover.h"
 #include "../fmt.h"
 #include <ctype.h>
+#include <dirent.h>
+#include <libgen.h>
+#include <sys/stat.h>
 
 void lsp_server_init(LspServer *server) {
     memset(server, 0, sizeof(LspServer));
@@ -429,6 +432,118 @@ static int check_string_interp(const char *source, int line, int col,
     return 1;
 }
 
+// Walk back from `before_idx` through tokens to determine whether the
+// cursor is inside a `use ...` declaration on the same line. Returns the
+// dotted module-path prefix (everything between `use` and the cursor)
+// in `out_prefix`, or false if not in a use decl.
+//
+// Examples:
+//   `use std.| `     -> "std"
+//   `use std.math.|` -> "std.math"
+//   `use std|`       -> "" (no dot yet — fall through to other completion)
+static bool in_use_context(Token *toks, int n_toks, int before_idx,
+                           char *out_prefix, int out_size) {
+    (void)n_toks;
+    out_prefix[0] = '\0';
+    bool saw_dot = false;
+    // Walk back collecting an alternating IDENT . IDENT . ... sequence.
+    for (int i = before_idx; i >= 0; i--) {
+        Token *t = &toks[i];
+        if (t->kind == TOK_NEWLINE || t->kind == TOK_INDENT ||
+            t->kind == TOK_DEDENT) return false;
+        if (t->kind == TOK_USE) {
+            return saw_dot;  // need at least one dot to suggest anything useful
+        }
+        if (t->kind == TOK_DOT) { saw_dot = true; continue; }
+        if (t->kind == TOK_IDENT) continue;
+        return false;
+    }
+    return false;
+    (void)out_prefix; (void)out_size;
+}
+
+// Build the dotted prefix between `use` and `idx` (exclusive). Mirrors
+// in_use_context but emits the path string.
+static void use_path_prefix(Token *toks, int idx, char *out, int out_size) {
+    // Find the `use` token
+    int use_at = -1;
+    for (int i = idx; i >= 0; i--) {
+        if (toks[i].kind == TOK_USE) { use_at = i; break; }
+        if (toks[i].kind == TOK_NEWLINE) break;
+    }
+    if (use_at < 0) { out[0] = '\0'; return; }
+    int off = 0;
+    for (int i = use_at + 1; i < idx; i++) {
+        if (toks[i].kind == TOK_DOT) {
+            if (off + 1 < out_size) out[off++] = '.';
+        } else if (toks[i].kind == TOK_IDENT) {
+            int n = toks[i].length < out_size - off - 1
+                ? toks[i].length : out_size - off - 1;
+            memcpy(out + off, toks[i].start, n);
+            off += n;
+        }
+    }
+    out[off] = '\0';
+    // Strip a trailing dot (the cursor is sitting right after it).
+    if (off > 0 && out[off - 1] == '.') out[off - 1] = '\0';
+}
+
+// Add completion items for stdlib modules under `prefix` (e.g. "std" lists
+// math/io/fmt/...). Walks the file's `lib/std/` directory if found via the
+// document path.
+static void add_use_completions(JsonWriter *w, LspDocument *doc, const char *prefix) {
+    if (!doc || !prefix || !*prefix) return;
+    // Map the prefix to a filesystem directory using lsp_resolve_use_path
+    // on a synthetic <prefix>.placeholder path. The placeholder isn't a
+    // real file, but the caller of resolve walks parents looking for
+    // `lib/std/`, so we can extract the directory from a successful match.
+    // Easier path: probe <prefix>.X for a known X to find the right dir,
+    // then list it. Skip — instead, manually walk for `lib/std/` from the
+    // file's directory.
+    if (!doc->filepath) return;
+    char *dir_copy = strdup(doc->filepath);
+    char *dir = dirname(dir_copy);
+
+    // For now we only handle the std.* case — that's the 90% need.
+    if (strncmp(prefix, "std", 3) == 0) {
+        // Walk up looking for <ancestor>/lib/std/<rest>/ and list its .mix files.
+        const char *rest = (prefix[3] == '.') ? prefix + 4 : "";
+        char ascend[1024];
+        snprintf(ascend, sizeof(ascend), "%s", dir);
+        for (int up = 0; up < 32; up++) {
+            char target[1024];
+            if (rest[0])
+                snprintf(target, sizeof(target), "%s/lib/std/%s", ascend, rest);
+            else
+                snprintf(target, sizeof(target), "%s/lib/std", ascend);
+            DIR *d = opendir(target);
+            if (d) {
+                struct dirent *ent;
+                while ((ent = readdir(d)) != NULL) {
+                    if (ent->d_name[0] == '.') continue;
+                    size_t n = strlen(ent->d_name);
+                    if (n > 4 && strcmp(ent->d_name + n - 4, ".mix") == 0) {
+                        char base[256];
+                        int blen = (int)(n - 4) < 255 ? (int)(n - 4) : 255;
+                        memcpy(base, ent->d_name, blen);
+                        base[blen] = '\0';
+                        emit_completion(w, base, 9 /* Module */, "stdlib module");
+                    }
+                }
+                closedir(d);
+                free(dir_copy);
+                return;
+            }
+            char *parent = dirname(ascend);
+            if (!parent || strcmp(parent, ascend) == 0 || strcmp(parent, ".") == 0) break;
+            char tmp[1024];
+            snprintf(tmp, sizeof(tmp), "%s", parent);
+            snprintf(ascend, sizeof(ascend), "%s", tmp);
+        }
+    }
+    free(dir_copy);
+}
+
 static void handle_completion_request(LspServer *server, int64_t id, JsonValue *params) {
     const char *uri = json_get_string(json_get(params, "textDocument"), "uri");
     JsonValue *pos = json_get(params, "position");
@@ -445,6 +560,36 @@ static void handle_completion_request(LspServer *server, int64_t id, JsonValue *
     JsonWriter w;
     jw_init(&w);
     jw_array_start(&w);
+
+    // Use-decl context: `use std.|` should suggest stdlib modules instead
+    // of the usual scope completions.
+    Token *cursor_tok = (col > 1)
+        ? tokens_find_at(doc->tokens, doc->token_count, line, col - 1) : NULL;
+    int cursor_idx = -1;
+    if (cursor_tok) {
+        for (int i = 0; i < doc->token_count; i++) {
+            if (&doc->tokens[i] == cursor_tok) { cursor_idx = i; break; }
+        }
+    }
+    if (cursor_idx >= 0) {
+        char prefix[256];
+        if (in_use_context(doc->tokens, doc->token_count, cursor_idx, prefix, sizeof(prefix))) {
+            // Cursor sits right after a `.` in a `use ...` decl.
+            // Walk back from the dot to build the module-path prefix.
+            int dot_idx = cursor_idx;
+            // The cursor token is the dot itself (or the ident just typed
+            // before invoking completion). Find the most recent dot.
+            while (dot_idx >= 0 && doc->tokens[dot_idx].kind != TOK_DOT) dot_idx--;
+            if (dot_idx >= 0) {
+                use_path_prefix(doc->tokens, dot_idx, prefix, sizeof(prefix));
+                add_use_completions(&w, doc, prefix);
+            }
+            jw_array_end(&w);
+            lsp_send_response(id, w.buf);
+            jw_free(&w);
+            return;
+        }
+    }
 
     // Check if cursor is inside string interpolation {expr}
     char interp_ident[256] = "";

@@ -50,7 +50,9 @@
         "editor.quickSuggestions": {
           "strings": "on"
         },
-        "editor.inlayHints.enabled": "on"
+        "editor.inlayHints.enabled": "on",
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "varomix.mix-lang"
       }
     },
     "commands": [

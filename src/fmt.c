@@ -137,7 +137,9 @@ static bool space_after(TokenKind k, TokenKind next) {
     if (k == TOK_DOT || next == TOK_DOT) return false;
     if (k == TOK_DOTDOT || next == TOK_DOTDOT) return false;
     if (k == TOK_DOTDOT_EQ || next == TOK_DOTDOT_EQ) return false;
-    // ? and ~ and ! suffix operators: no space before; usually no space after.
+    // ? and ! suffix operators: no space before; usually no space after.
+    // (`~` keeps a space because it reads better in `-> T ~`; styles vary
+    // but consistency wins — the formatter normalizes to one space.)
     if (next == TOK_QUESTION) return false;
     if (next == TOK_BANG) return false;
     // @: directive prefix, no space after.
@@ -181,21 +183,35 @@ static void emit_token_text(FmtOut *o, Token *t) {
 // --- Comment emission helpers ---
 
 // Emit any standalone comments whose source line is <= `up_to_line`,
-// starting from index `*idx`. Returns updated index.
+// starting from index `*idx`. Returns updated index. If `last_line_out`
+// is non-NULL, it's updated to the source line of the last comment we
+// emitted (so the caller can detect blank-line gaps).
 static int emit_standalone_comments_until(FmtOut *o, FmtCommentList *cl,
-                                          int idx, int up_to_line) {
+                                          int idx, int up_to_line,
+                                          int *last_line_out) {
+    int prev_line = last_line_out ? *last_line_out : 0;
     while (idx < cl->count && cl->items[idx].standalone &&
            cl->items[idx].line <= up_to_line) {
+        // Preserve a blank line between the previous emission and this
+        // comment if the original had one.
+        if (prev_line > 0 && cl->items[idx].line - prev_line > 1) {
+            fout_newline(o);
+        }
         fout_str(o, cl->items[idx].text);
         fout_newline(o);
+        prev_line = cl->items[idx].line;
         idx++;
     }
+    if (last_line_out) *last_line_out = prev_line;
     return idx;
 }
 
 // True if `prev` puts the current operator in a position where it's a
 // unary prefix (i.e., the operator's operand comes right after with no
-// space). Examples: `-x` after `=`, `(`, `[`, `,`, `=>`, another binary op.
+// space). Examples: `-x` after `=`, `(`, `[`, `,`, `=>`, another binary op,
+// or a keyword that introduces an expression (`done`, `if`, `match`, ...).
+// (`fail` is parsed as TOK_IDENT, so unary detection there relies on the
+// prev_prev_kind being a NEWLINE.)
 static bool is_unary_position(TokenKind prev) {
     switch (prev) {
         case TOK_LPAREN: case TOK_LBRACKET: case TOK_LBRACE:
@@ -207,15 +223,13 @@ static bool is_unary_position(TokenKind prev) {
         case TOK_AND: case TOK_OR: case TOK_NOT:
         case TOK_PLUS_EQ: case TOK_MINUS_EQ: case TOK_STAR_EQ: case TOK_SLASH_EQ:
         case TOK_NEWLINE:
+        // Keywords that put what follows in expression position.
+        case TOK_DONE: case TOK_IF: case TOK_WHILE: case TOK_MATCH:
+        case TOK_DEFER: case TOK_GO: case TOK_WAIT: case TOK_YIELD:
             return true;
         default:
             return false;
     }
-}
-
-static bool is_top_level_decl_start(TokenKind k) {
-    return k == TOK_SHAPE || k == TOK_UNION || k == TOK_EXTERN ||
-           k == TOK_USE || k == TOK_PUB || k == TOK_AT;
 }
 
 // --- Main format loop ---
@@ -225,9 +239,12 @@ static int format_tokens(Token *toks, int n_toks, FmtCommentList *cl, FILE *out)
     int comment_idx = 0;
     int last_emitted_line = 0;
     bool line_has_content = false;
-    bool seen_first_decl = false;
     TokenKind prev_kind = TOK_NEWLINE;
     TokenKind prev_prev_kind = TOK_NEWLINE;
+
+    // Source line of the most recently emitted thing (token or comment).
+    // Used to preserve user-intentional blank lines.
+    int last_src_line = 0;
 
     // Emit all leading standalone comments before the first real token, so
     // they sit at the top of the file rather than after the first decl.
@@ -240,7 +257,8 @@ static int format_tokens(Token *toks, int n_toks, FmtCommentList *cl, FILE *out)
             break;
         }
         comment_idx = emit_standalone_comments_until(&o, cl, comment_idx,
-                                                     first_code_line - 1);
+                                                     first_code_line - 1,
+                                                     &last_src_line);
     }
 
     for (int i = 0; i < n_toks; i++) {
@@ -259,16 +277,27 @@ static int format_tokens(Token *toks, int n_toks, FmtCommentList *cl, FILE *out)
             }
             if (line_has_content) fout_newline(&o);
             line_has_content = false;
+
+            // Apply any INDENT/DEDENT that happen before the next code
+            // token, so that pending standalone comments are emitted at the
+            // correct indent level (not the previous block's).
             int next_code_line = -1;
-            for (int j = i + 1; j < n_toks; j++) {
-                if (toks[j].kind == TOK_NEWLINE || toks[j].kind == TOK_INDENT ||
-                    toks[j].kind == TOK_DEDENT) continue;
+            int j = i + 1;
+            for (; j < n_toks; j++) {
+                if (toks[j].kind == TOK_INDENT) { o.indent_level++; continue; }
+                if (toks[j].kind == TOK_DEDENT) {
+                    if (o.indent_level > 0) o.indent_level--;
+                    continue;
+                }
+                if (toks[j].kind == TOK_NEWLINE) continue;
                 next_code_line = toks[j].line;
                 break;
             }
             if (next_code_line < 0) next_code_line = INT_MAX;
             comment_idx = emit_standalone_comments_until(
-                &o, cl, comment_idx, next_code_line - 1);
+                &o, cl, comment_idx, next_code_line - 1, &last_src_line);
+            // Skip the INDENT/DEDENT/NEWLINE tokens we just consumed.
+            i = j - 1;
             prev_prev_kind = prev_kind;
             prev_kind = TOK_NEWLINE;
             continue;
@@ -282,10 +311,12 @@ static int format_tokens(Token *toks, int n_toks, FmtCommentList *cl, FILE *out)
             continue;
         }
 
-        // Insert a blank line between top-level declarations.
-        if (o.indent_level == 0 && !line_has_content && seen_first_decl &&
-            (is_top_level_decl_start(t->kind) ||
-             t->kind == TOK_IDENT)) {
+        // Preserve user-intentional blank lines: if the original had a
+        // gap between the previous emission and this token, emit one
+        // blank line. (No auto-blank between adjacent top-level decls —
+        // we honor the user's source-level grouping instead.)
+        if (!line_has_content && last_src_line > 0 &&
+            t->line - last_src_line > 1) {
             fout_newline(&o);
         }
 
@@ -297,13 +328,20 @@ static int format_tokens(Token *toks, int n_toks, FmtCommentList *cl, FILE *out)
                 is_unary_position(prev_prev_kind)) {
                 space = false;
             }
+            // Method/field calls: `obj.method(...)` — when the previous
+            // token came right after a `.`, treat it as a name and avoid
+            // the space before `(`. Keywords like `repeat`, `set` show up
+            // here because MIX allows them as method names.
+            if (space && t->kind == TOK_LPAREN && prev_prev_kind == TOK_DOT) {
+                space = false;
+            }
             if (space) fout_str(&o, " ");
         }
 
         emit_token_text(&o, t);
         line_has_content = true;
         last_emitted_line = t->line;
-        if (o.indent_level == 0) seen_first_decl = true;
+        last_src_line = t->line;
         prev_prev_kind = prev_kind;
         prev_kind = t->kind;
     }
@@ -311,8 +349,11 @@ static int format_tokens(Token *toks, int n_toks, FmtCommentList *cl, FILE *out)
     // Trailing standalone comments after the last token.
     while (comment_idx < cl->count) {
         if (cl->items[comment_idx].standalone) {
+            if (last_src_line > 0 && cl->items[comment_idx].line - last_src_line > 1)
+                fout_newline(&o);
             fout_str(&o, cl->items[comment_idx].text);
             fout_newline(&o);
+            last_src_line = cl->items[comment_idx].line;
         }
         comment_idx++;
     }

@@ -89,6 +89,15 @@ vim.api.nvim_create_autocmd('FileType', {
     end,
 })
 
+-- Format-on-save (opt-in): uncomment to enable. Calls the LSP server's
+-- textDocument/formatting (which delegates to `mix fmt`). Sync mode keeps
+-- the buffer consistent for the write that follows.
+--
+-- vim.api.nvim_create_autocmd('BufWritePre', {
+--     pattern = '*.mix',
+--     callback = function() vim.lsp.buf.format({ async = false }) end,
+-- })
+
 -- Restart the LSP for all open mix buffers (e.g. after rebuilding mix-lsp).
 vim.api.nvim_create_user_command('MixLspRestart', function()
     for _, client in ipairs(vim.lsp.get_clients({ name = 'mix-lsp' })) do

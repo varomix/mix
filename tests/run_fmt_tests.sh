@@ -34,6 +34,82 @@ echo "$out1" | grep -q 'print(-1)' \
     && ok "fmt: unary minus stays glued to operand" \
     || ng "fmt: unary minus stays glued to operand"
 
+# --- Preserves intentional blank lines inside function bodies ---
+cat > /tmp/mix_fmt_blanks.mix << 'MIXEOF'
+main()
+    a = 1
+    b = 2
+
+    c = 3
+    print(a + b + c)
+MIXEOF
+out=$("$MIXC" fmt /tmp/mix_fmt_blanks.mix)
+# count blank lines (just an empty grep match within the body)
+blank_count=$(echo "$out" | grep -c "^$")
+[ "$blank_count" -ge 1 ] && ok "fmt: preserves intentional blank lines" \
+    || ng "fmt: preserves intentional blank lines"
+rm -f /tmp/mix_fmt_blanks.mix
+
+# --- Real-world: stdlib must already be canonically formatted ---
+"$MIXC" fmt --check lib/std/ > /dev/null 2>&1
+[ "$?" = "0" ] && ok "fmt: stdlib is canonically formatted" \
+    || ng "fmt: stdlib is canonically formatted"
+
+# --- Keywords as method names: `s.repeat(n)` keeps no space before ( ---
+echo 'main()
+    print("ab".repeat(3))' > /tmp/mix_kwmethod.mix
+out=$("$MIXC" fmt /tmp/mix_kwmethod.mix)
+echo "$out" | grep -q '"ab".repeat(3)' \
+    && ok "fmt: keyword used as method name keeps no space before (" \
+    || ng "fmt: keyword used as method name keeps no space before ("
+rm -f /tmp/mix_kwmethod.mix
+
+# --- `done -1` keeps unary minus glued ---
+echo 'sign(x: int) -> int
+    if x < 0
+        done -1
+    1' > /tmp/mix_done_neg.mix
+out=$("$MIXC" fmt /tmp/mix_done_neg.mix)
+echo "$out" | grep -q 'done -1' \
+    && ok "fmt: unary minus after done stays glued" \
+    || ng "fmt: unary minus after done stays glued"
+rm -f /tmp/mix_done_neg.mix
+
+# --- --check on a non-formatted file: exits 1, prints path ---
+echo 'main()
+    x  =  1+2
+    print(x)' > /tmp/mix_unfmt.mix
+out=$("$MIXC" fmt --check /tmp/mix_unfmt.mix 2>&1); rc=$?
+[ "$rc" = "1" ] && ok "fmt --check: exits 1 on diffs" || ng "fmt --check: exits 1 on diffs"
+echo "$out" | grep -q "mix_unfmt.mix" && ok "fmt --check: prints path" || ng "fmt --check: prints path"
+
+# --- --check on an already-formatted file: silent + exit 0 ---
+"$MIXC" fmt -w /tmp/mix_unfmt.mix
+out=$("$MIXC" fmt --check /tmp/mix_unfmt.mix 2>&1); rc=$?
+[ "$rc" = "0" ] && ok "fmt --check: exits 0 when clean" || ng "fmt --check: exits 0 when clean"
+[ -z "$out" ] && ok "fmt --check: silent when clean" || ng "fmt --check: silent when clean"
+
+# --- --diff prints unified-style output ---
+echo 'main()
+    x  =  1+2' > /tmp/mix_unfmt.mix
+out=$("$MIXC" fmt --diff /tmp/mix_unfmt.mix 2>&1)
+echo "$out" | grep -q '^---' && ok "fmt --diff: emits diff header" || ng "fmt --diff: emits diff header"
+echo "$out" | grep -q '^-    x  =  1+2' && ok "fmt --diff: shows removal" || ng "fmt --diff: shows removal"
+echo "$out" | grep -q '^+    x = 1 + 2' && ok "fmt --diff: shows addition" || ng "fmt --diff: shows addition"
+rm -f /tmp/mix_unfmt.mix
+
+# --- Recursive directory walk: --check reports each unformatted file ---
+mkdir -p /tmp/mix_fmt_dir/sub
+echo 'main()
+    print(1+2)' > /tmp/mix_fmt_dir/a.mix
+echo 'main()
+    print(3+4)' > /tmp/mix_fmt_dir/sub/b.mix
+out=$("$MIXC" fmt --check /tmp/mix_fmt_dir/ 2>&1); rc=$?
+[ "$rc" = "1" ] && ok "fmt: walks directories" || ng "fmt: walks directories"
+echo "$out" | grep -q '/a.mix' && ok "fmt: reports top-level file" || ng "fmt: reports top-level file"
+echo "$out" | grep -q '/sub/b.mix' && ok "fmt: recurses into subdirs" || ng "fmt: recurses into subdirs"
+rm -rf /tmp/mix_fmt_dir
+
 # --- Behavior preservation: in-place format and re-run a few simple tests ---
 for name in 002_hello 044_match_expr 060_var_shadowing 062_assign_vs_decl; do
     src="tests/programs/${name}.mix"

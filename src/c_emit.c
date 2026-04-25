@@ -90,6 +90,7 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void mix_write_bool(int);\n"
         "extern void mix_write_newline(void);\n"
         "extern void mix_panic(const char *);\n"
+        "extern void mix_assert(int32_t, const char *);\n"
         "extern void *mix_alloc(int64_t);\n"
         "extern void *mix_list_new(void);\n"
         "extern int64_t mix_list_len(const void *);\n"
@@ -1075,6 +1076,49 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             /* chr(n) -> str */
             if (strcmp(expr->call.name, "chr") == 0 && expr->call.arg_count == 1) {
                 ind(emit); fprintf(emit->out, "const char *t%d = mix_chr((int64_t)t%d);\n", t, arg_temps[0]);
+                return t;
+            }
+
+            /* panic(msg) — abort */
+            if (strcmp(expr->call.name, "panic") == 0 && expr->call.arg_count == 1) {
+                ind(emit); fprintf(emit->out, "mix_panic((const char *)t%d);\n", arg_temps[0]);
+                ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
+                return t;
+            }
+
+            /* assert(cond, msg) — abort if cond false */
+            if (strcmp(expr->call.name, "assert") == 0 && expr->call.arg_count == 2) {
+                ind(emit); fprintf(emit->out, "mix_assert((int32_t)t%d, (const char *)t%d);\n",
+                                  arg_temps[0], arg_temps[1]);
+                ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
+                return t;
+            }
+
+            /* len(x) -> int  polymorphic */
+            if (strcmp(expr->call.name, "len") == 0 && expr->call.arg_count == 1) {
+                MixType *atype = expr->call.args[0]->resolved_type;
+                const char *fn = "mix_list_len";
+                if (atype && atype->kind == TYPE_STR) fn = "mix_str_len";
+                else if (atype && atype->kind == TYPE_MAP) fn = "mix_map_len";
+                else if (atype && atype->kind == TYPE_SET) fn = "mix_set_len";
+                ind(emit); fprintf(emit->out, "int64_t t%d = %s((const void *)t%d);\n",
+                                  t, fn, arg_temps[0]);
+                return t;
+            }
+
+            /* type_of(x) -> str  (compile-time) */
+            if (strcmp(expr->call.name, "type_of") == 0 && expr->call.arg_count == 1) {
+                MixType *atype = expr->call.args[0]->resolved_type;
+                const char *tname = atype ? type_kind_name(atype->kind) : "unknown";
+                ind(emit); fprintf(emit->out, "const char *t%d = \"%s\";\n", t, tname);
+                return t;
+            }
+
+            /* sizeof(x) -> int  (compile-time) */
+            if (strcmp(expr->call.name, "sizeof") == 0 && expr->call.arg_count == 1) {
+                MixType *atype = expr->call.args[0]->resolved_type;
+                int sz = atype ? type_size(atype) : 8;
+                ind(emit); fprintf(emit->out, "int64_t t%d = %d;\n", t, sz);
                 return t;
             }
 
@@ -2424,7 +2468,8 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                     "to_float","to_set","str_reverse","str_count","file_open","file_read",
                     "file_write","file_close","file_read_all","file_write_all","file_exists",
                     "list_dir","shell","shell_output","env","exit","getcwd","mkdir","args",
-                    "ord","chr","alloc","bytes","peek_u32","peek_ptr","poke_f32","poke_u32","poke_ptr","pack2","pack3","list_to_f32","free_mem",NULL};
+                    "ord","chr","alloc","bytes","peek_u32","peek_ptr","poke_f32","poke_u32","poke_ptr","pack2","pack3","list_to_f32","free_mem",
+                    "panic","assert","len","type_of","sizeof",NULL};
                 for (int b = 0; builtins[b]; b++) {
                     if (strcmp(sym->name, builtins[b]) == 0) { is_local = true; break; }
                 }

@@ -93,5 +93,5 @@ mix-lsp binary
 ## Verification
 
 - `make clean && make` — builds both `mix` and `mix-lsp` with zero errors
-- `make test` — 37/37 compiler tests pass (error callback is backward-compatible)
+- `make test` — compiler tests still pass (error callback is backward-compatible)
 - All features tested via manual JSON-RPC and in VS Code

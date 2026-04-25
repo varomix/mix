@@ -1,15 +1,21 @@
 // MIX Standard Library: collections
+//
+// Stack and Queue are generic shapes — `Stack[T]` and `Queue[T]`.
+// Type erasure: T is treated as a 64-bit slot, so int / str / ptr / bool
+// store and retrieve correctly. Float values are not supported as T because
+// they live in different ABI registers; use a wrapper shape if you need to
+// store floats.
 
-pub shape Stack
-    items: [int]
+pub shape Stack[T]
+    items: [T]
 
-    push!(val: int)~
+    push!(val: T)~
         items.push!(val)
 
-    pop!() -> int~
+    pop!() -> T~
         items.pop!()
 
-    peek() -> int
+    peek() -> T
         items[items.len - 1]
 
     is_empty() -> bool
@@ -18,18 +24,18 @@ pub shape Stack
     size() -> int
         items.len
 
-pub shape Queue
-    items: [int]
+pub shape Queue[T]
+    items: [T]
 
-    enqueue!(val: int)~
+    enqueue!(val: T)~
         items.push!(val)
 
-    dequeue!() -> int~
+    dequeue!() -> T~
         val = items[0]
         items.remove!(0)
         val
 
-    peek() -> int
+    peek() -> T
         items[0]
 
     is_empty() -> bool

@@ -19,6 +19,47 @@ MIX is a systems programming language with the footprint of C and the clarity of
 
 ---
 
+## Implementation Status
+
+This spec is the language as designed. Some sections describe features that ship in the current compiler; others describe planned behavior. Each section is annotated:
+
+- **[shipping]** — implemented and tested in the current compiler
+- **[partial]** — works, but with caveats noted in the section
+- **[planned]** — described here for design clarity, not yet implemented
+
+| § | Topic | Status |
+|---|---|---|
+| 1 | Variables | shipping |
+| 2 | Primitive Types | shipping |
+| 3 | Functions | shipping |
+| 4 | Control Flow | shipping (match exhaustiveness now warns) |
+| 5 | Shapes (Structs) | shipping (generic shapes: see §11) |
+| 6 | Collections | shipping (map/set keys: string-only) |
+| 7 | Strings | shipping |
+| 8 | Optionals | partial — `else` and `?` work; `some(v)/none` pattern syntax planned |
+| 9 | Error Handling | partial — `fail`, `?`, `else` work; `err(...)` pattern matching planned |
+| 10 | Memory — Zones | partial — `zone`/`defer` work; `->` move operator and `stack/heap` allocators planned |
+| 11 | Generics | partial — generic functions ship; generic shapes ship via type erasure for word-sized T (int/str/ptr/bool); `has` constraints parsed but not enforced |
+| 12 | Concurrency | partial — `go`/`wait`/`shared` ship; `run`, `stream`/`yield`, `channel` planned |
+| 13 | Modules | partial — `use path.to.module`, aliases, `pub`, selective imports (`use m: a, b`) ship; external registry planned |
+| 14 | Compile-time | shipping (`@const`, `@os`, `@arch`, `@debug`, `@release`) |
+| 15 | Pointers / Unsafe | shipping |
+| 16 | Defer | shipping |
+| 17 | Built-in Functions | shipping (`len`, `panic`, `assert`, `sizeof`, `type_of` added) |
+| 19–21 | Examples | examples 20 (SDL3) and 21 (OpenGL) ship; example 19 (HTTP server) requires planned `http`/`json` packages |
+
+If a feature is marked **planned**, the compiler will give a parse or sema error if you use it today — it is not silently accepted.
+
+### Known limitations (current compiler)
+
+- No transitive module imports (a module cannot itself `use` other modules).
+- `@const` is module-local — only constants in the current file's AST are visible to the emitter.
+- Map keys are string-only; sets inherit this constraint when not explicitly typed.
+- C backend errors when the same name is redeclared with different mutability.
+- `print(float)` uses `%g`, so `4.0` prints as `4` (no trailing `.0`).
+
+---
+
 ## 1. Variables
 
 ```mix
@@ -465,15 +506,15 @@ find(list: [int], val: int) -> int?
 Handling an optional:
 
 ```mix
-// pattern match
+// pattern match  *(planned — some/none arms not yet supported)*
 result = find(nums, 7)
     some(v) => print("found {v}")
     none    => print("not there")
 
-// default value
+// default value  [shipping]
 val = find(nums, 7) else 0
 
-// propagate (float up if none)
+// propagate (float up if none)  [shipping]
 val = find(nums, 7)?
 ```
 
@@ -509,17 +550,17 @@ read(path: str) -> str ~
 ### Catching at the Call Site
 
 ```mix
-// provide a fallback
+// provide a fallback  [shipping]
 data = read("file.txt") else "default"
 
-// catch specific variants — same pattern as match
+// catch specific variants — same pattern as match  *(planned — ok/err arms not yet supported)*
 data = read("file.txt")
     ok(v)                            => v
     err(AppError.NotFound(p))        => "default content"
     err(AppError.PermissionDenied(p)) => panic("no access: {p}")
     err(e)                           => panic("unknown: {e}")
 
-// propagate manually with ?
+// propagate manually with ?  [shipping]
 data = read("file.txt")?
 ```
 
@@ -599,7 +640,7 @@ zone:game
 // world freed here
 ```
 
-### Passing Values — Lend vs Move
+### Passing Values — Lend vs Move  *(planned)*
 
 ```mix
 zone
@@ -613,7 +654,7 @@ zone
 
 `->` is the move operator. Visually clear — the value goes with the arrow.
 
-### Explicit Heap / Stack (rare)
+### Explicit Heap / Stack (rare)  *(planned)*
 
 ```mix
 x = stack int(42)   // force stack allocation
@@ -641,7 +682,7 @@ map(list: [T], f: T -> K) -> [K]
     [f(x) for x in list]
 ```
 
-### Constraints
+### Constraints  *(partial — `has` is parsed but not enforced yet)*
 
 ```mix
 @T has area
@@ -662,6 +703,13 @@ contains(list: [T], val: T) -> bool
 @T has +, <, ==
 ```
 
+> Generic *functions* and the `has` syntax work today (constraints are accepted but not yet checked).
+>
+> Generic *shapes* — `shape Box[T]` — also work via type erasure: T is a 64-bit slot
+> shared by `int`, `str`, `*byte`, and `bool`. A `Stack[int]` round-trips correctly,
+> but `Stack[float]` does not (float lives in a different ABI register class). True
+> per-instantiation monomorphization is planned.
+
 ---
 
 ## 12. Concurrency
@@ -675,7 +723,7 @@ t = go compute(data)            // spawn, get handle
 result = wait t                 // block until done
 ```
 
-### Run Block — structured concurrency
+### Run Block — structured concurrency  *(planned)*
 
 All branches run concurrently. Block exits when ALL are done:
 
@@ -688,7 +736,7 @@ run
 build_page(a, b, c)
 ```
 
-### Streams — pipelines
+### Streams — pipelines  *(planned)*
 
 ```mix
 stream count_up(max: int)
@@ -722,7 +770,7 @@ x = counter.read()
 
 No manual mutexes. The `shared` type carries the lock. You can't accidentally share without saying so.
 
-### Channels
+### Channels  *(planned)*
 
 ```mix
 ch = channel(int)
@@ -785,14 +833,20 @@ phy.simulate!(world)
 rnd.draw!(world)
 ```
 
-### Selective Import
+### Selective Import  *(shipping; `*` syntax planned)*
 
 ```mix
-use math: add, PI       // named imports, no prefix
-use graphics: *         // import everything (use sparingly)
+use std.math: PI, hypot          // named imports, no prefix
+use std.collections: Stack       // shape + its methods come along
 
-x = add(1, 2)
+x = hypot(3.0, 4.0)
 ```
+
+A selective `use module: name1, name2` only exposes the named symbols. Other
+`pub` symbols from the module are hidden. For shapes, listing the shape name
+also keeps its methods (mangled `Shape_method`). The wildcard form
+`use module: *` is planned; the unqualified `use module` already imports
+everything.
 
 ### Folder = Namespace
 
@@ -819,7 +873,7 @@ use gl  graphics.opengl
 use vk  graphics.vulkan     // same last segment — must alias
 ```
 
-### External Packages
+### External Packages  *(planned)*
 
 ```mix
 use http
@@ -827,6 +881,8 @@ use json
 ```
 
 If a package isn't local, it's fetched from the registry automatically. No separate install step.
+
+> No package registry exists yet. For now, `use c "header.h" link "lib"` covers C-library interop (see §13 C Interop, §20–21 examples).
 
 ### C Interop
 
@@ -924,14 +980,16 @@ zone
 print(...)          // print to stdout with newline
 panic(msg)          // abort with message
 assert(cond, msg)   // abort if condition false
-len(x)              // length of string/list/map
-bytes(n)            // allocate n bytes
-alloc!(T)           // allocate a T on the heap
-free!(ptr)          // free heap memory
-sizeof(T)           // size of type in bytes
-type_of(x)          // type name as str (debug use)
+len(x)              // length of str / list / map / set
+bytes(n)            // allocate n zeroed bytes -> *byte
+alloc(n)            // allocate n bytes -> *byte
+free_mem(ptr)       // free heap memory
+sizeof(x)           // size of value's type in bytes
+type_of(x)          // type name as str
 ord(s)              // Unicode code point of first character
 chr(n)              // code point to character string
+to_string(x)        // int / float -> str
+to_int(x), to_float(x), to_set(list)
 ```
 
 Math:
@@ -940,7 +998,7 @@ Math:
 sqrt(x)   abs(x)   min(a, b)   max(a, b)
 floor(x)  ceil(x)  round(x)
 sin(x)    cos(x)   tan(x)
-pow(x, n) log(x)   log2(x)
+pow(x, n) log(x)
 ```
 
 ---

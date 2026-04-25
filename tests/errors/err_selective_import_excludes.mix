@@ -1,0 +1,6 @@
+// ERROR: undefined function 'deg_to_rad'
+use std.math: PI
+
+main()
+    print(PI())
+    print(deg_to_rad(180.0))

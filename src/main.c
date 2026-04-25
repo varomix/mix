@@ -278,6 +278,40 @@ static bool is_module_compiling(const char *path) {
     return false;
 }
 
+// Walk the symbol list from head down to (but not including) snapshot, and
+// remove any symbol whose name is NOT in `imports`. Used to apply selective
+// imports after a sub-module has been analyzed (which inserts all pub symbols
+// into the shared symtab).
+//
+// For shape methods (mangled `Shape_method`), the *shape* is what gets named
+// in the imports list; methods/variants are kept iff their owning shape name
+// matches an import.
+static void filter_imported_symbols(SymTab *symtab, Symbol *snapshot,
+                                    char **imports, int import_count) {
+    if (import_count == 0) return;
+
+    Symbol **link = &symtab->current->symbols;
+    while (*link && *link != snapshot) {
+        Symbol *sym = *link;
+        bool keep = false;
+        for (int i = 0; i < import_count; i++) {
+            const char *want = imports[i];
+            size_t wlen = strlen(want);
+            // Exact match: regular symbol (function, constant, shape, etc.)
+            if (strcmp(sym->name, want) == 0) { keep = true; break; }
+            // Method/variant prefix match: `Shape_method` belongs to `Shape`
+            if (strncmp(sym->name, want, wlen) == 0 && sym->name[wlen] == '_') {
+                keep = true; break;
+            }
+        }
+        if (keep) {
+            link = &sym->next;
+        } else {
+            *link = sym->next;  // splice out
+        }
+    }
+}
+
 // Compile a single module, return its output file path (or NULL on failure).
 // Recursively compiles any modules this module imports via 'use'.
 // For QBE backend: returns .s file path
@@ -351,6 +385,9 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
             if (verbose) fprintf(stderr, "mix: compiling sub-module '%s' -> %s\n",
                                  decl->use_decl.module_path, sub_path);
 
+            // Snapshot symtab head so we can filter selective imports after compile
+            Symbol *snap = sema->symtab.current->symbols;
+
             char *sub_asm = compile_module(sub_path, arena, sema, base_dir,
                                            verbose, debug, use_c_backend,
                                            exe_dir, module_asm_files,
@@ -361,6 +398,11 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
                 free(source); free(lexer.tokens); compiling_module_count--;
                 return NULL;
             }
+            // Apply selective imports if specified
+            filter_imported_symbols(&sema->symtab, snap,
+                                    decl->use_decl.imports,
+                                    decl->use_decl.import_count);
+
             // Restore error source to this module after sub-module compilation
             errors_set_source(source, source_path);
 
@@ -835,6 +877,9 @@ int main(int argc, char **argv) {
             if (verbose) fprintf(stderr, "mix: compiling module '%s' -> %s\n",
                                  decl->use_decl.module_path, mod_path);
 
+            // Snapshot symtab head so we can filter selective imports after compile
+            Symbol *snap = sema.symtab.current->symbols;
+
             char *asm_file = compile_module(mod_path, &arena, &sema, base_dir,
                                             verbose, debug_mode, use_c_backend,
                                             exe_dir, module_asm_files,
@@ -843,6 +888,11 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "mix: failed to compile module '%s'\n", decl->use_decl.module_path);
                 return 1;
             }
+            // Apply selective imports if specified
+            filter_imported_symbols(&sema.symtab, snap,
+                                    decl->use_decl.imports,
+                                    decl->use_decl.import_count);
+
             // Restore error source to main file after module compilation
             errors_set_source(source, input_file);
             if (module_count >= MAX_MODULES) {

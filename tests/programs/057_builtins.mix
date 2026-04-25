@@ -1,0 +1,26 @@
+main()
+    // len() polymorphic over str/list/map/set
+    s = "hello"
+    print(len(s))
+
+    nums = [1, 2, 3, 4]
+    print(len(nums))
+
+    m = {"a": 1, "b": 2, "c": 3}
+    print(len(m))
+
+    se = set{"x", "y"}
+    print(len(se))
+
+    // type_of on primitives
+    print(type_of(42))
+    print(type_of(3.14))
+    print(type_of("hi"))
+    print(type_of(true))
+
+    // sizeof
+    print(sizeof(0))
+
+    // assert (passing)
+    assert(2 + 2 == 4, "math works")
+    print("done")

@@ -114,7 +114,7 @@ hello.mix → [mix] → hello.ssa → [qbe] → hello.s → [cc] → hello (nati
 ### Running Tests
 
 ```bash
-make test    # 45/45 tests pass
+make test    # runs the runtime test suite
 ```
 
 ---
@@ -1834,7 +1834,7 @@ The full MIX spec describes additional features for future phases:
 
 ```bash
 make              # build compiler
-make test         # 44/44 tests pass
+make test         # runs the runtime test suite
 ./build/mix examples/sdl3_window.mix -o sdl3 -lSDL3      # cornflower blue window
 ./build/mix examples/raylib_example.mix -o raylib -lraylib # solid red window
 ./build/mix --bind /path/to/header.h -o bindings.mix --lib name  # C bindings

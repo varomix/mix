@@ -57,6 +57,14 @@ void mix_panic(const char *msg) {
     exit(1);
 }
 
+// Assert — abort if condition is false
+void mix_assert(int32_t cond, const char *msg) {
+    if (!cond) {
+        fprintf(stderr, "assertion failed: %s\n", msg ? msg : "");
+        exit(1);
+    }
+}
+
 // Memory
 void *mix_alloc(int64_t size) {
     void *ptr = malloc((size_t)size);

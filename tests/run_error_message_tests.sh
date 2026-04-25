@@ -105,6 +105,51 @@ else
     ok "qbe-capture: no /tmp paths in normal output"
 fi
 
+# --- Match exhaustiveness warning ---
+cat > /tmp/mix_nonexh.mix << 'MIXEOF'
+shape Color
+    Red(v: int)
+    Green(v: int)
+    Blue(v: int)
+
+main()
+    c = Red(v: 1)
+    match c
+        Red(r) => print(r)
+        Green(g) => print(g)
+MIXEOF
+output=$("$MIXC" /tmp/mix_nonexh.mix -o /tmp/mix_errtest_bin 2>&1)
+
+echo "$output" | grep -q "non-exhaustive match" \
+    && ok "exhaustive: warns on missing variant" \
+    || ng "exhaustive: warns on missing variant"
+
+echo "$output" | grep -q "'Blue' not handled" \
+    && ok "exhaustive: names the missing variant" \
+    || ng "exhaustive: names the missing variant"
+
+cat > /tmp/mix_exh_wc.mix << 'MIXEOF'
+shape Color
+    Red(v: int)
+    Green(v: int)
+    Blue(v: int)
+
+main()
+    c = Red(v: 1)
+    match c
+        Red(r) => print(r)
+        _ => print(0)
+MIXEOF
+output=$("$MIXC" /tmp/mix_exh_wc.mix -o /tmp/mix_errtest_bin 2>&1)
+
+if echo "$output" | grep -q "non-exhaustive match"; then
+    ng "exhaustive: wildcard suppresses warning"
+else
+    ok "exhaustive: wildcard suppresses warning"
+fi
+
+rm -f /tmp/mix_nonexh.mix /tmp/mix_exh_wc.mix
+
 # --- Both backends produce same error for type mismatch ---
 output_qbe=$("$MIXC" tests/errors/err_str_to_int_param.mix -o /tmp/mix_errtest_bin 2>&1)
 output_c=$(MIX_BACKEND=c "$MIXC" tests/errors/err_str_to_int_param.mix -o /tmp/mix_errtest_bin 2>&1)

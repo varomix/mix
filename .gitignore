@@ -2,6 +2,34 @@ build/
 *.o
 *.s
 *.ssa
+*.dSYM/
+*.spv
 .DS_Store
 node_modules/
 out/
+
+# Built example binaries (sources are *.mix; binaries are produced by `mix build`)
+/a.out
+/056_unions
+/opengl_triangle
+/raylib_C_example
+/sdl3_use_c
+/test_mem
+/test_offset
+/test_shape_layout
+/test_union
+
+# Ad-hoc binaries from local testing
+/exhaust_test*
+/float_index_test
+/redecl
+/ftest
+
+# examples/ — the .mix sources are tracked; their compiled output is not
+examples/hello
+examples/opengl_triangle
+examples/gpu_triangle/gpu_triangle
+examples/gpu_triangle_mix/gpu_*
+examples/gpu_triangle_mix/test_*
+!examples/gpu_triangle_mix/gpu_test.mix
+!examples/gpu_triangle_mix/gpu_triangle.mix

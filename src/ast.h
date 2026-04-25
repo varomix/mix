@@ -370,6 +370,9 @@ struct AstNode {
             int variant_count;
             bool is_pub;
             bool is_union;
+            // Generics: shape Box[T, U]
+            char **type_params;
+            int type_param_count;
         } shape_decl;
 
         // NODE_FIELD_EXPR  (obj.field)

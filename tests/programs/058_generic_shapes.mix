@@ -1,0 +1,32 @@
+// Generic shapes — Box[T] and a hand-rolled Stack[T]
+
+shape Box[T]
+    val: T
+
+shape MyStack[T]
+    items: [T]
+
+    push!(v: T)~
+        items.push!(v)
+
+    pop!() -> T~
+        items.pop!()
+
+    size() -> int
+        items.len
+
+main()
+    // Box with int
+    a = Box(val: 42)
+    print(a.val)
+
+    // Generic Stack with int — round-trips correctly
+    s! = MyStack(items: [])
+    s.push!(1)
+    s.push!(2)
+    s.push!(3)
+    print(s.size())
+    print(s.pop!())
+    print(s.pop!())
+    print(s.pop!())
+    print(s.size())

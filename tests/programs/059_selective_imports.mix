@@ -1,0 +1,15 @@
+// Selective imports — `use module: name1, name2`
+// Only the named symbols are visible; everything else from the module is hidden.
+
+use std.math: PI, hypot
+use std.collections: Stack
+
+main()
+    print(PI())
+    print(hypot(3.0, 4.0))
+
+    s! = Stack(items: [])
+    s.push!(7)
+    s.push!(8)
+    print(s.pop!())
+    print(s.pop!())

@@ -1139,6 +1139,48 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 return t;
             }
 
+            // panic(msg) -> never returns
+            if (strcmp(expr->call.name, "panic") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\tcall $mix_panic(l %%t%d)\n", arg_temps[0]);
+                return t;
+            }
+
+            // assert(cond, msg) -> aborts if cond is false
+            if (strcmp(expr->call.name, "assert") == 0 && expr->call.arg_count == 2) {
+                fprintf(emit->out, "\tcall $mix_assert(w %%t%d, l %%t%d)\n",
+                        arg_temps[0], arg_temps[1]);
+                return t;
+            }
+
+            // len(x) -> int  polymorphic
+            if (strcmp(expr->call.name, "len") == 0 && expr->call.arg_count == 1) {
+                MixType *atype = expr->call.args[0]->resolved_type;
+                const char *fn = "mix_list_len";
+                if (atype && atype->kind == TYPE_STR) fn = "mix_str_len";
+                else if (atype && atype->kind == TYPE_MAP) fn = "mix_map_len";
+                else if (atype && atype->kind == TYPE_SET) fn = "mix_set_len";
+                fprintf(emit->out, "\t%%t%d =l call $%s(l %%t%d)\n",
+                        t, fn, arg_temps[0]);
+                return t;
+            }
+
+            // type_of(x) -> str  (compile-time type name)
+            if (strcmp(expr->call.name, "type_of") == 0 && expr->call.arg_count == 1) {
+                MixType *atype = expr->call.args[0]->resolved_type;
+                const char *tname = atype ? type_kind_name(atype->kind) : "unknown";
+                const char *sname = emit_string_data(emit, tname, (int)strlen(tname));
+                fprintf(emit->out, "\t%%t%d =l copy %s\n", t, sname);
+                return t;
+            }
+
+            // sizeof(x) -> int  (compile-time size of value's type)
+            if (strcmp(expr->call.name, "sizeof") == 0 && expr->call.arg_count == 1) {
+                MixType *atype = expr->call.args[0]->resolved_type;
+                int sz = atype ? type_size(atype) : 8;
+                fprintf(emit->out, "\t%%t%d =l copy %d\n", t, sz);
+                return t;
+            }
+
             // Memory builtins
             if (strcmp(expr->call.name, "alloc") == 0 && expr->call.arg_count == 1) {
                 fprintf(emit->out, "\t%%t%d =l call $mix_alloc(l %%t%d)\n",

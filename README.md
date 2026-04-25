@@ -132,7 +132,7 @@ See the `examples/` directory for complete programs including shapes with method
 ## Testing
 
 ```bash
-make test-all    # 77 tests (runtime + error + error-message)
+make test-all    # runtime + error + error-message suites (run for current count)
 ```
 
 ## Documentation

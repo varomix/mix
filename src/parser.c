@@ -1247,6 +1247,27 @@ static AstNode *parse_shape_decl(Parser *p) {
     AstNode *node = ast_new(p->arena, NODE_SHAPE_DECL, loc);
     node->shape_decl.name = tok_str(p, name_tok);
 
+    // Optional generic type params: shape Name[T, U]
+    if (check(p, TOK_LBRACKET)) {
+        advance_tok(p); // skip '['
+        char **type_params = NULL;
+        int tp_count = 0;
+        int tp_cap = 0;
+        do {
+            Token *tp = expect(p, TOK_IDENT);
+            if (tp_count >= tp_cap) {
+                tp_cap = tp_cap ? tp_cap * 2 : 4;
+                char **np = arena_alloc(p->arena, sizeof(char*) * tp_cap);
+                if (type_params) memcpy(np, type_params, sizeof(char*) * tp_count);
+                type_params = np;
+            }
+            type_params[tp_count++] = tok_str(p, tp);
+        } while (match_tok(p, TOK_COMMA));
+        expect(p, TOK_RBRACKET);
+        node->shape_decl.type_params = type_params;
+        node->shape_decl.type_param_count = tp_count;
+    }
+
     skip_newlines(p);
     expect(p, TOK_INDENT);
 
@@ -1467,21 +1488,40 @@ static AstNode *parse_top_level(Parser *p) {
         snprintf(path, sizeof(path), "%.*s", first->length, first->start);
 
         // Check for: use alias path.to.module (second ident without dot)
-        // vs: use path.to.module (dots)
+        // vs: use path.to.module[: name1, name2]
         // vs: use module: name1, name2 (colon for selective)
         if (check(p, TOK_DOT)) {
-            // use path.to.module
+            // use path.to.module[: name1, name2]
             while (match_tok(p, TOK_DOT)) {
                 Token *seg = expect(p, TOK_IDENT);
                 int len = (int)strlen(path);
                 snprintf(path + len, sizeof(path) - len, ".%.*s", seg->length, seg->start);
             }
             node->use_decl.module_path = arena_strdup(p->arena, path);
-        } else if (check(p, TOK_COLON)) {
-            // use module: name1, name2 (selective import)
+            // Fall through to colon check below
+        } else if (check(p, TOK_IDENT)) {
+            // use alias path.to.module[: ...]
+            node->use_decl.alias = arena_strdup(p->arena, path);
+            Token *path_start = expect(p, TOK_IDENT);
+            snprintf(path, sizeof(path), "%.*s", path_start->length, path_start->start);
+            while (match_tok(p, TOK_DOT)) {
+                Token *seg = expect(p, TOK_IDENT);
+                int len = (int)strlen(path);
+                snprintf(path + len, sizeof(path) - len, ".%.*s", seg->length, seg->start);
+            }
             node->use_decl.module_path = arena_strdup(p->arena, path);
-            advance_tok(p); // skip ':'
+            // Fall through to colon check
+        } else {
+            // use module (simple single-segment)
+            node->use_decl.module_path = arena_strdup(p->arena, path);
+        }
 
+        // Optional selective imports: ... : name1, name2
+        if (match_tok(p, TOK_COLON)) {
+            // Disallow combining with alias for now — it's confusing semantically.
+            if (node->use_decl.alias) {
+                mix_error(loc, "selective imports (':') cannot be combined with an alias");
+            }
             char **imports = NULL;
             int import_count = 0;
             int import_cap = 0;
@@ -1498,20 +1538,6 @@ static AstNode *parse_top_level(Parser *p) {
 
             node->use_decl.imports = imports;
             node->use_decl.import_count = import_count;
-        } else if (check(p, TOK_IDENT)) {
-            // use alias path.to.module
-            node->use_decl.alias = arena_strdup(p->arena, path);
-            Token *path_start = expect(p, TOK_IDENT);
-            snprintf(path, sizeof(path), "%.*s", path_start->length, path_start->start);
-            while (match_tok(p, TOK_DOT)) {
-                Token *seg = expect(p, TOK_IDENT);
-                int len = (int)strlen(path);
-                snprintf(path + len, sizeof(path) - len, ".%.*s", seg->length, seg->start);
-            }
-            node->use_decl.module_path = arena_strdup(p->arena, path);
-        } else {
-            // use module (simple single-segment)
-            node->use_decl.module_path = arena_strdup(p->arena, path);
         }
 
         return node;

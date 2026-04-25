@@ -1040,6 +1040,43 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                     break;
                 }
             }
+            // Exhaustiveness check for tagged-union matches
+            if (is_tagged && subj_type->shape.variant_count > 0) {
+                bool has_wildcard = false;
+                for (int wi = 0; wi < stmt->match_stmt.arm_count; wi++) {
+                    if (stmt->match_stmt.arms[wi].is_wildcard) { has_wildcard = true; break; }
+                }
+                if (!has_wildcard) {
+                    int vc = subj_type->shape.variant_count;
+                    bool *covered = arena_alloc(sema->arena, sizeof(bool) * vc);
+                    for (int vi = 0; vi < vc; vi++) covered[vi] = false;
+                    for (int ai = 0; ai < stmt->match_stmt.arm_count; ai++) {
+                        AstNode *pat = stmt->match_stmt.arms[ai].pattern;
+                        const char *vname = NULL;
+                        if (pat && pat->kind == NODE_CALL_EXPR) vname = pat->call.name;
+                        else if (pat && pat->kind == NODE_IDENT) vname = pat->ident.name;
+                        if (!vname) continue;
+                        for (int vi = 0; vi < vc; vi++) {
+                            if (strcmp(subj_type->shape.variants[vi].name, vname) == 0) {
+                                covered[vi] = true;
+                                break;
+                            }
+                        }
+                    }
+                    for (int vi = 0; vi < vc; vi++) {
+                        if (!covered[vi]) {
+                            mix_warning(stmt->loc,
+                                "non-exhaustive match on '%s': variant '%s' not handled",
+                                subj_type->shape.name,
+                                subj_type->shape.variants[vi].name);
+                            mix_note(stmt->loc,
+                                "add a '%s' arm or '_' wildcard to silence this warning",
+                                subj_type->shape.variants[vi].name);
+                            break;
+                        }
+                    }
+                }
+            }
             break;
         }
         case NODE_DONE_STMT:
@@ -1447,6 +1484,57 @@ void sema_analyze(Sema *sema, AstNode *program) {
         symtab_insert(&sema->symtab, "chr", ft, false);
     }
 
+    // panic(msg: str) -> void  (abort with message)
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_VOID);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_STR);
+        symtab_insert(&sema->symtab, "panic", ft, false);
+    }
+
+    // assert(cond: bool, msg: str) -> void  (abort if condition false)
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_VOID);
+        ft->func.param_count = 2;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*) * 2);
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_BOOL);
+        ft->func.param_types[1] = make_type(sema->arena, TYPE_STR);
+        symtab_insert(&sema->symtab, "assert", ft, false);
+    }
+
+    // len(x) -> int  (polymorphic over str/list/map/set)
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_INT);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_INFER);
+        symtab_insert(&sema->symtab, "len", ft, false);
+    }
+
+    // type_of(x) -> str  (returns type name as string)
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_STR);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_INFER);
+        symtab_insert(&sema->symtab, "type_of", ft, false);
+    }
+
+    // sizeof(x) -> int  (size of value's type in bytes)
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_INT);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_INFER);
+        symtab_insert(&sema->symtab, "sizeof", ft, false);
+    }
+
     // str_reverse(s: str) -> str
     {
         MixType *ft = make_type(sema->arena, TYPE_FUNC);
@@ -1643,6 +1731,15 @@ void sema_analyze(Sema *sema, AstNode *program) {
             shape_type->shape.fields = arena_alloc(sema->arena,
                 sizeof(ShapeFieldInfo) * decl->shape_decl.field_count);
 
+            // Make this shape's type params visible to resolve_type_node
+            // for both fields and method signatures registered below.
+            char **saved_gp = sema->generic_params;
+            int saved_gc = sema->generic_param_count;
+            if (decl->shape_decl.type_param_count > 0) {
+                sema->generic_params = decl->shape_decl.type_params;
+                sema->generic_param_count = decl->shape_decl.type_param_count;
+            }
+
             int offset = 0;
             bool is_union = decl->shape_decl.is_union;
             int max_field_size = 0;
@@ -1774,6 +1871,10 @@ void sema_analyze(Sema *sema, AstNode *program) {
                 }
                 symtab_insert(&sema->symtab, mangled, mtype, false);
             }
+
+            // Restore generic context after the shape is fully registered
+            sema->generic_params = saved_gp;
+            sema->generic_param_count = saved_gc;
         } else if (decl->kind == NODE_TYPE_ALIAS) {
             MixType *target = resolve_type_node(sema, decl->type_alias.target_type);
             if (decl->type_alias.target_type) decl->type_alias.target_type->resolved_type = target;
@@ -1879,6 +1980,14 @@ void sema_analyze(Sema *sema, AstNode *program) {
             Symbol *shape_sym = symtab_lookup(&sema->symtab, decl->shape_decl.name);
             MixType *shape_type = shape_sym ? shape_sym->type : NULL;
 
+            // Make shape's type params visible inside method bodies
+            char **saved_gp = sema->generic_params;
+            int saved_gc = sema->generic_param_count;
+            if (decl->shape_decl.type_param_count > 0) {
+                sema->generic_params = decl->shape_decl.type_params;
+                sema->generic_param_count = decl->shape_decl.type_param_count;
+            }
+
             for (int j = 0; j < decl->shape_decl.method_count; j++) {
                 AstNode *method = decl->shape_decl.methods[j];
                 symtab_push_scope(&sema->symtab);
@@ -1911,6 +2020,9 @@ void sema_analyze(Sema *sema, AstNode *program) {
 
                 symtab_pop_scope(&sema->symtab);
             }
+
+            sema->generic_params = saved_gp;
+            sema->generic_param_count = saved_gc;
         } else if (decl->kind == NODE_COND_DECL && decl->cond_decl.active) {
             // Analyze function bodies in active conditional blocks
             for (int j = 0; j < decl->cond_decl.decl_count; j++) {

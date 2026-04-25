@@ -15,32 +15,47 @@ make
 
 ## Features
 
+### Language
 - **Type inference** — types deduced from context, explicit annotations optional
 - **Shapes** — struct-like types with methods, computed fields, and operator overloading
-- **Tagged unions** — sum types with exhaustive `match`
+- **Tagged unions** — sum types with exhaustive `match` (warns on unhandled variants)
 - **Unions** — C-style untagged unions for transparent C interop
-- **Generics** — `@T` type parameters with `has` constraints
-- **Optionals** — `T?` types with `else` fallback
-- **Error handling** — result-based errors with `fail`, `else` fallback, and `?` propagation
+- **Generics** — `@T` type parameters with `has` constraints (operators + shape methods enforced at call sites)
+- **Generic shapes** — `shape Box[T]`, `Stack[T]`, etc., monomorphized per concrete `T` (`Stack[int]`, `Stack[float]` are distinct)
+- **Optionals** — `T?` types with `else` fallback, `?` propagation, and `match opt; some(v) =>; none =>` arms
+- **Error handling** — `fail expr`, `else` fallback, `?` propagation, `match res; ok(v) =>; err(e) =>` arms
+- **Match exhaustiveness** — warns on missing variants/arms for tagged unions, optionals, and results
 - **String interpolation** — `"Hello {name}!"`
-- **String operations** — `+` concatenation, comparison (`==`, `<`, `>`), `.sort()`, `.char_at()`, `.code()`, `ord()`, `chr()`
+- **String operations** — `+`, comparison, `.sort()`, `.char_at()`, `.code()`, `ord()`, `chr()`
 - **Lists** — `push`, `pop`, `sort` (int/float/string), `reverse`, `insert`, `remove`, `contains`, `index_of`, `join`
 - **Maps** — `{"key": val}`, `.has()`, `.remove!()`, `.keys`, `.values`
 - **Sets** — `set{"a", "b"}`, `.add!()`, `.remove!()`, `.has()`, `.union()`, `.intersect()`, `.diff()`
 - **Slices & comprehensions** — `list[1..3]`, `[x*x for x in list]`
 - **Closures / lambdas** — `x => x * 2`
 - **Concurrency** — `go`/`wait` with `shared` for thread-safe values
-- **C interop** — `extern "lib"` blocks, auto-binding from C headers (`--bind`)
+- **C interop** — `extern "lib"` blocks, auto-binding from C headers (`--bind`), `use c "header.h"` for transparent FFI
 - **Zones** — deterministic region-based memory
-- **Modules** — `use path.to.module`
-- **File I/O** — `file_read_all`, `file_write_all`, `file_open`/`file_write`/`file_close`
-- **OS builtins** — `shell`, `file_exists`, `getcwd`, `mkdir`, `env`, `args`, `exit`
-- **Build system** — `build.mix` with built-in `Project` shape for declarative builds
-- **Math** — `sqrt`, `sin`, `cos`, `pow`, `abs`, `floor`, `ceil`, `round`, `min`, `max`
+- **Modules** — `use path.to.module`, selective imports `use std.math: PI, hypot`, `pub` exports
+- **Conditional compilation** — `@os == "macos"`, `@debug`, `@release`
+
+### Standard library (`use std.X`)
+- **`std.io`** — `read_file`, `write_file`, `read_lines`, `exists`, `current_dir`
+- **`std.fmt`** — `hex`, `bin`, `pad_left`, `pad_right`, `truncate`
+- **`std.path`** — `join`, `dirname`, `basename`, `extension`, `is_absolute`
+- **`std.random`** — `seed`, `next_int`, `next_float`, `range`
+- **`std.time`** — `now_ms`, `elapsed`, `Stopwatch`
+- **`std.math`** — `PI`, `E`, `TAU`, `deg_to_rad`, `rad_to_deg`, `hypot`, `sign`, `fmod`
+- **`std.string`** — `is_empty`, `capitalize`, `reverse`, `count`, `pad_left/right`
+- **`std.collections`** — `Stack[T]`, `Queue[T]` (generic)
+
+### Tooling
+- **Two backends** — QBE (default native) and C (`--backend c`, useful on platforms without QBE)
+- **`mix fmt`** — token-based formatter with comment preservation; supports `--check`, `--diff`, `-w`, recursive directory walk
+- **LSP server** (`mix-lsp`) — diagnostics, hover, go-to-definition, find references, document/workspace symbols, rename, inlay hints, code actions, signature help, completion
 - **Error messages** — colored output, line gutters, "did you mean?" suggestions, error limit
-- **Conditional compilation** — `@os == "macos"`, `@debug`
 - **Debug info** — DWARF line numbers for `lldb` source-level debugging
-- **LSP** — language server with diagnostics, hover, and go-to-definition
+- **Build system** — `build.mix` with built-in `Project` shape for declarative builds
+- **Editor support** — Neovim plugin (`editors/nvim/`), VSCode extension (`editors/vscode-mix/`), tree-sitter grammar (`editors/tree-sitter-mix/`, v0)
 
 ## Compiler Options
 
@@ -50,6 +65,9 @@ mix [command] [options] [file.mix]
 Commands:
   build [file.mix]   Compile to binary
   run [file.mix]     Compile and execute
+  fmt [path...]      Format source files or directories
+                     (-w writes in place, --check exits 1 on diffs,
+                      --diff prints a unified diff)
 
   Running 'mix' with no command or file shows this help.
   'build' or 'run' without a file auto-discovers main().

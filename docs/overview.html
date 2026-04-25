@@ -808,16 +808,19 @@ empty <span class="op">=</span> q.<span class="fn">is_empty</span>      <span cl
     <span class="op">-</span><span class="num">1</span></code><span class="label">mix</span></pre>
 
 <h3>Generic Shapes</h3>
-<pre><code><span class="op">@</span><span class="ty">T</span>
-<span class="kw">shape</span> <span class="ty">Pair</span>
+<p>Shapes can be parameterized with <code>[T]</code>. Each concrete instantiation
+(<code>Pair[int]</code>, <code>Pair[float]</code>, etc.) is a distinct type with its own
+methods, so the right ABI is used for every <code>T</code> — including float.</p>
+<pre><code><span class="kw">shape</span> <span class="ty">Pair</span>[<span class="ty">T</span>]
     first<span class="op">:</span> <span class="ty">T</span>
     second<span class="op">:</span> <span class="ty">T</span>
 
-    <span class="fn">swap</span>() <span class="op">-></span> <span class="ty">Pair</span>
-        <span class="ty">Pair</span>(second, first)
+    <span class="fn">swap</span>() <span class="op">-></span> <span class="ty">Pair</span>[<span class="ty">T</span>]
+        <span class="ty">Pair</span>[<span class="ty">T</span>](first<span class="op">:</span> second, second<span class="op">:</span> first)
 
-p <span class="op">=</span> <span class="ty">Pair</span>(<span class="num">1</span>, <span class="num">2</span>)
-q <span class="op">=</span> p.<span class="fn">swap</span>()   <span class="cm">// Pair(2, 1)</span></code><span class="label">mix</span></pre>
+p <span class="op">=</span> <span class="ty">Pair</span>[<span class="ty">int</span>](first<span class="op">:</span> <span class="num">1</span>, second<span class="op">:</span> <span class="num">2</span>)
+q <span class="op">=</span> p.<span class="fn">swap</span>()   <span class="cm">// Pair(2, 1)</span>
+<span class="cm">// `Pair(first: 1, second: 2)` infers Pair[int] from the args.</span></code><span class="label">mix</span></pre>
 </section>
 
 

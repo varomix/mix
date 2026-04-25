@@ -1,10 +1,12 @@
 [
-  {"name": "bench_sum_squares", "mix": 0.016, "c": 0.013, "ratio": 1.23}
+  {"name": "bench_sum_squares", "mix": 0.017, "c": 0.039, "ratio": .43}
 ,
-  {"name": "bench_fib", "mix": 0.240, "c": 0.197, "ratio": 1.21}
+  {"name": "bench_fib", "mix": 0.250, "c": 0.200, "ratio": 1.25}
 ,
-  {"name": "bench_list", "mix": 0.016, "c": 0.014, "ratio": 1.14}
+  {"name": "bench_list", "mix": 0.024, "c": 0.019, "ratio": 1.26}
 ,
-  {"name": "bench_string", "mix": 0.017, "c": 0.021, "ratio": .80}
+  {"name": "bench_string", "mix": 0.028, "c": 0.023, "ratio": 1.21}
+,
+  {"name": "bench_generic_stack", "mix": 0.022, "c": 0.018, "ratio": 1.22}
 
 ]

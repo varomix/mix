@@ -1,0 +1,24 @@
+// Generic shape benchmark: 1M pushes + 1M pops on Stack[int].
+// Exercises the per-T monomorphization path.
+
+shape Stack[T]
+    items: [T]
+
+    push!(v: T) ~
+        items.push!(v)
+
+    pop!() -> T ~
+        items.pop!()
+
+    size() -> int
+        items.len
+
+main()
+    s! = Stack(items: [])
+    n = 1000000
+    for i in 0..n
+        s.push!(i)
+    sum! = 0
+    for i in 0..n
+        sum += s.pop!()
+    print(sum)

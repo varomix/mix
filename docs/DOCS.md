@@ -1823,10 +1823,24 @@ The full MIX spec describes additional features for future phases:
 
 - `run` blocks (structured concurrency — all tasks in block run in parallel)
 - Streams and channels (`stream`, `yield`, `channel`)
-- Move semantics (`->` operator)
-- Pattern matching on error variants (`ok(v) => ...`, `err(e) => ...`)
-- Package manager
+- Move semantics (`->` operator) and `stack`/`heap` allocator hints
+- Nested error-variant destructuring (`err(AppError.NotFound(p))` — bare `err(e)` works)
+- Package registry (`use http`, `use json`)
 - Self-hosting
+
+### What's New Since the Original Spec
+
+Many features the original spec described as "future phases" are now shipping:
+
+- Generic shapes with per-T monomorphization (`Stack[int]`, `Stack[float]` distinct)
+- `has` constraint enforcement (operators + shape methods at call sites)
+- `match` exhaustiveness for tagged unions, optionals, and results
+- `some(v) / none` and `ok(v) / err(e)` pattern arms
+- Selective imports (`use std.math: PI, hypot`)
+- `mix fmt` formatter
+- Full LSP server with code actions, inlay hints, rename, references, document/workspace symbols
+- Tree-sitter grammar (v0)
+- Standard library expansion (`std.io`, `std.fmt`, `std.path`, `std.random`, `std.time`)
 
 ---
 

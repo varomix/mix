@@ -491,55 +491,83 @@ static void use_path_prefix(Token *toks, int idx, char *out, int out_size) {
 // Add completion items for stdlib modules under `prefix` (e.g. "std" lists
 // math/io/fmt/...). Walks the file's `lib/std/` directory if found via the
 // document path.
+// List `.mix` files in `dir` and any subdirectories named in matching
+// the prefix path (e.g., for `engine.physics.|` we look in
+// `<file_dir>/engine/physics/`).
+static void list_dir_modules(JsonWriter *w, const char *dir, const char *detail) {
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.') continue;
+        char child[1024];
+        snprintf(child, sizeof(child), "%s/%s", dir, ent->d_name);
+        struct stat st;
+        if (stat(child, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            // Subdirectory — present as a "namespace" so the user can
+            // continue typing a deeper path.
+            emit_completion(w, ent->d_name, 9 /* Module */, "namespace");
+        } else if (S_ISREG(st.st_mode)) {
+            size_t n = strlen(ent->d_name);
+            if (n > 4 && strcmp(ent->d_name + n - 4, ".mix") == 0) {
+                char base[256];
+                int blen = (int)(n - 4) < 255 ? (int)(n - 4) : 255;
+                memcpy(base, ent->d_name, blen);
+                base[blen] = '\0';
+                emit_completion(w, base, 9, detail);
+            }
+        }
+    }
+    closedir(d);
+}
+
+// Convert dotted path prefix into a filesystem-relative path:
+// "engine.physics" -> "engine/physics"
+static void path_from_prefix(const char *prefix, char *out, int out_size) {
+    int o = 0;
+    for (int i = 0; prefix[i] && o < out_size - 1; i++) {
+        out[o++] = (prefix[i] == '.') ? '/' : prefix[i];
+    }
+    out[o] = '\0';
+}
+
 static void add_use_completions(JsonWriter *w, LspDocument *doc, const char *prefix) {
-    if (!doc || !prefix || !*prefix) return;
-    // Map the prefix to a filesystem directory using lsp_resolve_use_path
-    // on a synthetic <prefix>.placeholder path. The placeholder isn't a
-    // real file, but the caller of resolve walks parents looking for
-    // `lib/std/`, so we can extract the directory from a successful match.
-    // Easier path: probe <prefix>.X for a known X to find the right dir,
-    // then list it. Skip — instead, manually walk for `lib/std/` from the
-    // file's directory.
-    if (!doc->filepath) return;
+    if (!doc || !prefix || !*prefix || !doc->filepath) return;
     char *dir_copy = strdup(doc->filepath);
     char *dir = dirname(dir_copy);
 
-    // For now we only handle the std.* case — that's the 90% need.
-    if (strncmp(prefix, "std", 3) == 0) {
-        // Walk up looking for <ancestor>/lib/std/<rest>/ and list its .mix files.
+    // (1) `std.*`: walk parent dirs looking for lib/std/<rest>/.
+    if (strncmp(prefix, "std", 3) == 0 &&
+        (prefix[3] == '\0' || prefix[3] == '.')) {
         const char *rest = (prefix[3] == '.') ? prefix + 4 : "";
         char ascend[1024];
         snprintf(ascend, sizeof(ascend), "%s", dir);
         for (int up = 0; up < 32; up++) {
             char target[1024];
-            if (rest[0])
-                snprintf(target, sizeof(target), "%s/lib/std/%s", ascend, rest);
-            else
-                snprintf(target, sizeof(target), "%s/lib/std", ascend);
-            DIR *d = opendir(target);
-            if (d) {
-                struct dirent *ent;
-                while ((ent = readdir(d)) != NULL) {
-                    if (ent->d_name[0] == '.') continue;
-                    size_t n = strlen(ent->d_name);
-                    if (n > 4 && strcmp(ent->d_name + n - 4, ".mix") == 0) {
-                        char base[256];
-                        int blen = (int)(n - 4) < 255 ? (int)(n - 4) : 255;
-                        memcpy(base, ent->d_name, blen);
-                        base[blen] = '\0';
-                        emit_completion(w, base, 9 /* Module */, "stdlib module");
-                    }
-                }
-                closedir(d);
+            if (rest[0]) snprintf(target, sizeof(target), "%s/lib/std/%s", ascend, rest);
+            else         snprintf(target, sizeof(target), "%s/lib/std", ascend);
+            struct stat st;
+            if (stat(target, &st) == 0 && S_ISDIR(st.st_mode)) {
+                list_dir_modules(w, target, "stdlib module");
                 free(dir_copy);
                 return;
             }
             char *parent = dirname(ascend);
             if (!parent || strcmp(parent, ascend) == 0 || strcmp(parent, ".") == 0) break;
-            char tmp[1024];
-            snprintf(tmp, sizeof(tmp), "%s", parent);
+            char tmp[1024]; snprintf(tmp, sizeof(tmp), "%s", parent);
             snprintf(ascend, sizeof(ascend), "%s", tmp);
         }
+    }
+
+    // (2) Generic dotted path: look for `<file_dir>/<prefix-as-path>/`.
+    char rel[1024];
+    path_from_prefix(prefix, rel, sizeof(rel));
+    char target[1024];
+    snprintf(target, sizeof(target), "%s/%s", dir, rel);
+    struct stat st;
+    if (stat(target, &st) == 0 && S_ISDIR(st.st_mode)) {
+        list_dir_modules(w, target, "module");
     }
     free(dir_copy);
 }

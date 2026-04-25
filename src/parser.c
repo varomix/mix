@@ -745,6 +745,44 @@ static AstNode *parse_expr_prec(Parser *p, Precedence min_prec) {
         // Check for method call: obj.name(args)
         if (check(p, TOK_LPAREN)) {
             advance_tok(p); // skip (
+
+            // Qualified variant constructor: `AppError.NotFound(path: "x")`.
+            // Detected by the same heuristic as bare shape literals — first
+            // arg is `IDENT :`. Build a NODE_SHAPE_LIT keyed on the variant
+            // name; sema looks it up directly (variants are global).
+            if (check(p, TOK_IDENT) && peek_at(p, 1)->kind == TOK_COLON) {
+                AstNode *node = ast_new(p->arena, NODE_SHAPE_LIT, dot_loc);
+                node->shape_lit.shape_name = field_name;
+                char **field_names = NULL;
+                AstNode **field_values = NULL;
+                int field_count = 0, field_cap = 0;
+                do {
+                    Token *fname = expect(p, TOK_IDENT);
+                    expect(p, TOK_COLON);
+                    AstNode *fval = parse_expr(p);
+                    if (field_count >= field_cap) {
+                        field_cap = field_cap ? field_cap * 2 : 8;
+                        char **nn = arena_alloc(p->arena, sizeof(char*) * field_cap);
+                        AstNode **nv = arena_alloc(p->arena, sizeof(AstNode*) * field_cap);
+                        if (field_names) {
+                            memcpy(nn, field_names, sizeof(char*) * field_count);
+                            memcpy(nv, field_values, sizeof(AstNode*) * field_count);
+                        }
+                        field_names = nn;
+                        field_values = nv;
+                    }
+                    field_names[field_count] = tok_str(p, fname);
+                    field_values[field_count] = fval;
+                    field_count++;
+                } while (match_tok(p, TOK_COMMA));
+                expect(p, TOK_RPAREN);
+                node->shape_lit.field_names = field_names;
+                node->shape_lit.field_values = field_values;
+                node->shape_lit.field_count = field_count;
+                left = node;
+                continue;
+            }
+
             AstNode *node = ast_new(p->arena, NODE_METHOD_CALL, dot_loc);
             node->method_call.object = left;
             node->method_call.method_name = field_name;

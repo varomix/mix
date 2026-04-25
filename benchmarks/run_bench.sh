@@ -13,7 +13,7 @@ if [ ! -f "$MIXC" ]; then
     (cd "$PROJECT_DIR" && make)
 fi
 
-BENCHMARKS="bench_sum_squares bench_fib bench_list bench_string"
+BENCHMARKS="bench_sum_squares bench_fib bench_list bench_string bench_generic_stack"
 RUNS=5
 
 # Get median of values (pipe sorted floats, pick middle)

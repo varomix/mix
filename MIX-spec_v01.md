@@ -39,7 +39,7 @@ This spec is the language as designed. Some sections describe features that ship
 | 8 | Optionals | shipping — `else`, `?`, `some(v)/none` pattern arms |
 | 9 | Error Handling | partial — `fail`, `?`, `else`, `ok(v)/err(e)` pattern arms work; nested `err(AppError.Variant(p))` patterns planned |
 | 10 | Memory — Zones | partial — `zone`/`defer` work; `->` move operator and `stack/heap` allocators planned |
-| 11 | Generics | partial — generic functions ship; generic shapes ship via type erasure for word-sized T (int/str/ptr/bool); `has` constraints enforced for operators and shape methods at call sites |
+| 11 | Generics | shipping — generic functions, generic shapes (per-T monomorphization, including float and shape T), `has` constraints enforced for operators and shape methods |
 | 12 | Concurrency | partial — `go`/`wait`/`shared` ship; `run`, `stream`/`yield`, `channel` planned |
 | 13 | Modules | partial — `use path.to.module`, aliases, `pub`, selective imports (`use m: a, b`) ship; external registry planned |
 | 14 | Compile-time | shipping (`@const`, `@os`, `@arch`, `@debug`, `@release`) |
@@ -701,12 +701,15 @@ contains(list: [T], val: T) -> bool
 @T has +, <, ==
 ```
 
-> Generic *functions* and the `has` syntax work today (constraints are accepted but not yet checked).
+> Generic *functions* and the `has` syntax ship today; constraints are
+> enforced for operators (`+`, `==`, etc.) and shape methods at call sites.
 >
-> Generic *shapes* — `shape Box[T]` — also work via type erasure: T is a 64-bit slot
-> shared by `int`, `str`, `*byte`, and `bool`. A `Stack[int]` round-trips correctly,
-> but `Stack[float]` does not (float lives in a different ABI register class). True
-> per-instantiation monomorphization is planned.
+> Generic *shapes* — `shape Box[T]` — ship with per-T monomorphization.
+> Each concrete instantiation (`Box[int]`, `Box[float]`, ...) gets its
+> own shape and method set so float values use the right ABI registers
+> and shape-typed `T` dispatches correctly. Type args are inferred from
+> constructor args (`Stack(items: [42])` → `Stack[int]`) or written
+> explicitly (`Stack[int]()`).
 
 ---
 

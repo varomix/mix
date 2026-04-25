@@ -265,6 +265,210 @@ static bool types_compatible(MixType *expected, MixType *actual) {
     }
 }
 
+// --- Generic shape monomorphization ---
+
+static GenericShapeTemplate *find_template(Sema *sema, const char *name) {
+    for (GenericShapeTemplate *t = sema->templates; t; t = t->next)
+        if (strcmp(t->name, name) == 0) return t;
+    return NULL;
+}
+
+static void register_template(Sema *sema, AstNode *decl) {
+    GenericShapeTemplate *t = arena_alloc(sema->arena, sizeof(*t));
+    t->name = decl->shape_decl.name;
+    t->decl = decl;
+    t->next = sema->templates;
+    sema->templates = t;
+}
+
+static MixType *find_instance(Sema *sema, const char *mangled) {
+    for (GenericShapeInstance *i = sema->instances; i; i = i->next)
+        if (strcmp(i->mangled, mangled) == 0) return i->type;
+    return NULL;
+}
+
+static void cache_instance(Sema *sema, const char *mangled, MixType *type) {
+    GenericShapeInstance *i = arena_alloc(sema->arena, sizeof(*i));
+    i->mangled = arena_strdup(sema->arena, mangled);
+    i->type = type;
+    i->next = sema->instances;
+    sema->instances = i;
+}
+
+// Build a short stable name fragment for a type. Used for mangling.
+static void type_mangle(MixType *t, char *out, int out_size) {
+    if (!t) { snprintf(out, out_size, "void"); return; }
+    switch (t->kind) {
+        case TYPE_INT: snprintf(out, out_size, "int"); return;
+        case TYPE_FLOAT: snprintf(out, out_size, "float"); return;
+        case TYPE_BOOL: snprintf(out, out_size, "bool"); return;
+        case TYPE_BYTE: snprintf(out, out_size, "byte"); return;
+        case TYPE_STR: snprintf(out, out_size, "str"); return;
+        case TYPE_PTR: snprintf(out, out_size, "ptr"); return;
+        case TYPE_INT32: snprintf(out, out_size, "int32"); return;
+        case TYPE_UINT32: snprintf(out, out_size, "uint32"); return;
+        case TYPE_FLOAT32: snprintf(out, out_size, "float32"); return;
+        case TYPE_SHAPE: snprintf(out, out_size, "%s", t->shape.name); return;
+        default: snprintf(out, out_size, "T%d", (int)t->kind); return;
+    }
+}
+
+// Forward decls
+static MixType *resolve_type_node(Sema *sema, AstNode *type_node);
+static void instantiate_methods_into(Sema *sema, AstNode *cloned_decl,
+                                     MixType *shape_type);
+
+// Look up or build the instantiation `Template[args...]`. Returns the
+// instantiated TYPE_SHAPE. Returns NULL if not a generic template.
+static MixType *instantiate_generic_shape(Sema *sema, const char *template_name,
+                                          AstNode **type_args, int type_arg_count) {
+    GenericShapeTemplate *tpl = find_template(sema, template_name);
+    if (!tpl) return NULL;
+    AstNode *decl = tpl->decl;
+
+    if (decl->shape_decl.type_param_count != type_arg_count) {
+        mix_error(decl->loc, "shape '%s' takes %d type arg(s), got %d",
+                  template_name, decl->shape_decl.type_param_count, type_arg_count);
+        return NULL;
+    }
+
+    // Resolve the concrete types and build a binding list for the cloner.
+    // We also build the mangled name as we go.
+    char mangled[256];
+    int off = snprintf(mangled, sizeof(mangled), "%s$", template_name);
+    TypeBinding *bindings = arena_alloc(sema->arena, sizeof(TypeBinding) * type_arg_count);
+    for (int i = 0; i < type_arg_count; i++) {
+        MixType *concrete = resolve_type_node(sema, type_args[i]);
+        char frag[64];
+        type_mangle(concrete, frag, sizeof(frag));
+        if (i > 0 && off + 1 < (int)sizeof(mangled)) mangled[off++] = '_';
+        off += snprintf(mangled + off, sizeof(mangled) - off, "%s", frag);
+        bindings[i].name = decl->shape_decl.type_params[i];
+        bindings[i].type_node = type_args[i];
+    }
+    if (off < (int)sizeof(mangled)) mangled[off] = '\0';
+
+    MixType *cached = find_instance(sema, mangled);
+    if (cached) return cached;
+
+    // Clone the decl with substitution.
+    AstNode *clone = arena_alloc(sema->arena, sizeof(AstNode));
+    *clone = *decl;
+    clone->shape_decl.name = arena_strdup(sema->arena, mangled);
+    clone->shape_decl.type_params = NULL;
+    clone->shape_decl.type_param_count = 0;
+    // Clone fields with type substitution.
+    if (decl->shape_decl.field_count > 0) {
+        clone->shape_decl.fields = arena_alloc(sema->arena,
+            sizeof(ShapeField) * decl->shape_decl.field_count);
+        for (int i = 0; i < decl->shape_decl.field_count; i++) {
+            ShapeField *src = &decl->shape_decl.fields[i];
+            clone->shape_decl.fields[i].name = src->name;
+            clone->shape_decl.fields[i].type = ast_clone(src->type, sema->arena,
+                                                         bindings, type_arg_count);
+            clone->shape_decl.fields[i].offset = 0;
+            clone->shape_decl.fields[i].size = 0;
+        }
+    }
+    // Clone methods (including bodies) with substitution.
+    if (decl->shape_decl.method_count > 0) {
+        clone->shape_decl.methods = arena_alloc(sema->arena,
+            sizeof(AstNode*) * decl->shape_decl.method_count);
+        for (int i = 0; i < decl->shape_decl.method_count; i++) {
+            clone->shape_decl.methods[i] = ast_clone(decl->shape_decl.methods[i],
+                sema->arena, bindings, type_arg_count);
+        }
+    }
+
+    // Build a TYPE_SHAPE for the instantiation. Field offsets/sizes
+    // match the existing shape-pass logic but with concrete types.
+    MixType *shape_type = make_type(sema->arena, TYPE_SHAPE);
+    shape_type->shape.name = clone->shape_decl.name;
+    shape_type->shape.field_count = clone->shape_decl.field_count;
+    shape_type->shape.fields = arena_alloc(sema->arena,
+        sizeof(ShapeFieldInfo) * clone->shape_decl.field_count);
+    int offset = 0;
+    for (int j = 0; j < clone->shape_decl.field_count; j++) {
+        ShapeField *sf = &clone->shape_decl.fields[j];
+        MixType *ftype = sf->type ? resolve_type_node(sema, sf->type)
+                                  : make_type(sema->arena, TYPE_INT);
+        if (sf->type) sf->type->resolved_type = ftype;
+        int fsize = type_size(ftype);
+        int falign = type_alignment(ftype);
+        offset = (offset + falign - 1) & ~(falign - 1);
+        shape_type->shape.fields[j].name = sf->name;
+        shape_type->shape.fields[j].type = ftype;
+        shape_type->shape.fields[j].offset = offset;
+        shape_type->shape.fields[j].size = fsize;
+        sf->offset = offset;
+        sf->size = fsize;
+        offset += fsize;
+    }
+    shape_type->shape.total_size = (offset + 7) & ~7;
+    shape_type->shape.alignment = 8;
+    clone->resolved_type = shape_type;
+
+    // Register the instantiated shape into the GLOBAL scope, not whatever
+    // function-local scope happens to be active when the use site is being
+    // analyzed. Otherwise the entry vanishes when the local scope pops.
+    Scope *saved_scope = sema->symtab.current;
+    Scope *root = saved_scope;
+    while (root->parent) root = root->parent;
+    sema->symtab.current = root;
+    symtab_insert(&sema->symtab, mangled, shape_type, false);
+    cache_instance(sema, mangled, shape_type);
+    instantiate_methods_into(sema, clone, shape_type);
+    sema->symtab.current = saved_scope;
+
+    // Append the cloned decl to the program-level instantiated list so
+    // codegen sees it alongside hand-written shapes.
+    if (sema->instantiated_decl_count >= sema->instantiated_decl_cap) {
+        int new_cap = sema->instantiated_decl_cap ? sema->instantiated_decl_cap * 2 : 8;
+        AstNode **na = arena_alloc(sema->arena, sizeof(AstNode*) * new_cap);
+        if (sema->instantiated_decls)
+            memcpy(na, sema->instantiated_decls,
+                   sizeof(AstNode*) * sema->instantiated_decl_count);
+        sema->instantiated_decls = na;
+        sema->instantiated_decl_cap = new_cap;
+    }
+    sema->instantiated_decls[sema->instantiated_decl_count++] = clone;
+
+    return shape_type;
+}
+
+static MixType *resolve_type_node(Sema *sema, AstNode *type_node);
+
+static void instantiate_methods_into(Sema *sema, AstNode *cloned_decl,
+                                     MixType *shape_type) {
+    for (int j = 0; j < cloned_decl->shape_decl.method_count; j++) {
+        AstNode *method = cloned_decl->shape_decl.methods[j];
+        char mangled[256];
+        snprintf(mangled, sizeof(mangled), "%s_%s",
+                 cloned_decl->shape_decl.name, method->fn_decl.name);
+
+        MixType *mtype = make_type(sema->arena, TYPE_FUNC);
+        MixType *ret = method->fn_decl.return_type
+            ? resolve_type_node(sema, method->fn_decl.return_type)
+            : make_type(sema->arena, TYPE_VOID);
+        if (method->fn_decl.return_type)
+            method->fn_decl.return_type->resolved_type = ret;
+        mtype->func.return_type = ret;
+        mtype->func.param_count = method->fn_decl.param_count + 1;
+        mtype->func.param_types = arena_alloc(sema->arena,
+            sizeof(MixType*) * mtype->func.param_count);
+        mtype->func.param_types[0] = shape_type;
+        for (int k = 0; k < method->fn_decl.param_count; k++) {
+            MixType *pt = method->fn_decl.params[k].type
+                ? resolve_type_node(sema, method->fn_decl.params[k].type)
+                : make_type(sema->arena, TYPE_INFER);
+            if (method->fn_decl.params[k].type)
+                method->fn_decl.params[k].type->resolved_type = pt;
+            mtype->func.param_types[k + 1] = pt;
+        }
+        symtab_insert(&sema->symtab, mangled, mtype, false);
+    }
+}
+
 static MixType *resolve_type_node(Sema *sema, AstNode *type_node) {
     if (!type_node) return make_type(sema->arena, TYPE_VOID);
 
@@ -309,6 +513,15 @@ static MixType *resolve_type_node(Sema *sema, AstNode *type_node) {
             case TOK_FLOAT32: return make_type(sema->arena, TYPE_FLOAT32);
             case TOK_FLOAT64: return make_type(sema->arena, TYPE_FLOAT64);
             case TOK_IDENT: {
+                // Generic instantiation: `Stack[int]`
+                if (type_node->type_name.type_arg_count > 0) {
+                    MixType *inst = instantiate_generic_shape(sema,
+                        type_node->type_name.name,
+                        type_node->type_name.type_args,
+                        type_node->type_name.type_arg_count);
+                    if (inst) return inst;
+                    // Fall through to opaque-named on error
+                }
                 // Look up in symbol table — could be a shape type
                 Symbol *sym = symtab_lookup(&sema->symtab, type_node->type_name.name);
                 if (sym && sym->type && sym->type->kind == TYPE_SHAPE) {
@@ -666,18 +879,132 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
         }
         handle_shape_lit:
         case NODE_SHAPE_LIT: {
-            // Look up the shape type — could be a direct shape or a variant constructor
-            Symbol *sym = symtab_lookup(&sema->symtab, expr->shape_lit.shape_name);
             MixType *stype = NULL;
-            if (sym && sym->type && sym->type->kind == TYPE_SHAPE) {
-                stype = sym->type;
-            } else if (sym && sym->type && sym->type->kind == TYPE_FUNC &&
-                       sym->type->func.return_type && sym->type->func.return_type->kind == TYPE_SHAPE) {
-                stype = sym->type->func.return_type;
+            // Generic shape constructor: `Stack[int](items: [])` — look up
+            // or build the instantiation, then redirect shape_name so the
+            // emitter dispatches against the mangled methods.
+            if (expr->shape_lit.type_arg_count > 0) {
+                stype = instantiate_generic_shape(sema,
+                    expr->shape_lit.shape_name,
+                    expr->shape_lit.type_args,
+                    expr->shape_lit.type_arg_count);
+                if (stype) {
+                    expr->shape_lit.shape_name = stype->shape.name;
+                }
             } else {
-                mix_error(expr->loc, "unknown shape '%s'", expr->shape_lit.shape_name);
-                expr->resolved_type = make_type(sema->arena, TYPE_VOID);
-                return expr->resolved_type;
+                // Constructor inference: `Stack(items: [42])` — if the
+                // shape name is a generic template, infer the type args
+                // from the supplied field values.
+                GenericShapeTemplate *tpl = find_template(sema, expr->shape_lit.shape_name);
+                if (tpl) {
+                    AstNode *tdecl = tpl->decl;
+                    int tpc = tdecl->shape_decl.type_param_count;
+                    AstNode **inferred = arena_alloc(sema->arena, sizeof(AstNode*) * tpc);
+                    for (int i = 0; i < tpc; i++) inferred[i] = NULL;
+                    // Resolve field-value types first.
+                    for (int i = 0; i < expr->shape_lit.field_count; i++)
+                        resolve_expr(sema, expr->shape_lit.field_values[i]);
+                    // For each type param, walk template fields looking for
+                    // a field whose declared type is `T` or `[T]` and pick
+                    // up the actual type from the corresponding arg.
+                    for (int p = 0; p < tpc; p++) {
+                        const char *tname = tdecl->shape_decl.type_params[p];
+                        for (int fi = 0; fi < tdecl->shape_decl.field_count && !inferred[p]; fi++) {
+                            ShapeField *sf = &tdecl->shape_decl.fields[fi];
+                            if (!sf->type) continue;
+                            // Find which user arg matches this field by name
+                            // (named args) or by position.
+                            AstNode *arg_val = NULL;
+                            if (expr->shape_lit.field_names) {
+                                for (int ui = 0; ui < expr->shape_lit.field_count; ui++) {
+                                    if (expr->shape_lit.field_names[ui] &&
+                                        strcmp(expr->shape_lit.field_names[ui], sf->name) == 0) {
+                                        arg_val = expr->shape_lit.field_values[ui];
+                                        break;
+                                    }
+                                }
+                            } else if (fi < expr->shape_lit.field_count) {
+                                arg_val = expr->shape_lit.field_values[fi];
+                            }
+                            if (!arg_val || !arg_val->resolved_type) continue;
+                            MixType *at = arg_val->resolved_type;
+                            // Field type is bare T -> inferred = at
+                            if (sf->type->kind == NODE_TYPE_NAME &&
+                                sf->type->type_name.name &&
+                                strcmp(sf->type->type_name.name, tname) == 0) {
+                                // Build a synthetic type-name node from `at`'s kind.
+                                AstNode *syn = arena_alloc(sema->arena, sizeof(AstNode));
+                                memset(syn, 0, sizeof(*syn));
+                                syn->kind = NODE_TYPE_NAME;
+                                const char *kname = type_kind_name(at->kind);
+                                syn->type_name.name = arena_strdup(sema->arena, kname);
+                                // Map common kinds back to TokenKind for resolve.
+                                switch (at->kind) {
+                                    case TYPE_INT: syn->type_name.type_kind = TOK_INT; break;
+                                    case TYPE_FLOAT: syn->type_name.type_kind = TOK_FLOAT; break;
+                                    case TYPE_STR: syn->type_name.type_kind = TOK_STR; break;
+                                    case TYPE_BOOL: syn->type_name.type_kind = TOK_BOOL; break;
+                                    default: syn->type_name.type_kind = TOK_INT; break;
+                                }
+                                inferred[p] = syn;
+                            }
+                            // Field type is [T] and arg is a list -> inferred = list elem type
+                            else if (sf->type->kind == NODE_TYPE_NAME &&
+                                     sf->type->type_name.type_kind == TOK_LBRACKET &&
+                                     at->kind == TYPE_LIST && at->list.elem_type) {
+                                MixType *et = at->list.elem_type;
+                                if (et->kind == TYPE_INFER) continue;  // empty list — try another field
+                                AstNode *syn = arena_alloc(sema->arena, sizeof(AstNode));
+                                memset(syn, 0, sizeof(*syn));
+                                syn->kind = NODE_TYPE_NAME;
+                                const char *kname = type_kind_name(et->kind);
+                                syn->type_name.name = arena_strdup(sema->arena, kname);
+                                switch (et->kind) {
+                                    case TYPE_INT: syn->type_name.type_kind = TOK_INT; break;
+                                    case TYPE_FLOAT: syn->type_name.type_kind = TOK_FLOAT; break;
+                                    case TYPE_STR: syn->type_name.type_kind = TOK_STR; break;
+                                    case TYPE_BOOL: syn->type_name.type_kind = TOK_BOOL; break;
+                                    default: syn->type_name.type_kind = TOK_INT; break;
+                                }
+                                inferred[p] = syn;
+                            }
+                        }
+                    }
+                    // Default any uninferred param (e.g. all-empty-lists case)
+                    // to int — keeps the legacy behavior where untyped Stack
+                    // worked as int.
+                    for (int p = 0; p < tpc; p++) {
+                        if (!inferred[p]) {
+                            AstNode *syn = arena_alloc(sema->arena, sizeof(AstNode));
+                            memset(syn, 0, sizeof(*syn));
+                            syn->kind = NODE_TYPE_NAME;
+                            syn->type_name.name = "int";
+                            syn->type_name.type_kind = TOK_INT;
+                            inferred[p] = syn;
+                        }
+                    }
+                    stype = instantiate_generic_shape(sema, expr->shape_lit.shape_name,
+                                                      inferred, tpc);
+                    if (stype) {
+                        expr->shape_lit.shape_name = stype->shape.name;
+                        expr->shape_lit.type_args = inferred;
+                        expr->shape_lit.type_arg_count = tpc;
+                    }
+                }
+            }
+            // Look up the shape type — could be a direct shape or a variant constructor
+            if (!stype) {
+                Symbol *sym = symtab_lookup(&sema->symtab, expr->shape_lit.shape_name);
+                if (sym && sym->type && sym->type->kind == TYPE_SHAPE) {
+                    stype = sym->type;
+                } else if (sym && sym->type && sym->type->kind == TYPE_FUNC &&
+                           sym->type->func.return_type && sym->type->func.return_type->kind == TYPE_SHAPE) {
+                    stype = sym->type->func.return_type;
+                } else {
+                    mix_error(expr->loc, "unknown shape '%s'", expr->shape_lit.shape_name);
+                    expr->resolved_type = make_type(sema->arena, TYPE_VOID);
+                    return expr->resolved_type;
+                }
             }
             expr->resolved_type = stype;
 
@@ -1983,6 +2310,14 @@ void sema_analyze(Sema *sema, AstNode *program) {
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
         if (decl->kind == NODE_SHAPE_DECL) {
+            // Generic shape with type params: register as a template, not
+            // a concrete shape. The template materializes per use site
+            // via instantiate_generic_shape().
+            if (decl->shape_decl.type_param_count > 0) {
+                register_template(sema, decl);
+                continue;
+            }
+
             // Build shape type
             MixType *shape_type = make_type(sema->arena, TYPE_SHAPE);
             shape_type->shape.name = decl->shape_decl.name;
@@ -2238,6 +2573,10 @@ void sema_analyze(Sema *sema, AstNode *program) {
 
             symtab_pop_scope(&sema->symtab);
         } else if (decl->kind == NODE_SHAPE_DECL) {
+            // Generic shape templates have no methods to analyze (their
+            // bodies are analyzed per instantiation in pass-c below).
+            if (decl->shape_decl.type_param_count > 0) continue;
+
             // Analyze method bodies
             Symbol *shape_sym = symtab_lookup(&sema->symtab, decl->shape_decl.name);
             MixType *shape_type = shape_sym ? shape_sym->type : NULL;
@@ -2308,5 +2647,60 @@ void sema_analyze(Sema *sema, AstNode *program) {
                 }
             }
         }
+    }
+
+    // Pass (c): analyze method bodies of instantiated generic shapes.
+    // Instantiations created during pass-b (or here, transitively) get
+    // their method bodies type-checked with the concrete fields visible.
+    // We loop because analyzing one instantiation can trigger another.
+    int processed = 0;
+    while (processed < sema->instantiated_decl_count) {
+        int batch_end = sema->instantiated_decl_count;
+        for (int idx = processed; idx < batch_end; idx++) {
+            AstNode *decl = sema->instantiated_decls[idx];
+            Symbol *shape_sym = symtab_lookup(&sema->symtab, decl->shape_decl.name);
+            MixType *shape_type = shape_sym ? shape_sym->type : NULL;
+            for (int j = 0; j < decl->shape_decl.method_count; j++) {
+                AstNode *method = decl->shape_decl.methods[j];
+                symtab_push_scope(&sema->symtab);
+                if (shape_type) {
+                    symtab_insert(&sema->symtab, "self", shape_type, false);
+                    for (int k = 0; k < shape_type->shape.field_count; k++) {
+                        symtab_insert(&sema->symtab, shape_type->shape.fields[k].name,
+                                      shape_type->shape.fields[k].type, false);
+                    }
+                }
+                for (int k = 0; k < method->fn_decl.param_count; k++) {
+                    Param *param = &method->fn_decl.params[k];
+                    MixType *ptype = param->type
+                        ? resolve_type_node(sema, param->type)
+                        : make_type(sema->arena, TYPE_INFER);
+                    symtab_insert(&sema->symtab, param->name, ptype, param->is_mutable);
+                }
+                if (method->fn_decl.body) {
+                    AstNode *body = method->fn_decl.body;
+                    for (int k = 0; k < body->block.stmt_count; k++)
+                        analyze_stmt(sema, body->block.stmts[k]);
+                }
+                symtab_pop_scope(&sema->symtab);
+            }
+        }
+        processed = batch_end;
+    }
+
+    // Pass (d): splice the instantiated shape decls into the program AST
+    // so the codegen sees them like ordinary user-written shapes.
+    if (sema->instantiated_decl_count > 0) {
+        int old_n = program->program.decl_count;
+        int new_n = old_n + sema->instantiated_decl_count;
+        AstNode **merged = arena_alloc(sema->arena, sizeof(AstNode*) * new_n);
+        // Place instantiated shapes BEFORE other decls so codegen sees
+        // them when emitting later use sites.
+        for (int i = 0; i < sema->instantiated_decl_count; i++)
+            merged[i] = sema->instantiated_decls[i];
+        memcpy(merged + sema->instantiated_decl_count,
+               program->program.decls, sizeof(AstNode*) * old_n);
+        program->program.decls = merged;
+        program->program.decl_count = new_n;
     }
 }

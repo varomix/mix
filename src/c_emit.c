@@ -2517,6 +2517,9 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
         if (decl->kind == NODE_SHAPE_DECL) {
+            // Skip generic shape templates — instantiations are emitted
+            // as their own decls.
+            if (decl->shape_decl.type_param_count > 0) continue;
             Symbol *shape_sym = symtab_lookup(emit->symtab, decl->shape_decl.name);
             MixType *st = (shape_sym && shape_sym->type) ? shape_sym->type : NULL;
 
@@ -2718,6 +2721,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
             if (decl->fn_decl.param_count == 0) fprintf(emit->out, "void");
             fprintf(emit->out, ");\n");
         } else if (decl->kind == NODE_SHAPE_DECL) {
+            if (decl->shape_decl.type_param_count > 0) continue;
             Symbol *shape_sym = symtab_lookup(emit->symtab, decl->shape_decl.name);
             MixType *shape_type = (shape_sym && shape_sym->type) ? shape_sym->type : NULL;
             for (int j = 0; j < decl->shape_decl.method_count; j++) {
@@ -2792,6 +2796,8 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
         if (decl->kind == NODE_FN_DECL) {
             emit_fn_decl(emit, decl);
         } else if (decl->kind == NODE_SHAPE_DECL) {
+            // Skip generic shape templates — instantiations emit as their own decls.
+            if (decl->shape_decl.type_param_count > 0) continue;
             Symbol *shape_sym = symtab_lookup(emit->symtab, decl->shape_decl.name);
             MixType *shape_type = (shape_sym && shape_sym->type) ? shape_sym->type : NULL;
             for (int j = 0; j < decl->shape_decl.method_count; j++) {

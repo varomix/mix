@@ -299,3 +299,299 @@ void ast_print(AstNode *node, int indent) {
             break;
     }
 }
+
+// --- Deep clone (for generic shape monomorphization) ---
+//
+// Walks the node tree and produces an independent copy in `arena`. Every
+// NODE_TYPE_NAME whose name matches an entry in `bindings` is replaced by
+// a fresh clone of the binding's type node. The substitution applies
+// recursively into method bodies, list/map literals, etc. so a function
+// like `push!(val: T) ~ items.push!(val)` re-resolves cleanly per
+// instantiation.
+//
+// Strings and small arrays are duplicated into `arena`; nothing in the
+// returned tree shares storage with the input.
+
+static AstNode *do_clone(AstNode *node, Arena *arena,
+                         TypeBinding *bindings, int binding_count);
+
+static char *clone_str(Arena *arena, const char *s) {
+    if (!s) return NULL;
+    size_t n = strlen(s) + 1;
+    char *out = arena_alloc(arena, n);
+    memcpy(out, s, n);
+    return out;
+}
+
+static AstNode **clone_node_array(AstNode **src, int n, Arena *arena,
+                                  TypeBinding *bindings, int bc) {
+    if (n == 0 || !src) return NULL;
+    AstNode **dst = arena_alloc(arena, sizeof(AstNode*) * n);
+    for (int i = 0; i < n; i++) dst[i] = do_clone(src[i], arena, bindings, bc);
+    return dst;
+}
+
+static char **clone_str_array(char **src, int n, Arena *arena) {
+    if (n == 0 || !src) return NULL;
+    char **dst = arena_alloc(arena, sizeof(char*) * n);
+    for (int i = 0; i < n; i++) dst[i] = clone_str(arena, src[i]);
+    return dst;
+}
+
+static AstNode *do_clone(AstNode *node, Arena *arena,
+                         TypeBinding *bindings, int binding_count) {
+    if (!node) return NULL;
+
+    // NODE_TYPE_NAME may match a binding; if so, swap in a clone of the
+    // binding's substitute (still passing bindings so nested generics
+    // would also resolve, though we don't use that case yet).
+    if (node->kind == NODE_TYPE_NAME && node->type_name.name) {
+        for (int i = 0; i < binding_count; i++) {
+            if (strcmp(bindings[i].name, node->type_name.name) == 0) {
+                return do_clone(bindings[i].type_node, arena, NULL, 0);
+            }
+        }
+    }
+
+    AstNode *out = arena_alloc(arena, sizeof(AstNode));
+    *out = *node;   // shallow copy of the union — pointers fixed up below
+
+    switch (node->kind) {
+        case NODE_PROGRAM:
+            out->program.decls = clone_node_array(node->program.decls,
+                node->program.decl_count, arena, bindings, binding_count);
+            break;
+        case NODE_FN_DECL:
+            out->fn_decl.name = clone_str(arena, node->fn_decl.name);
+            out->fn_decl.return_type = do_clone(node->fn_decl.return_type, arena, bindings, binding_count);
+            out->fn_decl.body = do_clone(node->fn_decl.body, arena, bindings, binding_count);
+            if (node->fn_decl.param_count > 0) {
+                out->fn_decl.params = arena_alloc(arena, sizeof(Param) * node->fn_decl.param_count);
+                for (int i = 0; i < node->fn_decl.param_count; i++) {
+                    out->fn_decl.params[i].name = clone_str(arena, node->fn_decl.params[i].name);
+                    out->fn_decl.params[i].is_mutable = node->fn_decl.params[i].is_mutable;
+                    out->fn_decl.params[i].type = do_clone(node->fn_decl.params[i].type,
+                                                          arena, bindings, binding_count);
+                }
+            }
+            out->fn_decl.type_params = clone_str_array(node->fn_decl.type_params,
+                node->fn_decl.type_param_count, arena);
+            out->fn_decl.constraints = clone_str_array(node->fn_decl.constraints,
+                node->fn_decl.constraint_count, arena);
+            break;
+        case NODE_BLOCK:
+            out->block.stmts = clone_node_array(node->block.stmts,
+                node->block.stmt_count, arena, bindings, binding_count);
+            break;
+        case NODE_VAR_DECL:
+            out->var_decl.name = clone_str(arena, node->var_decl.name);
+            out->var_decl.type_ann = do_clone(node->var_decl.type_ann, arena, bindings, binding_count);
+            out->var_decl.init_expr = do_clone(node->var_decl.init_expr, arena, bindings, binding_count);
+            // Reset resolved_type so sema re-runs cleanly on the clone.
+            out->resolved_type = NULL;
+            break;
+        case NODE_ASSIGN:
+            out->assign.name = clone_str(arena, node->assign.name);
+            out->assign.value = do_clone(node->assign.value, arena, bindings, binding_count);
+            break;
+        case NODE_IF_STMT:
+            out->if_stmt.condition = do_clone(node->if_stmt.condition, arena, bindings, binding_count);
+            out->if_stmt.then_block = do_clone(node->if_stmt.then_block, arena, bindings, binding_count);
+            out->if_stmt.else_block = do_clone(node->if_stmt.else_block, arena, bindings, binding_count);
+            break;
+        case NODE_WHILE_STMT:
+            out->while_stmt.condition = do_clone(node->while_stmt.condition, arena, bindings, binding_count);
+            out->while_stmt.body = do_clone(node->while_stmt.body, arena, bindings, binding_count);
+            break;
+        case NODE_FOR_STMT:
+            out->for_stmt.var_name = clone_str(arena, node->for_stmt.var_name);
+            out->for_stmt.index_name = clone_str(arena, node->for_stmt.index_name);
+            out->for_stmt.iterable = do_clone(node->for_stmt.iterable, arena, bindings, binding_count);
+            out->for_stmt.body = do_clone(node->for_stmt.body, arena, bindings, binding_count);
+            break;
+        case NODE_MATCH_STMT: {
+            out->match_stmt.subject = do_clone(node->match_stmt.subject, arena, bindings, binding_count);
+            int n = node->match_stmt.arm_count;
+            if (n > 0) {
+                out->match_stmt.arms = arena_alloc(arena, sizeof(struct MatchArm) * n);
+                for (int i = 0; i < n; i++) {
+                    out->match_stmt.arms[i].is_wildcard = node->match_stmt.arms[i].is_wildcard;
+                    out->match_stmt.arms[i].pattern = do_clone(node->match_stmt.arms[i].pattern, arena, bindings, binding_count);
+                    out->match_stmt.arms[i].body = do_clone(node->match_stmt.arms[i].body, arena, bindings, binding_count);
+                }
+            }
+            break;
+        }
+        case NODE_DONE_STMT:
+            out->done_stmt.value = do_clone(node->done_stmt.value, arena, bindings, binding_count);
+            break;
+        case NODE_EXPR_STMT:
+            out->expr_stmt.expr = do_clone(node->expr_stmt.expr, arena, bindings, binding_count);
+            break;
+        case NODE_DEFER_STMT:
+            out->defer_stmt.stmt = do_clone(node->defer_stmt.stmt, arena, bindings, binding_count);
+            break;
+        case NODE_UNSAFE_BLOCK:
+            out->unsafe_block.body = do_clone(node->unsafe_block.body, arena, bindings, binding_count);
+            break;
+        case NODE_ZONE_STMT:
+            out->zone_stmt.name = clone_str(arena, node->zone_stmt.name);
+            out->zone_stmt.body = do_clone(node->zone_stmt.body, arena, bindings, binding_count);
+            break;
+        case NODE_DEREF_ASSIGN:
+            out->deref_assign.ptr_expr = do_clone(node->deref_assign.ptr_expr, arena, bindings, binding_count);
+            out->deref_assign.value = do_clone(node->deref_assign.value, arena, bindings, binding_count);
+            break;
+        case NODE_FAIL_STMT:
+            out->fail_stmt.value = do_clone(node->fail_stmt.value, arena, bindings, binding_count);
+            break;
+        case NODE_INT_LIT: case NODE_FLOAT_LIT: case NODE_BOOL_LIT:
+        case NODE_NONE_LIT:
+            // Pure scalar literals — shallow copy already covers them.
+            break;
+        case NODE_STRING_LIT:
+            // Keep pointer to source text (immutable).
+            break;
+        case NODE_STRING_INTERP: {
+            int n = node->string_interp.expr_count;
+            if (n > 0) {
+                out->string_interp.exprs = arena_alloc(arena, sizeof(AstNode*) * n);
+                for (int i = 0; i < n; i++)
+                    out->string_interp.exprs[i] = do_clone(node->string_interp.exprs[i], arena, bindings, binding_count);
+            }
+            // parts/part_lengths shared (pointers into source).
+            break;
+        }
+        case NODE_IDENT:
+            out->ident.name = clone_str(arena, node->ident.name);
+            break;
+        case NODE_BINARY_EXPR:
+            out->binary.left = do_clone(node->binary.left, arena, bindings, binding_count);
+            out->binary.right = do_clone(node->binary.right, arena, bindings, binding_count);
+            break;
+        case NODE_UNARY_EXPR:
+            out->unary.operand = do_clone(node->unary.operand, arena, bindings, binding_count);
+            break;
+        case NODE_CALL_EXPR:
+            out->call.name = clone_str(arena, node->call.name);
+            out->call.args = clone_node_array(node->call.args,
+                node->call.arg_count, arena, bindings, binding_count);
+            break;
+        case NODE_LAMBDA:
+            out->lambda.param_names = clone_str_array(node->lambda.param_names,
+                node->lambda.param_count, arena);
+            out->lambda.body = do_clone(node->lambda.body, arena, bindings, binding_count);
+            out->lambda.generated_name = clone_str(arena, node->lambda.generated_name);
+            break;
+        case NODE_LIST_LIT:
+            out->list_lit.elements = clone_node_array(node->list_lit.elements,
+                node->list_lit.element_count, arena, bindings, binding_count);
+            break;
+        case NODE_MAP_LIT:
+            out->map_lit.keys = clone_node_array(node->map_lit.keys,
+                node->map_lit.entry_count, arena, bindings, binding_count);
+            out->map_lit.values = clone_node_array(node->map_lit.values,
+                node->map_lit.entry_count, arena, bindings, binding_count);
+            break;
+        case NODE_SET_LIT:
+            out->set_lit.elements = clone_node_array(node->set_lit.elements,
+                node->set_lit.element_count, arena, bindings, binding_count);
+            break;
+        case NODE_INDEX_EXPR:
+            out->index_expr.object = do_clone(node->index_expr.object, arena, bindings, binding_count);
+            out->index_expr.index = do_clone(node->index_expr.index, arena, bindings, binding_count);
+            break;
+        case NODE_SLICE_EXPR:
+            out->slice_expr.object = do_clone(node->slice_expr.object, arena, bindings, binding_count);
+            out->slice_expr.start = do_clone(node->slice_expr.start, arena, bindings, binding_count);
+            out->slice_expr.end = do_clone(node->slice_expr.end, arena, bindings, binding_count);
+            break;
+        case NODE_LIST_COMP:
+            out->list_comp.expr = do_clone(node->list_comp.expr, arena, bindings, binding_count);
+            out->list_comp.var_name = clone_str(arena, node->list_comp.var_name);
+            out->list_comp.iterable = do_clone(node->list_comp.iterable, arena, bindings, binding_count);
+            out->list_comp.condition = do_clone(node->list_comp.condition, arena, bindings, binding_count);
+            break;
+        case NODE_ELSE_EXPR:
+            out->else_expr.value = do_clone(node->else_expr.value, arena, bindings, binding_count);
+            out->else_expr.fallback = do_clone(node->else_expr.fallback, arena, bindings, binding_count);
+            break;
+        case NODE_CAST_EXPR:
+            out->cast_expr.value = do_clone(node->cast_expr.value, arena, bindings, binding_count);
+            break;
+        case NODE_FIELD_EXPR:
+            out->field_expr.object = do_clone(node->field_expr.object, arena, bindings, binding_count);
+            out->field_expr.field_name = clone_str(arena, node->field_expr.field_name);
+            break;
+        case NODE_METHOD_CALL:
+            out->method_call.object = do_clone(node->method_call.object, arena, bindings, binding_count);
+            out->method_call.method_name = clone_str(arena, node->method_call.method_name);
+            out->method_call.args = clone_node_array(node->method_call.args,
+                node->method_call.arg_count, arena, bindings, binding_count);
+            break;
+        case NODE_SHAPE_LIT:
+            out->shape_lit.shape_name = clone_str(arena, node->shape_lit.shape_name);
+            out->shape_lit.field_names = clone_str_array(node->shape_lit.field_names,
+                node->shape_lit.field_count, arena);
+            out->shape_lit.field_values = clone_node_array(node->shape_lit.field_values,
+                node->shape_lit.field_count, arena, bindings, binding_count);
+            out->shape_lit.type_args = clone_node_array(node->shape_lit.type_args,
+                node->shape_lit.type_arg_count, arena, bindings, binding_count);
+            break;
+        case NODE_FIELD_ASSIGN:
+            out->field_assign.object = do_clone(node->field_assign.object, arena, bindings, binding_count);
+            out->field_assign.field_name = clone_str(arena, node->field_assign.field_name);
+            out->field_assign.value = do_clone(node->field_assign.value, arena, bindings, binding_count);
+            break;
+        case NODE_INDEX_ASSIGN:
+            out->index_assign.object = do_clone(node->index_assign.object, arena, bindings, binding_count);
+            out->index_assign.index = do_clone(node->index_assign.index, arena, bindings, binding_count);
+            out->index_assign.value = do_clone(node->index_assign.value, arena, bindings, binding_count);
+            break;
+        case NODE_TYPE_NAME:
+            out->type_name.name = clone_str(arena, node->type_name.name);
+            out->type_name.type_args = clone_node_array(node->type_name.type_args,
+                node->type_name.type_arg_count, arena, bindings, binding_count);
+            // Reuse type_ptr slot for list/set elem types — clone if present.
+            if (node->type_name.type_kind == TOK_LBRACKET ||
+                node->type_name.type_kind == TOK_SET) {
+                out->type_ptr.base_type = do_clone(node->type_ptr.base_type, arena, bindings, binding_count);
+            }
+            break;
+        case NODE_TYPE_PTR:
+            out->type_ptr.base_type = do_clone(node->type_ptr.base_type, arena, bindings, binding_count);
+            break;
+        case NODE_TYPE_OPTIONAL:
+            out->type_optional.inner_type = do_clone(node->type_optional.inner_type, arena, bindings, binding_count);
+            break;
+        case NODE_SHARED_EXPR:
+            out->shared_expr.init_expr = do_clone(node->shared_expr.init_expr, arena, bindings, binding_count);
+            break;
+        case NODE_GO_EXPR:
+            out->go_expr.call_expr = do_clone(node->go_expr.call_expr, arena, bindings, binding_count);
+            break;
+        case NODE_WAIT_EXPR:
+            out->wait_expr.handle_expr = do_clone(node->wait_expr.handle_expr, arena, bindings, binding_count);
+            break;
+        case NODE_TRY_EXPR:
+            out->try_expr.expr = do_clone(node->try_expr.expr, arena, bindings, binding_count);
+            break;
+        // Decls we don't expect to clone for shape monomorphization, but
+        // handle defensively so deep recursion doesn't crash if invoked.
+        case NODE_SHAPE_DECL:
+        case NODE_EXTERN_BLOCK: case NODE_EXTERN_FN_DECL:
+        case NODE_USE_DECL: case NODE_USE_C_DECL:
+        case NODE_CONST_DECL: case NODE_TYPE_ALIAS:
+        case NODE_COND_DECL: case NODE_BREAK_STMT:
+        case NODE_CONTINUE_STMT:
+            // Shallow copy is enough for these in our current usage.
+            break;
+    }
+    out->resolved_type = NULL;  // force sema to re-resolve
+    return out;
+}
+
+AstNode *ast_clone(AstNode *node, Arena *arena,
+                   TypeBinding *bindings, int binding_count) {
+    return do_clone(node, arena, bindings, binding_count);
+}

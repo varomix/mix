@@ -2867,6 +2867,9 @@ void qbe_emit_program(QbeEmitter *emit, AstNode *program) {
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
         if (decl->kind == NODE_SHAPE_DECL) {
+            // Skip generic shape templates — only their instantiations
+            // (which sema spliced into the program) get emitted.
+            if (decl->shape_decl.type_param_count > 0) continue;
             Symbol *shape_sym2 = symtab_lookup(emit->symtab, decl->shape_decl.name);
             MixType *st = (shape_sym2 && shape_sym2->type) ? shape_sym2->type : NULL;
 
@@ -2962,6 +2965,9 @@ void qbe_emit_program(QbeEmitter *emit, AstNode *program) {
         if (decl->kind == NODE_FN_DECL) {
             emit_fn_decl(emit, decl);
         } else if (decl->kind == NODE_SHAPE_DECL) {
+            // Skip generic shape templates — instantiations are emitted
+            // separately as their own decls.
+            if (decl->shape_decl.type_param_count > 0) continue;
             // Emit methods
             Symbol *shape_sym = symtab_lookup(emit->symtab, decl->shape_decl.name);
             MixType *shape_type = (shape_sym && shape_sym->type) ? shape_sym->type : NULL;

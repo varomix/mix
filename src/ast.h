@@ -450,4 +450,19 @@ struct AstNode {
 AstNode *ast_new(Arena *a, NodeKind kind, SrcLoc loc);
 void ast_print(AstNode *node, int indent);
 
+// Generic-substitution binding: a list of (name -> type-AstNode) pairs.
+// Used by ast_clone to replace `T` with the concrete type at each
+// NODE_TYPE_NAME site during instantiation.
+typedef struct {
+    const char *name;
+    AstNode *type_node;   // NODE_TYPE_NAME / NODE_TYPE_PTR / etc.
+} TypeBinding;
+
+// Deep-copy `node` into `arena`, substituting any NODE_TYPE_NAME whose
+// name matches a binding entry with the binding's type node. The
+// substitute is also deep-cloned so each instantiation owns its types.
+// Pass `bindings = NULL` / `binding_count = 0` for a plain deep copy.
+AstNode *ast_clone(AstNode *node, Arena *arena,
+                   TypeBinding *bindings, int binding_count);
+
 #endif // AST_H

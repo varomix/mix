@@ -15,7 +15,7 @@ FRONTEND_SRCS = $(SRC_DIR)/arena.c $(SRC_DIR)/ast.c $(SRC_DIR)/errors.c \
 FRONTEND_OBJS = $(FRONTEND_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # Compiler-only objects
-COMPILER_SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/qbe_emit.c $(SRC_DIR)/c_emit.c $(SRC_DIR)/cbind.c
+COMPILER_SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/qbe_emit.c $(SRC_DIR)/c_emit.c $(SRC_DIR)/cbind.c $(SRC_DIR)/fmt.c
 COMPILER_OBJS = $(COMPILER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # LSP objects
@@ -44,7 +44,7 @@ $(BUILD_DIR)/main.o: $(SRC_DIR)/main.c | $(BUILD_DIR)
 $(BIN): $(FRONTEND_OBJS) $(COMPILER_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@
 
-$(LSP_BIN): $(FRONTEND_OBJS) $(LSP_OBJS) $(BUILD_DIR)/cbind.o
+$(LSP_BIN): $(FRONTEND_OBJS) $(LSP_OBJS) $(BUILD_DIR)/cbind.o $(BUILD_DIR)/fmt.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 clean:
@@ -67,7 +67,10 @@ test-errors: $(BIN)
 test-error-messages: $(BIN)
 	bash tests/run_error_message_tests.sh
 
-test-all: test test-errors test-error-messages
+test-fmt: $(BIN)
+	bash tests/run_fmt_tests.sh
+
+test-all: test test-errors test-error-messages test-fmt
 
 PREFIX ?= /usr/local
 install: $(BIN) $(LSP_BIN)
@@ -80,4 +83,4 @@ install: $(BIN) $(LSP_BIN)
 		cp lib/std/*.mix $(PREFIX)/lib/mix/std/; \
 	fi
 
-.PHONY: all clean run test test-errors test-error-messages test-all install
+.PHONY: all clean run test test-errors test-error-messages test-fmt test-all install

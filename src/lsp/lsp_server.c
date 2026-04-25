@@ -2,6 +2,7 @@
 #include "lsp_transport.h"
 #include "lsp_position.h"
 #include "lsp_hover.h"
+#include "../fmt.h"
 #include <ctype.h>
 
 void lsp_server_init(LspServer *server) {
@@ -1072,6 +1073,60 @@ static void handle_rename(LspServer *server, int64_t id, JsonValue *params) {
     jw_free(&w);
 }
 
+// --- Formatting ---
+
+// textDocument/formatting → run mix_format on the document source, return a
+// single TextEdit that replaces the whole buffer with the formatted text.
+// Crude but correct; smarter diff-based edits would only be visible as
+// fewer scrollbar marks in the editor.
+static void handle_formatting(LspServer *server, int64_t id, JsonValue *params) {
+    const char *uri = json_get_string(json_get(params, "textDocument"), "uri");
+    LspDocument *doc = docstore_find(&server->documents, uri);
+    if (!doc || !doc->source) { lsp_send_response(id, "[]"); return; }
+
+    // Format into a memory buffer.
+    char *buf = NULL;
+    size_t buf_size = 0;
+    FILE *mem = open_memstream(&buf, &buf_size);
+    if (!mem) { lsp_send_response(id, "[]"); return; }
+    int rc = mix_format(doc->source, doc->filepath, mem);
+    fclose(mem);
+    if (rc != 0 || !buf) { free(buf); lsp_send_response(id, "[]"); return; }
+
+    // Compute end position of the original document.
+    int end_line = 0;
+    int end_col = 0;
+    for (const char *p = doc->source; *p; p++) {
+        if (*p == '\n') { end_line++; end_col = 0; }
+        else end_col++;
+    }
+
+    JsonWriter w;
+    jw_init(&w);
+    jw_array_start(&w);
+      jw_object_start(&w);
+        jw_key(&w, "range");
+        jw_object_start(&w);
+          jw_key(&w, "start");
+          jw_object_start(&w);
+            jw_key(&w, "line"); jw_int(&w, 0);
+            jw_key(&w, "character"); jw_int(&w, 0);
+          jw_object_end(&w);
+          jw_key(&w, "end");
+          jw_object_start(&w);
+            jw_key(&w, "line"); jw_int(&w, end_line);
+            jw_key(&w, "character"); jw_int(&w, end_col);
+          jw_object_end(&w);
+        jw_object_end(&w);
+        jw_key(&w, "newText"); jw_string(&w, buf);
+      jw_object_end(&w);
+    jw_array_end(&w);
+
+    free(buf);
+    lsp_send_response(id, w.buf);
+    jw_free(&w);
+}
+
 // --- Code Actions ---
 
 // Extract the suggested name from a `did you mean 'X'?` diagnostic message.
@@ -1666,12 +1721,8 @@ void lsp_server_dispatch(LspServer *server, JsonValue *msg, Arena *scratch) {
         handle_rename(server, id, params);
     } else if (strcmp(method, "textDocument/codeAction") == 0) {
         handle_code_action(server, id, params);
-    }
-    // Phase A stubs — advertised but not yet implemented. Returning an empty
-    // result (instead of "method not found") prevents the editor from
-    // disabling the corresponding default keymap.
-    else if (strcmp(method, "textDocument/formatting") == 0) {
-        if (id >= 0) lsp_send_response(id, "[]");
+    } else if (strcmp(method, "textDocument/formatting") == 0) {
+        handle_formatting(server, id, params);
     }
     // Unknown
     else {

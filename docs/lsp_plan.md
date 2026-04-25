@@ -274,21 +274,32 @@ action carries an `edit: WorkspaceEdit`.
 
 **Editors**: nothing — `gra` / Cmd+. just works.
 
-## Phase I — Formatting (deferred)
+## Phase I — Formatting [shipped]
 
-Requires a real `mix fmt` binary, which doesn't exist yet. Once it
-does:
+`mix fmt` is a token-based formatter (`src/fmt.{c,h}`) that lexes the
+input, walks tokens, and re-emits with normalized whitespace,
+indentation derived from INDENT/DEDENT, and standalone or trailing
+comments preserved via a separate source-scanning pass.
 
-**Server**:
-- `textDocument/formatting`: shell out to `mix fmt` on the buffer text,
-  return the diff as `TextEdit[]`.
+Idempotent: `format(format(x)) == format(x)`.
+
+**Server**: `textDocument/formatting` handler in `lsp_server.c` calls
+`mix_format` directly (no shelling out). Returns a single TextEdit
+replacing the whole buffer.
 
 **Editors**:
-- VSCode: add `editor.formatOnSave` opt-in for `[mix]` block.
-- Neovim: add a documented `BufWritePre` autocmd snippet in `mix.lua`
-  (commented out by default).
+- VSCode: opt-in for `editor.formatOnSave` with `[mix]` scope (TODO —
+  the capability is advertised; users can enable it themselves today).
+- Neovim: `vim.lsp.buf.format()` works out of the box; a `BufWritePre`
+  autocmd snippet for users who want format-on-save is a future README
+  addition.
 
-I'd punt this phase entirely until after a formatter exists.
+Limitations of v1:
+- No reflow of long lines.
+- No restructuring of code (won't fix mismatched indentation that
+  changes semantics).
+- Trailing comment placement is preserved; there's no canonical
+  alignment for column-based layouts.
 
 ## Phase J — Editor UX polish (~1 day, parallelizable)
 

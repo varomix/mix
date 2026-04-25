@@ -8,6 +8,7 @@
 #include "qbe_emit.h"
 #include "c_emit.h"
 #include "cbind.h"
+#include "fmt.h"
 #include <errno.h>
 #include <unistd.h>
 #include <libgen.h>
@@ -22,6 +23,7 @@ typedef enum {
     MODE_NONE,
     MODE_BUILD,
     MODE_RUN,
+    MODE_FMT,
 } RunMode;
 
 static char *read_file(const char *path) {
@@ -120,7 +122,9 @@ static void usage(void) {
     fprintf(stderr, "Commands:\n");
     fprintf(stderr, "  build [file.mix]    Compile to binary\n");
     fprintf(stderr, "  run [file.mix]      Compile and execute\n");
-    fprintf(stderr, "  run -f <file.mix>   Compile and run specific file\n\n");
+    fprintf(stderr, "  run -f <file.mix>   Compile and run specific file\n");
+    fprintf(stderr, "  fmt [file.mix]      Format source. Reads stdin if no file.\n");
+    fprintf(stderr, "                      `-w` overwrites the file in place.\n\n");
     fprintf(stderr, "  Running 'mix' with no command or file shows this help.\n");
     fprintf(stderr, "  'build' or 'run' without a file auto-discovers main().\n\n");
     fprintf(stderr, "Options:\n");
@@ -497,6 +501,7 @@ int main(int argc, char **argv) {
     const char *backend = "qbe";  /* "qbe" or "c" */
     RunMode mode = MODE_NONE;
     bool output_set = false;
+    bool fmt_write_in_place = false;
 
     #define MAX_LINK_FLAGS 64
     char *link_flags[MAX_LINK_FLAGS];
@@ -510,6 +515,9 @@ int main(int argc, char **argv) {
             arg_start = 2;
         } else if (strcmp(argv[1], "run") == 0) {
             mode = MODE_RUN;
+            arg_start = 2;
+        } else if (strcmp(argv[1], "fmt") == 0) {
+            mode = MODE_FMT;
             arg_start = 2;
         } else {
             // Otherwise it's a filename — legacy mode, arg_start stays 1
@@ -544,6 +552,8 @@ int main(int argc, char **argv) {
             backend = argv[++i];
         } else if (strcmp(argv[i], "--lib") == 0 && i + 1 < argc) {
             bind_lib = argv[++i];
+        } else if (strcmp(argv[i], "-w") == 0) {
+            fmt_write_in_place = true;
     } else if (strncmp(argv[i], "-l", 2) == 0 || strncmp(argv[i], "-L", 2) == 0) {
             if (link_flag_count >= MAX_LINK_FLAGS) {
                 fprintf(stderr, "mix: too many linker flags (max %d)\n", MAX_LINK_FLAGS);
@@ -569,6 +579,65 @@ int main(int argc, char **argv) {
     if (bind_path) {
         if (!output_file) output_file = "a.out";
         return cbind_generate(bind_path, output_file, bind_lib, verbose);
+    }
+
+    // Format mode: `mix fmt FILE` writes to stdout; `mix fmt -w FILE`
+    // overwrites the file in place. Reads stdin when no file given.
+    if (mode == MODE_FMT) {
+        char *src = NULL;
+        if (input_file) {
+            src = read_file(input_file);
+            if (!src) return 1;
+        } else {
+            // Read stdin
+            size_t cap = 8192, len = 0;
+            src = malloc(cap);
+            int c;
+            while ((c = getchar()) != EOF) {
+                if (len + 1 >= cap) { cap *= 2; src = realloc(src, cap); }
+                src[len++] = (char)c;
+            }
+            src[len] = '\0';
+        }
+
+        if (fmt_write_in_place) {
+            if (!input_file) {
+                fprintf(stderr, "mix fmt: -w requires a file argument\n");
+                free(src);
+                return 1;
+            }
+            // Format to a temp file, then atomically rename.
+            char tmp_path[1024];
+            snprintf(tmp_path, sizeof(tmp_path), "%s.fmt.tmp", input_file);
+            FILE *out = fopen(tmp_path, "w");
+            if (!out) {
+                fprintf(stderr, "mix fmt: cannot create '%s': %s\n",
+                        tmp_path, strerror(errno));
+                free(src);
+                return 1;
+            }
+            int rc = mix_format(src, input_file, out);
+            fclose(out);
+            if (rc != 0) {
+                unlink(tmp_path);
+                fprintf(stderr, "mix fmt: failed to format '%s'\n", input_file);
+                free(src);
+                return rc;
+            }
+            if (rename(tmp_path, input_file) != 0) {
+                fprintf(stderr, "mix fmt: cannot rename '%s' -> '%s': %s\n",
+                        tmp_path, input_file, strerror(errno));
+                unlink(tmp_path);
+                free(src);
+                return 1;
+            }
+        } else {
+            int rc = mix_format(src, input_file, stdout);
+            free(src);
+            return rc;
+        }
+        free(src);
+        return 0;
     }
 
     // Check MIX_BACKEND env var

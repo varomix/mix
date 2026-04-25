@@ -1,0 +1,26 @@
+// Word frequency counter — counts unique words and prints the totals.
+//
+// Showcases:
+//   - String operations: split, lower, trim
+//   - Maps for counting
+//   - Map iteration with for-in
+
+use std.fmt
+
+main()
+    text = "the quick brown fox jumps over the lazy dog the dog sleeps the fox runs"
+
+    // Count occurrences.
+    counts! = {}
+    for word in text.split(" ")
+        w = word.lower().trim()
+        if w.len > 0
+            if counts.has(w)
+                counts[w] = counts[w] + 1
+            else
+                counts[w] = 1
+
+    print("--- word counts ---")
+    for k in counts.keys
+        line = pad_right(k, 10, " ") + " " + pad_left(to_string(counts[k]), 3, " ")
+        print(line)

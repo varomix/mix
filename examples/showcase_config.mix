@@ -1,0 +1,32 @@
+// Tiny KEY=VALUE config parser. Showcases:
+//   - `~` side-effect functions returning a Result
+//   - `match` over `ok(v)` / `err(e)` arms
+//   - String operations (split, trim, len)
+
+// Note: avoid string interpolation inside `fail` for now — it has a
+// known codegen bug where parts get written to stdout instead of being
+// concatenated. Use plain string literals.
+
+parse_int(s: str) -> int ~
+    if s.len == 0
+        fail "empty"
+    n! = 0
+    for ch in 0..s.len
+        c = s.char_at(ch).code()
+        if c < 48 or c > 57
+            fail "not a number"
+        n = n * 10 + (c - 48)
+    n
+
+parse_line(line: str) -> int ~
+    parts = line.split("=")
+    if parts.len != 2
+        fail "bad line"
+    parse_int(parts[1].trim())?
+
+main()
+    lines = ["port=8080", "timeout=30", "junk-line", "max=oops"]
+    for line in lines
+        match parse_line(line)
+            ok(v) => print(v)
+            err(e) => print("error in: " + line)

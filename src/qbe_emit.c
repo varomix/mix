@@ -1393,6 +1393,16 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 } else if (strcmp(m, "pop") == 0 && expr->method_call.arg_count == 0) {
                     int t = next_temp(emit);
                     fprintf(emit->out, "\t%%t%d =l call $mix_list_pop(l %%t%d)\n", t, obj_temp);
+                    // For [float] lists the runtime returns the int64 bit
+                    // pattern; bit-cast it back to a double so the result
+                    // matches the method's return type.
+                    MixType *elem = (obj_type && obj_type->kind == TYPE_LIST)
+                        ? obj_type->list.elem_type : NULL;
+                    if (elem && type_is_float(elem)) {
+                        int dt = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =d cast %%t%d\n", dt, t);
+                        t = dt;
+                    }
                     return t;
                 } else if (strcmp(m, "remove") == 0 && expr->method_call.arg_count == 1) {
                     int t = next_temp(emit);
@@ -2697,6 +2707,23 @@ static void emit_fn_decl(QbeEmitter *emit, AstNode *fn) {
                     last->expr_stmt.expr->kind != NODE_NONE_LIT) {
                     int wrapped = next_temp(emit);
                     fprintf(emit->out, "\t%%t%d =l call $mix_optional_some(l %%t%d)\n", wrapped, val);
+                    fprintf(emit->out, "\tret %%t%d\n", wrapped);
+                } else if (emit->current_return_type &&
+                           emit->current_return_type->kind == TYPE_RESULT &&
+                           last->expr_stmt.expr->kind != NODE_NONE_LIT) {
+                    // The function's return was promoted to Result by sema
+                    // (because it's a `~` fn with `fail`s). Wrap the implicit
+                    // value in mix_result_ok().
+                    int wrap_val = val;
+                    MixType *ok_type = emit->current_return_type->result.ok_type;
+                    if (ok_type && type_is_float(ok_type)) {
+                        int cast = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =l cast %%t%d\n", cast, val);
+                        wrap_val = cast;
+                    }
+                    int wrapped = next_temp(emit);
+                    fprintf(emit->out, "\t%%t%d =l call $mix_result_ok(l %%t%d)\n",
+                            wrapped, wrap_val);
                     fprintf(emit->out, "\tret %%t%d\n", wrapped);
                 } else {
                     fprintf(emit->out, "\tret %%t%d\n", val);

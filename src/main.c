@@ -9,6 +9,21 @@
 #include "c_emit.h"
 #include "cbind.h"
 #include "fmt.h"
+#include <sys/time.h>
+
+// --- Phase timing (only printed when --timings is on) ---
+static bool g_timings = false;
+
+static double now_ms(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
+}
+
+#define TIMER_START(label) double _t_##label = now_ms()
+#define TIMER_END(label) do { \
+    if (g_timings) fprintf(stderr, "  %-12s %7.2f ms\n", #label, now_ms() - _t_##label); \
+} while (0)
 #include <errno.h>
 #include <unistd.h>
 #include <libgen.h>
@@ -738,6 +753,8 @@ int main(int argc, char **argv) {
             backend = argv[++i];
         } else if (strcmp(argv[i], "--lib") == 0 && i + 1 < argc) {
             bind_lib = argv[++i];
+        } else if (strcmp(argv[i], "--timings") == 0) {
+            g_timings = true;
         } else if (strcmp(argv[i], "-w") == 0) {
             fmt_write_in_place = true;
         } else if (mode == MODE_FMT && strcmp(argv[i], "--check") == 0) {
@@ -866,9 +883,13 @@ int main(int argc, char **argv) {
 
     Arena arena = arena_create(ARENA_DEFAULT_CAP);
 
+    if (g_timings) fprintf(stderr, "mix: --- compile timings ---\n");
+
     // Lex
+    TIMER_START(lex);
     Lexer lexer = lexer_create(source, input_file, &arena);
     lexer_tokenize(&lexer);
+    TIMER_END(lex);
 
     if (emit_tokens) {
         lexer_print_tokens(&lexer);
@@ -884,8 +905,10 @@ int main(int argc, char **argv) {
     }
 
     // Parse
+    TIMER_START(parse);
     Parser parser = parser_create(lexer.tokens, lexer.token_count, &arena, input_file);
     AstNode *program = parser_parse(&parser);
+    TIMER_END(parse);
 
     if (emit_ast) {
         ast_print(program, 0);
@@ -1114,7 +1137,9 @@ int main(int argc, char **argv) {
     }
 
     // Analyze main file (modules already registered their pub symbols)
+    TIMER_START(sema);
     sema_analyze(&sema, program);
+    TIMER_END(sema);
 
     if (mix_error_count() > 0) {
         fprintf(stderr, "mix: %d error(s) during analysis\n", mix_error_count());
@@ -1139,7 +1164,9 @@ int main(int argc, char **argv) {
             return 1;
         }
         CEmitter c_emitter = c_emitter_create(c_out, &arena, &sema.symtab);
+        TIMER_START(emit);
         c_emit_program(&c_emitter, program);
+        TIMER_END(emit);
         fclose(c_out);
     } else {
         // QBE backend: emit .ssa file
@@ -1154,7 +1181,9 @@ int main(int argc, char **argv) {
             return 1;
         }
         QbeEmitter emitter = qbe_emitter_create(ssa_out, &arena, &sema.symtab, debug_mode);
+        TIMER_START(emit);
         qbe_emit_program(&emitter, program);
+        TIMER_END(emit);
         fclose(ssa_out);
     }
 
@@ -1175,8 +1204,10 @@ int main(int argc, char **argv) {
         snprintf(asm_path, sizeof(asm_path), "/tmp/mix_%d.s", getpid());
         const char *qbe_argv[] = {"qbe", "-o", asm_path, gen_path, NULL};
         if (verbose) { fprintf(stderr, "mix: "); print_argv(qbe_argv); }
+        TIMER_START(qbe);
         char *qbe_stderr = NULL;
         int ret = run_process(qbe_argv, verbose ? NULL : &qbe_stderr);
+        TIMER_END(qbe);
         if (ret != 0) {
             if (verbose) {
                 fprintf(stderr, "mix: qbe failed (exit %d)\n", ret);
@@ -1195,6 +1226,22 @@ int main(int argc, char **argv) {
         snprintf(runtime_beside_exe, sizeof(runtime_beside_exe),
                  "%s/../lib/runtime.c", exe_dir);
     }
+    // Prefer pre-compiled runtime.o (built once at `make` time). Falls back
+    // to runtime.c when the .o is missing or stale, or when --debug is on
+    // (debug builds want the runtime's source to live alongside user code
+    // for stepping). The .o saves ~300ms per compile vs rebuilding the
+    // runtime from scratch every time.
+    char runtime_o_beside_exe[1100] = "";
+    if (exe_dir[0]) {
+        snprintf(runtime_o_beside_exe, sizeof(runtime_o_beside_exe),
+                 "%s/../lib/runtime.o", exe_dir);
+    }
+    const char *runtime_o_paths[] = {
+        "build/runtime.o",
+        "../build/runtime.o",
+        runtime_o_beside_exe[0] ? runtime_o_beside_exe : NULL,
+        NULL
+    };
     const char *runtime_paths[] = {
         "lib/runtime.c",
         "../lib/runtime.c",
@@ -1202,10 +1249,41 @@ int main(int argc, char **argv) {
         NULL
     };
     const char *runtime_path = NULL;
-    for (int i = 0; runtime_paths[i]; i++) {
-        FILE *test = fopen(runtime_paths[i], "r");
-        if (test) { fclose(test); runtime_path = runtime_paths[i]; break; }
+    bool runtime_is_object = false;
+    if (!debug_mode) {
+        for (int i = 0; runtime_o_paths[i]; i++) {
+            struct stat ost, src_st;
+            if (stat(runtime_o_paths[i], &ost) != 0) continue;
+            // Make sure the .o is at least as new as runtime.c — otherwise
+            // a fresh edit could be silently linked against stale code.
+            // Only checked if a sibling .c file exists.
+            char rt_c[1200];
+            snprintf(rt_c, sizeof(rt_c), "%s", runtime_o_paths[i]);
+            char *dot = strrchr(rt_c, '.');
+            if (dot) { strcpy(dot, ".c"); }
+            if (stat(rt_c, &src_st) == 0 && src_st.st_mtime > ost.st_mtime) continue;
+            // Also try the lib/runtime.c sibling for the build/runtime.o
+            // case where they're not in the same dir.
+            const char *src_alt[] = {"lib/runtime.c", "../lib/runtime.c", NULL};
+            bool stale = false;
+            for (int j = 0; src_alt[j]; j++) {
+                if (stat(src_alt[j], &src_st) == 0 && src_st.st_mtime > ost.st_mtime) {
+                    stale = true; break;
+                }
+            }
+            if (stale) continue;
+            runtime_path = runtime_o_paths[i];
+            runtime_is_object = true;
+            break;
+        }
     }
+    if (!runtime_path) {
+        for (int i = 0; runtime_paths[i]; i++) {
+            FILE *test = fopen(runtime_paths[i], "r");
+            if (test) { fclose(test); runtime_path = runtime_paths[i]; break; }
+        }
+    }
+    (void)runtime_is_object;
 
     // Link — build argv array to avoid shell injection
     // Max entries: cc + flags(2) + main_file + modules(64) + runtime + -o + output + -lm
@@ -1277,7 +1355,9 @@ int main(int argc, char **argv) {
     if (verbose) { fprintf(stderr, "mix: "); print_argv(link_argv); }
 
     char *link_stderr = NULL;
+    TIMER_START(cc);
     int ret = run_process(link_argv, verbose ? NULL : &link_stderr);
+    TIMER_END(cc);
     free(ldflags_buf);
     if (ret != 0) {
         if (verbose) {

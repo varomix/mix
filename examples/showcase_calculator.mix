@@ -1,0 +1,33 @@
+// RPN calculator using a Stack[float] — showcases per-T monomorphization
+// (the float stack used to crash before generic shape monomorphization).
+
+shape Stack[T]
+    items: [T]
+
+    push!(v: T) ~
+        items.push!(v)
+
+    pop!() -> T ~
+        items.pop!()
+
+main()
+    s! = Stack[float](items: [])
+
+    // Compute (3 + 4) * 2 - 1 in RPN: 3 4 + 2 * 1 -
+    s.push!(3.0)
+    s.push!(4.0)
+    b = s.pop!()
+    a = s.pop!()
+    s.push!(a + b)
+
+    s.push!(2.0)
+    b2 = s.pop!()
+    a2 = s.pop!()
+    s.push!(a2 * b2)
+
+    s.push!(1.0)
+    b3 = s.pop!()
+    a3 = s.pop!()
+    s.push!(a3 - b3)
+
+    print(s.pop!())  // (3 + 4) * 2 - 1 = 13.0

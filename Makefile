@@ -24,8 +24,15 @@ LSP_OBJS = $(LSP_SRCS:$(SRC_DIR)/lsp/%.c=$(BUILD_DIR)/lsp_%.o)
 
 BIN = $(BUILD_DIR)/mix
 LSP_BIN = $(BUILD_DIR)/mix-lsp
+RUNTIME_O = $(BUILD_DIR)/runtime.o
 
-all: $(BIN) $(LSP_BIN)
+all: $(BIN) $(LSP_BIN) $(RUNTIME_O)
+
+# Pre-compile the runtime once so user-program builds skip the ~300ms
+# of recompiling lib/runtime.c every time. main.c looks for build/runtime.o
+# first and falls back to lib/runtime.c when missing or stale.
+$(RUNTIME_O): lib/runtime.c | $(BUILD_DIR)
+	$(CC) -O2 -c $< -o $@
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -73,12 +80,13 @@ test-fmt: $(BIN)
 test-all: test test-errors test-error-messages test-fmt
 
 PREFIX ?= /usr/local
-install: $(BIN) $(LSP_BIN)
+install: $(BIN) $(LSP_BIN) $(RUNTIME_O)
 	mkdir -p $(PREFIX)/bin
 	mkdir -p $(PREFIX)/lib/mix/std
 	cp $(BIN) $(PREFIX)/bin/
 	cp $(LSP_BIN) $(PREFIX)/bin/
 	cp lib/runtime.c $(PREFIX)/lib/mix/
+	cp $(RUNTIME_O) $(PREFIX)/lib/mix/
 	@if [ -d lib/std ] && [ "$$(ls -A lib/std/*.mix 2>/dev/null)" ]; then \
 		cp lib/std/*.mix $(PREFIX)/lib/mix/std/; \
 	fi

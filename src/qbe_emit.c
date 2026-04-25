@@ -139,63 +139,89 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             return t;
         }
         case NODE_STRING_INTERP: {
-            // Emit each part and expression as write calls, return dummy value
+            // Build a single string by chaining mix_str_concat calls.
+            // Each part (literal) and each interpolated expression is converted
+            // to a string and concatenated onto an accumulator. The final
+            // accumulator temp is returned.
+            int acc = -1; // -1 means "no accumulator yet"
             for (int si = 0; si <= expr->string_interp.expr_count; si++) {
-                // Emit string part
+                // Part (literal text)
                 if (expr->string_interp.part_lengths[si] > 0) {
                     const char *sname = emit_string_data(emit,
                         expr->string_interp.parts[si], expr->string_interp.part_lengths[si]);
                     int st = next_temp(emit);
                     fprintf(emit->out, "\t%%t%d =l copy %s\n", st, sname);
-                    int st2 = next_temp(emit);
-                    fprintf(emit->out, "\t%%t%d =l call $mix_write_str(l %%t%d)\n", st2, st);
+                    if (acc < 0) {
+                        acc = st;
+                    } else {
+                        int nxt = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =l call $mix_str_concat(l %%t%d, l %%t%d)\n", nxt, acc, st);
+                        acc = nxt;
+                    }
                 }
-                // Emit expression
+                // Interpolated expression
                 if (si < expr->string_interp.expr_count) {
                     AstNode *iexpr = expr->string_interp.exprs[si];
                     int ev = emit_expr(emit, iexpr);
                     MixType *etype = iexpr->resolved_type;
-                    int ev2 = next_temp(emit);
+                    int sv = next_temp(emit);
                     if (etype && etype->kind == TYPE_STR) {
-                        fprintf(emit->out, "\t%%t%d =l call $mix_write_str(l %%t%d)\n", ev2, ev);
+                        // Already a string — just use it directly
+                        fprintf(emit->out, "\t%%t%d =l copy %%t%d\n", sv, ev);
                     } else if (etype && type_is_float(etype)) {
-                        fprintf(emit->out, "\t%%t%d =l call $mix_write_float(d %%t%d)\n", ev2, ev);
+                        int arg_f = ev;
+                        if (etype->kind == TYPE_FLOAT32) {
+                            int ext = next_temp(emit);
+                            fprintf(emit->out, "\t%%t%d =d exts %%t%d\n", ext, arg_f);
+                            arg_f = ext;
+                        }
+                        fprintf(emit->out, "\t%%t%d =l call $mix_to_string_float(d %%t%d)\n", sv, arg_f);
                     } else if (etype && etype->kind == TYPE_BOOL) {
-                        fprintf(emit->out, "\t%%t%d =l call $mix_write_bool(w %%t%d)\n", ev2, ev);
+                        fprintf(emit->out, "\t%%t%d =l call $mix_to_string_bool(w %%t%d)\n", sv, ev);
                     } else if (etype && etype->kind == TYPE_LIST) {
                         MixType *elem = etype->list.elem_type;
                         if (elem && elem->kind == TYPE_STR) {
-                            fprintf(emit->out, "\t%%t%d =l call $mix_write_list_str(l %%t%d)\n", ev2, ev);
+                            fprintf(emit->out, "\t%%t%d =l call $mix_to_string_list_str(l %%t%d)\n", sv, ev);
                         } else if (elem && type_is_float(elem)) {
-                            fprintf(emit->out, "\t%%t%d =l call $mix_write_list_float(l %%t%d)\n", ev2, ev);
+                            fprintf(emit->out, "\t%%t%d =l call $mix_to_string_list_float(l %%t%d)\n", sv, ev);
                         } else if (elem && elem->kind == TYPE_BOOL) {
-                            fprintf(emit->out, "\t%%t%d =l call $mix_write_list_bool(l %%t%d)\n", ev2, ev);
+                            fprintf(emit->out, "\t%%t%d =l call $mix_to_string_list_bool(l %%t%d)\n", sv, ev);
                         } else {
-                            fprintf(emit->out, "\t%%t%d =l call $mix_write_list_int(l %%t%d)\n", ev2, ev);
+                            fprintf(emit->out, "\t%%t%d =l call $mix_to_string_list_int(l %%t%d)\n", sv, ev);
                         }
                     } else if (etype && etype->kind == TYPE_MAP) {
                         MixType *vt = etype->map.val_type;
                         if (vt && vt->kind == TYPE_STR) {
-                            fprintf(emit->out, "\t%%t%d =l call $mix_write_map_str(l %%t%d)\n", ev2, ev);
+                            fprintf(emit->out, "\t%%t%d =l call $mix_to_string_map_str(l %%t%d)\n", sv, ev);
                         } else {
-                            fprintf(emit->out, "\t%%t%d =l call $mix_write_map(l %%t%d)\n", ev2, ev);
+                            fprintf(emit->out, "\t%%t%d =l call $mix_to_string_map(l %%t%d)\n", sv, ev);
                         }
                     } else if (etype && etype->kind == TYPE_SET) {
                         MixType *se = etype->set.elem_type;
                         if (se && type_is_integer(se)) {
-                            fprintf(emit->out, "\t%%t%d =l call $mix_write_set_int(l %%t%d)\n", ev2, ev);
+                            fprintf(emit->out, "\t%%t%d =l call $mix_to_string_set_int(l %%t%d)\n", sv, ev);
                         } else {
-                            fprintf(emit->out, "\t%%t%d =l call $mix_write_set(l %%t%d)\n", ev2, ev);
+                            fprintf(emit->out, "\t%%t%d =l call $mix_to_string_set(l %%t%d)\n", sv, ev);
                         }
                     } else {
-                        fprintf(emit->out, "\t%%t%d =l call $mix_write_int(l %%t%d)\n", ev2, ev);
+                        fprintf(emit->out, "\t%%t%d =l call $mix_to_string_int(l %%t%d)\n", sv, ev);
+                    }
+                    if (acc < 0) {
+                        acc = sv;
+                    } else {
+                        int nxt = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =l call $mix_str_concat(l %%t%d, l %%t%d)\n", nxt, acc, sv);
+                        acc = nxt;
                     }
                 }
             }
-            // Return a dummy value (interpolated strings are used with print())
-            int t = next_temp(emit);
-            fprintf(emit->out, "\t%%t%d =l copy 0\n", t);
-            return t;
+            // Empty interp shouldn't happen, but guard anyway.
+            if (acc < 0) {
+                acc = next_temp(emit);
+                const char *empty = emit_string_data(emit, "", 0);
+                fprintf(emit->out, "\t%%t%d =l copy %s\n", acc, empty);
+            }
+            return acc;
         }
         case NODE_BOOL_LIT: {
             int t = next_temp(emit);
@@ -877,9 +903,9 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             // Special handling for print()
             if (strcmp(expr->call.name, "print") == 0 && expr->call.arg_count == 1) {
                 AstNode *arg = expr->call.args[0];
-                // String interpolation: parts already emitted by emit_expr, just add newline
+                // String interpolation: emit_expr returned the built string; print it.
                 if (arg->kind == NODE_STRING_INTERP) {
-                    fprintf(emit->out, "\tcall $mix_write_newline()\n");
+                    fprintf(emit->out, "\t%%t%d =l call $mix_print_str(l %%t%d)\n", t, arg_temps[0]);
                     return t;
                 }
                 MixType *atype = arg->resolved_type;

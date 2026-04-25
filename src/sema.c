@@ -1487,8 +1487,8 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                         else if (strcmp(pat->call.name, "ok") == 0)
                             bind_type = subj_type->result.ok_type;
                         else
-                            // err carries the user's error value as a generic int
-                            bind_type = make_type(sema->arena, TYPE_INT);
+                            // err carries the message string passed to fail.
+                            bind_type = make_type(sema->arena, TYPE_STR);
                         symtab_insert(&sema->symtab, bind_name, bind_type, false);
                     }
                     if (body) {

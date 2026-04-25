@@ -193,6 +193,15 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern int64_t mix_str_index_of(const char *, const char *);\n"
         "extern char *mix_to_string_int(int64_t);\n"
         "extern char *mix_to_string_float(double);\n"
+        "extern char *mix_to_string_bool(int);\n"
+        "extern char *mix_to_string_list_int(const void *);\n"
+        "extern char *mix_to_string_list_str(const void *);\n"
+        "extern char *mix_to_string_list_float(const void *);\n"
+        "extern char *mix_to_string_list_bool(const void *);\n"
+        "extern char *mix_to_string_map(const void *);\n"
+        "extern char *mix_to_string_map_str(const void *);\n"
+        "extern char *mix_to_string_set(const void *);\n"
+        "extern char *mix_to_string_set_int(const void *);\n"
         "extern int64_t mix_parse_int(const char *);\n"
         "extern double mix_parse_float(const char *);\n"
         "extern int64_t mix_file_open(const char *, const char *);\n"
@@ -365,56 +374,82 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             return t;
         }
         case NODE_STRING_INTERP: {
+            // Build a single string by chaining mix_str_concat calls.
+            // Each piece (literal or expression) produces a const char *
+            // local; the accumulator threads them together.
+            int acc = -1;
             for (int si = 0; si <= expr->string_interp.expr_count; si++) {
                 if (expr->string_interp.part_lengths[si] > 0) {
-                    ind(emit); fprintf(emit->out, "mix_write_str(\"");
+                    int st = next_temp(emit);
+                    ind(emit); fprintf(emit->out, "const char *t%d = \"", st);
                     c_escape_string(emit->out, expr->string_interp.parts[si],
                                     expr->string_interp.part_lengths[si]);
-                    fprintf(emit->out, "\");\n");
+                    fprintf(emit->out, "\";\n");
+                    if (acc < 0) {
+                        acc = st;
+                    } else {
+                        int nxt = next_temp(emit);
+                        ind(emit); fprintf(emit->out,
+                            "const char *t%d = mix_str_concat((const char *)t%d, (const char *)t%d);\n",
+                            nxt, acc, st);
+                        acc = nxt;
+                    }
                 }
                 if (si < expr->string_interp.expr_count) {
                     AstNode *iexpr = expr->string_interp.exprs[si];
                     int ev = emit_expr(emit, iexpr);
                     MixType *etype = iexpr->resolved_type;
+                    int sv = next_temp(emit);
                     if (etype && etype->kind == TYPE_STR) {
-                        ind(emit); fprintf(emit->out, "mix_write_str((const char *)t%d);\n", ev);
+                        ind(emit); fprintf(emit->out, "const char *t%d = (const char *)t%d;\n", sv, ev);
                     } else if (etype && type_is_float(etype)) {
-                        ind(emit); fprintf(emit->out, "mix_write_float((double)t%d);\n", ev);
+                        ind(emit); fprintf(emit->out, "const char *t%d = mix_to_string_float((double)t%d);\n", sv, ev);
                     } else if (etype && etype->kind == TYPE_BOOL) {
-                        ind(emit); fprintf(emit->out, "mix_write_bool((int)t%d);\n", ev);
+                        ind(emit); fprintf(emit->out, "const char *t%d = mix_to_string_bool((int)t%d);\n", sv, ev);
                     } else if (etype && etype->kind == TYPE_LIST) {
                         MixType *elem = etype->list.elem_type;
                         if (elem && elem->kind == TYPE_STR) {
-                            ind(emit); fprintf(emit->out, "mix_write_list_str(t%d);\n", ev);
+                            ind(emit); fprintf(emit->out, "const char *t%d = mix_to_string_list_str(t%d);\n", sv, ev);
                         } else if (elem && type_is_float(elem)) {
-                            ind(emit); fprintf(emit->out, "mix_write_list_float(t%d);\n", ev);
+                            ind(emit); fprintf(emit->out, "const char *t%d = mix_to_string_list_float(t%d);\n", sv, ev);
                         } else if (elem && elem->kind == TYPE_BOOL) {
-                            ind(emit); fprintf(emit->out, "mix_write_list_bool(t%d);\n", ev);
+                            ind(emit); fprintf(emit->out, "const char *t%d = mix_to_string_list_bool(t%d);\n", sv, ev);
                         } else {
-                            ind(emit); fprintf(emit->out, "mix_write_list_int(t%d);\n", ev);
+                            ind(emit); fprintf(emit->out, "const char *t%d = mix_to_string_list_int(t%d);\n", sv, ev);
                         }
                     } else if (etype && etype->kind == TYPE_MAP) {
                         MixType *vt = etype->map.val_type;
                         if (vt && vt->kind == TYPE_STR) {
-                            ind(emit); fprintf(emit->out, "mix_write_map_str(t%d);\n", ev);
+                            ind(emit); fprintf(emit->out, "const char *t%d = mix_to_string_map_str(t%d);\n", sv, ev);
                         } else {
-                            ind(emit); fprintf(emit->out, "mix_write_map(t%d);\n", ev);
+                            ind(emit); fprintf(emit->out, "const char *t%d = mix_to_string_map(t%d);\n", sv, ev);
                         }
                     } else if (etype && etype->kind == TYPE_SET) {
                         MixType *se = etype->set.elem_type;
                         if (se && type_is_integer(se)) {
-                            ind(emit); fprintf(emit->out, "mix_write_set_int(t%d);\n", ev);
+                            ind(emit); fprintf(emit->out, "const char *t%d = mix_to_string_set_int(t%d);\n", sv, ev);
                         } else {
-                            ind(emit); fprintf(emit->out, "mix_write_set(t%d);\n", ev);
+                            ind(emit); fprintf(emit->out, "const char *t%d = mix_to_string_set(t%d);\n", sv, ev);
                         }
                     } else {
-                        ind(emit); fprintf(emit->out, "mix_write_int((int64_t)t%d);\n", ev);
+                        ind(emit); fprintf(emit->out, "const char *t%d = mix_to_string_int((int64_t)t%d);\n", sv, ev);
+                    }
+                    if (acc < 0) {
+                        acc = sv;
+                    } else {
+                        int nxt = next_temp(emit);
+                        ind(emit); fprintf(emit->out,
+                            "const char *t%d = mix_str_concat((const char *)t%d, (const char *)t%d);\n",
+                            nxt, acc, sv);
+                        acc = nxt;
                     }
                 }
             }
-            int t = next_temp(emit);
-            ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
-            return t;
+            if (acc < 0) {
+                acc = next_temp(emit);
+                ind(emit); fprintf(emit->out, "const char *t%d = \"\";\n", acc);
+            }
+            return acc;
         }
         case NODE_BOOL_LIT: {
             int t = next_temp(emit);
@@ -894,7 +929,7 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             if (strcmp(expr->call.name, "print") == 0 && expr->call.arg_count == 1) {
                 AstNode *arg = expr->call.args[0];
                 if (arg->kind == NODE_STRING_INTERP) {
-                    ind(emit); fprintf(emit->out, "mix_write_newline();\n");
+                    ind(emit); fprintf(emit->out, "mix_print_str((const char *)t%d);\n", arg_temps[0]);
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                     return t;
                 }
@@ -2354,6 +2389,18 @@ static void emit_fn_decl(CEmitter *emit, AstNode *fn) {
                 if (ret_type_resolved && ret_type_resolved->kind == TYPE_OPTIONAL &&
                     last->expr_stmt.expr->kind != NODE_NONE_LIT) {
                     ind(emit); fprintf(emit->out, "return mix_optional_some((int64_t)t%d);\n", val);
+                } else if (emit->current_return_type &&
+                           emit->current_return_type->kind == TYPE_RESULT &&
+                           last->expr_stmt.expr->kind != NODE_NONE_LIT) {
+                    MixType *ok_type = emit->current_return_type->result.ok_type;
+                    if (ok_type && type_is_float(ok_type)) {
+                        int bits = next_temp(emit);
+                        ind(emit); fprintf(emit->out, "int64_t t%d; memcpy(&t%d, &t%d, sizeof(double));\n",
+                                bits, bits, val);
+                        ind(emit); fprintf(emit->out, "return mix_result_ok(t%d);\n", bits);
+                    } else {
+                        ind(emit); fprintf(emit->out, "return mix_result_ok((int64_t)t%d);\n", val);
+                    }
                 } else {
                     ind(emit); fprintf(emit->out, "return t%d;\n", val);
                 }

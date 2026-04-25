@@ -771,6 +771,73 @@ char *mix_to_string_float(double val) {
     return result;
 }
 
+// String-building variants of the write_* functions, used when a value
+// appears inside a string-interpolation expression so we need to splice
+// it into the resulting string instead of writing to stdout.
+char *mix_to_string_bool(int val) {
+    return strdup(val ? "true" : "false");
+}
+
+char *mix_to_string_list_int(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    char *buf = NULL; size_t sz = 0;
+    FILE *f = open_memstream(&buf, &sz);
+    fprintf(f, "[");
+    for (int64_t i = 0; i < list->len; i++) {
+        if (i > 0) fprintf(f, ", ");
+        fprintf(f, "%" PRId64, list->data[i]);
+    }
+    fprintf(f, "]");
+    fclose(f);
+    return buf;
+}
+
+char *mix_to_string_list_str(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    char *buf = NULL; size_t sz = 0;
+    FILE *f = open_memstream(&buf, &sz);
+    fprintf(f, "[");
+    for (int64_t i = 0; i < list->len; i++) {
+        if (i > 0) fprintf(f, ", ");
+        fprintf(f, "\"%s\"", (const char *)list->data[i]);
+    }
+    fprintf(f, "]");
+    fclose(f);
+    return buf;
+}
+
+char *mix_to_string_list_float(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    char *buf = NULL; size_t sz = 0;
+    FILE *f = open_memstream(&buf, &sz);
+    fprintf(f, "[");
+    for (int64_t i = 0; i < list->len; i++) {
+        if (i > 0) fprintf(f, ", ");
+        // List slots store the int64 bit pattern of a double; cast back.
+        double d;
+        int64_t bits = list->data[i];
+        memcpy(&d, &bits, sizeof(d));
+        fprintf(f, "%g", d);
+    }
+    fprintf(f, "]");
+    fclose(f);
+    return buf;
+}
+
+char *mix_to_string_list_bool(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    char *buf = NULL; size_t sz = 0;
+    FILE *f = open_memstream(&buf, &sz);
+    fprintf(f, "[");
+    for (int64_t i = 0; i < list->len; i++) {
+        if (i > 0) fprintf(f, ", ");
+        fprintf(f, "%s", list->data[i] ? "true" : "false");
+    }
+    fprintf(f, "]");
+    fclose(f);
+    return buf;
+}
+
 int64_t mix_to_int(double val) {
     return (int64_t)val;
 }
@@ -1027,6 +1094,78 @@ void mix_print_map(const void *map_ptr) {
         }
     }
     printf("}\n");
+}
+
+char *mix_to_string_map(const void *map_ptr) {
+    const MixMap *map = map_ptr;
+    char *buf = NULL; size_t sz = 0;
+    FILE *f = open_memstream(&buf, &sz);
+    fprintf(f, "{");
+    int first = 1;
+    for (int64_t i = 0; i < map->cap; i++) {
+        if (map->entries[i].occupied) {
+            if (!first) fprintf(f, ", ");
+            fprintf(f, "\"%s\": %" PRId64, map->entries[i].key, map->entries[i].value);
+            first = 0;
+        }
+    }
+    fprintf(f, "}");
+    fclose(f);
+    return buf;
+}
+
+char *mix_to_string_map_str(const void *map_ptr) {
+    const MixMap *map = map_ptr;
+    char *buf = NULL; size_t sz = 0;
+    FILE *f = open_memstream(&buf, &sz);
+    fprintf(f, "{");
+    int first = 1;
+    for (int64_t i = 0; i < map->cap; i++) {
+        if (map->entries[i].occupied) {
+            if (!first) fprintf(f, ", ");
+            fprintf(f, "\"%s\": \"%s\"", map->entries[i].key, (const char *)map->entries[i].value);
+            first = 0;
+        }
+    }
+    fprintf(f, "}");
+    fclose(f);
+    return buf;
+}
+
+char *mix_to_string_set(const void *set_ptr) {
+    const MixMap *map = set_ptr;
+    char *buf = NULL; size_t sz = 0;
+    FILE *f = open_memstream(&buf, &sz);
+    fprintf(f, "set{");
+    int first = 1;
+    for (int64_t i = 0; i < map->cap; i++) {
+        if (map->entries[i].occupied) {
+            if (!first) fprintf(f, ", ");
+            fprintf(f, "\"%s\"", map->entries[i].key);
+            first = 0;
+        }
+    }
+    fprintf(f, "}");
+    fclose(f);
+    return buf;
+}
+
+char *mix_to_string_set_int(const void *set_ptr) {
+    const MixMap *map = set_ptr;
+    char *buf = NULL; size_t sz = 0;
+    FILE *f = open_memstream(&buf, &sz);
+    fprintf(f, "set{");
+    int first = 1;
+    for (int64_t i = 0; i < map->cap; i++) {
+        if (map->entries[i].occupied) {
+            if (!first) fprintf(f, ", ");
+            fprintf(f, "%" PRId64, map->entries[i].value);
+            first = 0;
+        }
+    }
+    fprintf(f, "}");
+    fclose(f);
+    return buf;
 }
 
 void mix_print_map_str(const void *map_ptr) {

@@ -1693,6 +1693,55 @@ void sema_analyze(Sema *sema, AstNode *program) {
         symtab_insert(&sema->symtab, "free_mem", ft, false);
     }
 
+    // random_seed(seed: int) -> void
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_VOID);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_INT);
+        symtab_insert(&sema->symtab, "random_seed", ft, false);
+    }
+    // random_int() -> int
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_INT);
+        ft->func.param_count = 0;
+        symtab_insert(&sema->symtab, "random_int", ft, false);
+    }
+    // random_float() -> float (in [0.0, 1.0])
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_FLOAT);
+        ft->func.param_count = 0;
+        symtab_insert(&sema->symtab, "random_float", ft, false);
+    }
+    // time_now_ms() -> int  (milliseconds since epoch)
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_INT);
+        ft->func.param_count = 0;
+        symtab_insert(&sema->symtab, "time_now_ms", ft, false);
+    }
+    // int_to_hex(n: int) -> str
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_STR);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_INT);
+        symtab_insert(&sema->symtab, "int_to_hex", ft, false);
+    }
+    // int_to_bin(n: int) -> str
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_STR);
+        ft->func.param_count = 1;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_INT);
+        symtab_insert(&sema->symtab, "int_to_bin", ft, false);
+    }
+
     // Math built-ins (single arg: float -> float)
     {
         const char *math_fns[] = {"sqrt", "abs", "sin", "cos", "tan", "log", "floor", "ceil", "round"};

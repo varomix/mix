@@ -1,0 +1,36 @@
+// std.io / std.fmt / std.path / std.random / std.time smoke test
+
+use std.io
+use std.fmt
+use std.path
+use std.random
+use std.time
+
+main()
+    // io: round-trip a file through write_file/read_file
+    write_file("/tmp/mix_stdlib_test.txt", "hello\nworld\n")
+    print(read_file("/tmp/mix_stdlib_test.txt"))
+    print(exists("/tmp/mix_stdlib_test.txt"))
+
+    // fmt
+    print(hex(255))
+    print(bin(13))
+    print(pad_left("5", 3, "0"))
+
+    // path
+    print(join("/foo", "bar.txt"))
+    print(dirname("/a/b/c.txt"))
+    print(basename("/a/b/c.txt"))
+    print(extension("data.tar.gz"))
+
+    // random: same seed -> same value
+    seed(42)
+    a = next_int()
+    seed(42)
+    b = next_int()
+    print(a == b)
+
+    // time: now is positive, elapsed is non-negative
+    t = now_ms()
+    print(t > 0)
+    print(elapsed(t) >= 0)

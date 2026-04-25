@@ -55,7 +55,6 @@ If a feature is marked **planned**, the compiler will give a parse or sema error
 - No transitive module imports (a module cannot itself `use` other modules).
 - `@const` is module-local — only constants in the current file's AST are visible to the emitter.
 - Map keys are string-only; sets inherit this constraint when not explicitly typed.
-- C backend errors when the same name is redeclared with different mutability.
 - `print(float)` uses `%g`, so `4.0` prints as `4` (no trailing `.0`).
 
 ---

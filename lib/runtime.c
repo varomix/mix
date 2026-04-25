@@ -1633,3 +1633,55 @@ const char *mix_chr(int64_t cp) {
     }
     return buf;
 }
+
+#include <sys/time.h>
+
+void mix_random_seed(int64_t seed) {
+    srand((unsigned int)seed);
+}
+
+int64_t mix_random_int(void) {
+    /* rand() is only 31-bit on some platforms; combine two calls. */
+    int64_t hi = (int64_t)rand();
+    int64_t lo = (int64_t)rand();
+    return (hi << 31) ^ lo;
+}
+
+double mix_random_float(void) {
+    return (double)rand() / (double)RAND_MAX;
+}
+
+int64_t mix_time_now_ms(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (int64_t)tv.tv_sec * 1000LL + (int64_t)tv.tv_usec / 1000LL;
+}
+
+/* int -> hex string (no "0x" prefix). Caller frees. */
+char *mix_int_to_hex(int64_t n) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%" PRIx64, (uint64_t)n);
+    char *out = malloc(strlen(buf) + 1);
+    strcpy(out, buf);
+    return out;
+}
+
+/* int -> binary string. Caller frees. */
+char *mix_int_to_bin(int64_t n) {
+    char buf[65];
+    uint64_t u = (uint64_t)n;
+    int i = 63;
+    buf[64] = '\0';
+    if (u == 0) {
+        buf[63] = '0';
+        i = 62;
+    } else {
+        while (u) {
+            buf[i--] = (u & 1) ? '1' : '0';
+            u >>= 1;
+        }
+    }
+    char *out = malloc(64 - i);
+    strcpy(out, buf + i + 1);
+    return out;
+}

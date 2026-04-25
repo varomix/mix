@@ -1,0 +1,26 @@
+// MIX Standard Library: fmt
+// String formatting helpers built on top of compiler builtins.
+
+pub hex(n: int) -> str
+    int_to_hex(n)
+
+pub bin(n: int) -> str
+    int_to_bin(n)
+
+// "5".pad_left(3, "0") -> "005"
+pub pad_left(s: str, width: int, ch: str) -> str
+    if s.len >= width
+        done s
+    ch.repeat(width - s.len) + s
+
+pub pad_right(s: str, width: int, ch: str) -> str
+    if s.len >= width
+        done s
+    s + ch.repeat(width - s.len)
+
+// Truncate s to max chars, appending suffix if it overflows.
+// truncate("hello world", 5, "...") -> "hello..."
+pub truncate(s: str, max: int, suffix: str) -> str
+    if s.len <= max
+        done s
+    s.slice(0, max) + suffix

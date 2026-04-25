@@ -38,6 +38,11 @@ typedef struct {
     int last_match_temp;
     // Indentation level
     int indent;
+    // Per-function variable shadowing: each MIX `x = 1; x! = 2` shadow gets a
+    // unique C name (`v_x`, `v_x__1`, ...) so the C compiler doesn't see a
+    // redefinition. Reset at the start of every function body.
+    struct { char *name; int active_idx; } var_decls[256];
+    int var_decl_count;
 } CEmitter;
 
 CEmitter c_emitter_create(FILE *out, Arena *arena, SymTab *symtab);

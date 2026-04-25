@@ -1,0 +1,14 @@
+hello
+world
+
+true
+ff
+1101
+005
+/foo/bar.txt
+/a/b
+c.txt
+gz
+true
+true
+true

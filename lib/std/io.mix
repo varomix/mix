@@ -1,0 +1,18 @@
+// MIX Standard Library: io
+// File and stdin/stdout helpers built on top of compiler builtins.
+
+pub read_file(path: str) -> str ~
+    file_read_all(path)
+
+pub write_file(path: str, data: str) ~
+    file_write_all(path, data)
+
+pub read_lines(path: str) -> [str] ~
+    text = file_read_all(path)
+    text.split("\n")
+
+pub exists(path: str) -> bool
+    file_exists(path)
+
+pub current_dir() -> str
+    getcwd()

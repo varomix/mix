@@ -1248,6 +1248,33 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 fprintf(emit->out, "\t%%t%d =l copy 0\n", t);
                 return t;
             }
+            if (strcmp(expr->call.name, "random_seed") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\tcall $mix_random_seed(l %%t%d)\n", arg_temps[0]);
+                fprintf(emit->out, "\t%%t%d =l copy 0\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "random_int") == 0 && expr->call.arg_count == 0) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_random_int()\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "random_float") == 0 && expr->call.arg_count == 0) {
+                fprintf(emit->out, "\t%%t%d =d call $mix_random_float()\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "time_now_ms") == 0 && expr->call.arg_count == 0) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_time_now_ms()\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "int_to_hex") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_int_to_hex(l %%t%d)\n",
+                        t, arg_temps[0]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "int_to_bin") == 0 && expr->call.arg_count == 1) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_int_to_bin(l %%t%d)\n",
+                        t, arg_temps[0]);
+                return t;
+            }
 
             // Regular function call
             // Check if this is a direct function call or an indirect call (lambda/function pointer)

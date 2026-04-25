@@ -1,0 +1,55 @@
+// MIX Standard Library: path
+// POSIX-style path manipulation. Pure string operations.
+
+// Index of the last occurrence of `needle` in `s`, or -1 if not found.
+// Implemented by scanning right-to-left over single-byte windows.
+// (For ASCII separators like '/' and '.' this is sufficient.)
+last_index_of(s: str, needle: str) -> int
+    nlen = needle.len
+    if nlen == 0
+        done s.len
+    if nlen > s.len
+        done -1
+    i! = s.len - nlen
+    while i >= 0
+        if s.slice(i, i + nlen) == needle
+            done i
+        i -= 1
+    -1
+
+pub join(a: str, b: str) -> str
+    if a.len == 0
+        done b
+    if b.len == 0
+        done a
+    if a.ends_with("/")
+        done a + b
+    a + "/" + b
+
+// "/foo/bar/baz.txt" -> "/foo/bar"
+// "baz.txt"          -> ""
+pub dirname(p: str) -> str
+    idx = last_index_of(p, "/")
+    if idx < 0
+        done ""
+    p.slice(0, idx)
+
+// "/foo/bar/baz.txt" -> "baz.txt"
+// "baz.txt"          -> "baz.txt"
+pub basename(p: str) -> str
+    idx = last_index_of(p, "/")
+    if idx < 0
+        done p
+    p.slice(idx + 1, p.len)
+
+// "/foo/bar/baz.tar.gz" -> "gz"
+// "README"              -> ""
+pub extension(p: str) -> str
+    base = basename(p)
+    idx = last_index_of(base, ".")
+    if idx <= 0
+        done ""
+    base.slice(idx + 1, base.len)
+
+pub is_absolute(p: str) -> bool
+    p.len > 0 and p.starts_with("/")

@@ -15,6 +15,47 @@ CEmitter c_emitter_create(FILE *out, Arena *arena, SymTab *symtab) {
 static int next_temp(CEmitter *emit) { return emit->temp_counter++; }
 static int next_label(CEmitter *emit) { return emit->label_counter++; }
 
+/* Variable shadowing: each MIX `x = 1; x! = 2` shadow gets a unique C name.
+ * cname_decl() bumps the suffix and returns the new C name (e.g. "x", then "x__1").
+ * cname_ref() returns the currently-active C name for a MIX identifier.
+ * Both return strings owned by the emitter arena.
+ */
+static char *cname_with_suffix(CEmitter *emit, const char *name, int idx) {
+    if (idx == 0) return arena_strdup(emit->arena, name);
+    int len = (int)strlen(name) + 16;
+    char *out = arena_alloc(emit->arena, len);
+    snprintf(out, len, "%s__%d", name, idx);
+    return out;
+}
+
+static const char *cname_ref(CEmitter *emit, const char *name) {
+    for (int i = 0; i < emit->var_decl_count; i++) {
+        if (strcmp(emit->var_decls[i].name, name) == 0) {
+            return cname_with_suffix(emit, name, emit->var_decls[i].active_idx);
+        }
+    }
+    return name;
+}
+
+static const char *cname_decl(CEmitter *emit, const char *name) {
+    for (int i = 0; i < emit->var_decl_count; i++) {
+        if (strcmp(emit->var_decls[i].name, name) == 0) {
+            emit->var_decls[i].active_idx++;
+            return cname_with_suffix(emit, name, emit->var_decls[i].active_idx);
+        }
+    }
+    if (emit->var_decl_count < 256) {
+        emit->var_decls[emit->var_decl_count].name = arena_strdup(emit->arena, name);
+        emit->var_decls[emit->var_decl_count].active_idx = 0;
+        emit->var_decl_count++;
+    }
+    return name;
+}
+
+static void cname_reset(CEmitter *emit) {
+    emit->var_decl_count = 0;
+}
+
 static void ind(CEmitter *emit) {
     for (int i = 0; i < emit->indent; i++) fprintf(emit->out, "    ");
 }
@@ -174,6 +215,12 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern double mix_math_round(double);\n"
         "extern double mix_math_min(double, double);\n"
         "extern double mix_math_max(double, double);\n"
+        "extern void mix_random_seed(int64_t);\n"
+        "extern int64_t mix_random_int(void);\n"
+        "extern double mix_random_float(void);\n"
+        "extern int64_t mix_time_now_ms(void);\n"
+        "extern char *mix_int_to_hex(int64_t);\n"
+        "extern char *mix_int_to_bin(int64_t);\n"
         "extern int64_t mix_shell(const char *);\n"
         "extern char *mix_shell_output(const char *);\n"
         "extern char *mix_env(const char *);\n"
@@ -402,13 +449,14 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             }
             int t = next_temp(emit);
             MixType *itype = expr->resolved_type;
+            const char *cn = cname_ref(emit, expr->ident.name);
             if (itype && itype->kind == TYPE_SHAPE) {
                 ind(emit); fprintf(emit->out, "%s *t%d = (%s *)v_%s;\n",
-                        itype->shape.name, t, itype->shape.name, expr->ident.name);
+                        itype->shape.name, t, itype->shape.name, cn);
             } else {
                 const char *ty = c_type(itype);
                 if (!itype || itype->kind == TYPE_VOID) ty = "int64_t";
-                ind(emit); fprintf(emit->out, "%s t%d = (%s)v_%s;\n", ty, t, ty, expr->ident.name);
+                ind(emit); fprintf(emit->out, "%s t%d = (%s)v_%s;\n", ty, t, ty, cn);
             }
             return t;
         }
@@ -619,7 +667,7 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                     idx_id, idx_id, len_t, idx_id);
             emit->indent++;
             ind(emit); fprintf(emit->out, "int64_t v_%s = mix_list_get(t%d, _cidx_%d);\n",
-                    expr->list_comp.var_name, list_ptr, idx_id);
+                    cname_decl(emit, expr->list_comp.var_name), list_ptr, idx_id);
             if (expr->list_comp.condition) {
                 int cond_val = emit_expr(emit, expr->list_comp.condition);
                 ind(emit); fprintf(emit->out, "if (t%d) {\n", cond_val);
@@ -819,7 +867,8 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             } else if (expr->unary.op == TOK_AMPERSAND) {
                 AstNode *inner = expr->unary.operand;
                 if (inner->kind == NODE_IDENT && inner->ident.is_mutable) {
-                    ind(emit); fprintf(emit->out, "void *t%d = &v_%s;\n", t, inner->ident.name);
+                    ind(emit); fprintf(emit->out, "void *t%d = &v_%s;\n", t,
+                            cname_ref(emit, inner->ident.name));
                 } else {
                     ind(emit); fprintf(emit->out, "int64_t _addr_%d = (int64_t)t%d;\n", t, operand);
                     ind(emit); fprintf(emit->out, "void *t%d = &_addr_%d;\n", t, t);
@@ -1177,6 +1226,33 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 return t;
             }
+            if (strcmp(expr->call.name, "random_seed") == 0 && expr->call.arg_count == 1) {
+                ind(emit); fprintf(emit->out, "mix_random_seed((int64_t)t%d);\n", arg_temps[0]);
+                ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "random_int") == 0 && expr->call.arg_count == 0) {
+                ind(emit); fprintf(emit->out, "int64_t t%d = mix_random_int();\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "random_float") == 0 && expr->call.arg_count == 0) {
+                ind(emit); fprintf(emit->out, "double t%d = mix_random_float();\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "time_now_ms") == 0 && expr->call.arg_count == 0) {
+                ind(emit); fprintf(emit->out, "int64_t t%d = mix_time_now_ms();\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "int_to_hex") == 0 && expr->call.arg_count == 1) {
+                ind(emit); fprintf(emit->out, "const char *t%d = mix_int_to_hex((int64_t)t%d);\n",
+                        t, arg_temps[0]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "int_to_bin") == 0 && expr->call.arg_count == 1) {
+                ind(emit); fprintf(emit->out, "const char *t%d = mix_int_to_bin((int64_t)t%d);\n",
+                        t, arg_temps[0]);
+                return t;
+            }
 
             /* Regular / indirect function call */
             Symbol *fn_sym = symtab_lookup(emit->symtab, expr->call.name);
@@ -1214,7 +1290,7 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                     fprintf(emit->out, "int64_t");
                 }
                 if (expr->call.arg_count == 0) fprintf(emit->out, "void");
-                fprintf(emit->out, "))v_%s)(", expr->call.name);
+                fprintf(emit->out, "))v_%s)(", cname_ref(emit, expr->call.name));
                 for (int i = 0; i < expr->call.arg_count; i++) {
                     if (i > 0) fprintf(emit->out, ", ");
                     fprintf(emit->out, "(int64_t)t%d", arg_temps[i]);
@@ -1679,44 +1755,50 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
 
             if (vtype && vtype->kind == TYPE_SHAPE) {
                 int init = emit_expr(emit, stmt->var_decl.init_expr);
+                const char *cn = cname_decl(emit, stmt->var_decl.name);
                 ind(emit); fprintf(emit->out, "%s *v_%s = (%s *)t%d;\n",
-                        vtype->shape.name, stmt->var_decl.name, vtype->shape.name, init);
+                        vtype->shape.name, cn, vtype->shape.name, init);
             } else if (stmt->var_decl.is_mutable) {
                 int init = emit_expr(emit, stmt->var_decl.init_expr);
                 const char *ty = vtype_is_void ? "int64_t" : c_type(vtype);
-                ind(emit); fprintf(emit->out, "%s v_%s = (%s)t%d;\n",
-                        ty, stmt->var_decl.name, ty, init);
+                const char *cn = cname_decl(emit, stmt->var_decl.name);
+                ind(emit); fprintf(emit->out, "%s v_%s = (%s)t%d;\n", ty, cn, ty, init);
             } else if (stmt->var_decl.init_expr &&
                        stmt->var_decl.init_expr->kind == NODE_INT_LIT) {
                 const char *ty = c_type(vtype);
+                const char *cn = cname_decl(emit, stmt->var_decl.name);
                 ind(emit); fprintf(emit->out, "%s v_%s = %" PRId64 ";\n",
-                        ty, stmt->var_decl.name, stmt->var_decl.init_expr->int_lit.value);
+                        ty, cn, stmt->var_decl.init_expr->int_lit.value);
             } else if (stmt->var_decl.init_expr &&
                        stmt->var_decl.init_expr->kind == NODE_FLOAT_LIT) {
+                const char *cn = cname_decl(emit, stmt->var_decl.name);
                 ind(emit); fprintf(emit->out, "double v_%s = %.17g;\n",
-                        stmt->var_decl.name, stmt->var_decl.init_expr->float_lit.value);
+                        cn, stmt->var_decl.init_expr->float_lit.value);
             } else if (stmt->var_decl.init_expr &&
                        stmt->var_decl.init_expr->kind == NODE_BOOL_LIT) {
+                const char *cn = cname_decl(emit, stmt->var_decl.name);
                 ind(emit); fprintf(emit->out, "int32_t v_%s = %d;\n",
-                        stmt->var_decl.name, stmt->var_decl.init_expr->bool_lit.value ? 1 : 0);
+                        cn, stmt->var_decl.init_expr->bool_lit.value ? 1 : 0);
             } else if (stmt->var_decl.init_expr &&
                        stmt->var_decl.init_expr->kind == NODE_STRING_LIT) {
-                ind(emit); fprintf(emit->out, "const char *v_%s = \"", stmt->var_decl.name);
+                const char *cn = cname_decl(emit, stmt->var_decl.name);
+                ind(emit); fprintf(emit->out, "const char *v_%s = \"", cn);
                 c_escape_string(emit->out, stmt->var_decl.init_expr->string_lit.value,
                                 stmt->var_decl.init_expr->string_lit.length);
                 fprintf(emit->out, "\";\n");
             } else {
                 int init = emit_expr(emit, stmt->var_decl.init_expr);
                 const char *ty = vtype_is_void ? "int64_t" : c_type(vtype);
-                ind(emit); fprintf(emit->out, "%s v_%s = (%s)t%d;\n",
-                        ty, stmt->var_decl.name, ty, init);
+                const char *cn = cname_decl(emit, stmt->var_decl.name);
+                ind(emit); fprintf(emit->out, "%s v_%s = (%s)t%d;\n", ty, cn, ty, init);
             }
             break;
         }
         case NODE_ASSIGN: {
             int val = emit_expr(emit, stmt->assign.value);
+            const char *cn = cname_ref(emit, stmt->assign.name);
             if (stmt->assign.op == TOK_EQ) {
-                ind(emit); fprintf(emit->out, "v_%s = t%d;\n", stmt->assign.name, val);
+                ind(emit); fprintf(emit->out, "v_%s = t%d;\n", cn, val);
             } else {
                 const char *op;
                 switch (stmt->assign.op) {
@@ -1726,7 +1808,7 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                     case TOK_SLASH_EQ: op = "/="; break;
                     default: op = "+="; break;
                 }
-                ind(emit); fprintf(emit->out, "v_%s %s t%d;\n", stmt->assign.name, op, val);
+                ind(emit); fprintf(emit->out, "v_%s %s t%d;\n", cn, op, val);
             }
             break;
         }
@@ -1784,10 +1866,10 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                         idx_id, keys_list, idx_id);
                 if (stmt->for_stmt.index_name) {
                     ind(emit); fprintf(emit->out, "int64_t v_%s = _key_%d;\n",
-                            stmt->for_stmt.index_name, idx_id);
+                            cname_decl(emit, stmt->for_stmt.index_name), idx_id);
                 }
                 ind(emit); fprintf(emit->out, "int64_t v_%s = mix_map_get(t%d, (const char *)_key_%d);\n",
-                        stmt->for_stmt.var_name, map_ptr, idx_id);
+                        cname_decl(emit, stmt->for_stmt.var_name), map_ptr, idx_id);
                 emit_block(emit, stmt->for_stmt.body);
                 emit->indent--;
                 ind(emit); fprintf(emit->out, "}\n");
@@ -1800,16 +1882,17 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                         idx_id, idx_id, len_t, idx_id);
                 emit->indent++;
                 MixType *elem = iter_type->list.elem_type;
+                const char *vn = cname_decl(emit, stmt->for_stmt.var_name);
                 if (elem && type_is_float(elem)) {
                     ind(emit); fprintf(emit->out, "double v_%s = mix_bits_to_double(mix_list_get(t%d, _idx_%d));\n",
-                            stmt->for_stmt.var_name, list_ptr, idx_id);
+                            vn, list_ptr, idx_id);
                 } else {
                     ind(emit); fprintf(emit->out, "int64_t v_%s = mix_list_get(t%d, _idx_%d);\n",
-                            stmt->for_stmt.var_name, list_ptr, idx_id);
+                            vn, list_ptr, idx_id);
                 }
                 if (stmt->for_stmt.index_name) {
                     ind(emit); fprintf(emit->out, "int64_t v_%s = _idx_%d;\n",
-                            stmt->for_stmt.index_name, idx_id);
+                            cname_decl(emit, stmt->for_stmt.index_name), idx_id);
                 }
                 emit_block(emit, stmt->for_stmt.body);
                 emit->indent--;
@@ -1831,7 +1914,7 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                         idx_id, idx_id, len_t, idx_id);
                 emit->indent++;
                 ind(emit); fprintf(emit->out, "int64_t v_%s = mix_list_get(t%d, _sidx_%d);\n",
-                        stmt->for_stmt.var_name, list_ptr, idx_id);
+                        cname_decl(emit, stmt->for_stmt.var_name), list_ptr, idx_id);
                 emit_block(emit, stmt->for_stmt.body);
                 emit->indent--;
                 ind(emit); fprintf(emit->out, "}\n");
@@ -1849,10 +1932,9 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", end_val);
                 }
                 const char *cmp_op = inclusive ? "<=" : "<";
+                const char *vn = cname_decl(emit, stmt->for_stmt.var_name);
                 ind(emit); fprintf(emit->out, "for (int64_t v_%s = t%d; v_%s %s t%d; v_%s++) {\n",
-                        stmt->for_stmt.var_name, start_val,
-                        stmt->for_stmt.var_name, cmp_op, end_val,
-                        stmt->for_stmt.var_name);
+                        vn, start_val, vn, cmp_op, end_val, vn);
                 emit->indent++;
                 emit_block(emit, stmt->for_stmt.body);
                 emit->indent--;
@@ -1932,7 +2014,8 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                                 int foff = 8 + sv->fields[k].offset;
                                 const char *fty = c_type(sv->fields[k].type);
                                 ind(emit); fprintf(emit->out, "%s v_%s = *(%s *)((char *)t%d + %d);\n",
-                                        fty, binding->ident.name, fty, subject, foff);
+                                        fty, cname_decl(emit, binding->ident.name),
+                                        fty, subject, foff);
                             }
                         }
                         if (arm->body) {
@@ -2182,6 +2265,8 @@ static void emit_fn_decl(CEmitter *emit, AstNode *fn) {
                 arena_strdup(emit->arena, param->name);
     }
 
+    cname_reset(emit);
+
     /* Emit body with implicit return handling */
     if (fn->fn_decl.body) {
         AstNode *body = fn->fn_decl.body;
@@ -2291,6 +2376,8 @@ static void emit_method(CEmitter *emit, AstNode *method, const char *shape_name,
     emit->fn_ptr_var_count = 0;
     for (int ci = 0; ci < emit->const_count; ci++)
         emit->constants[ci].cached_temp = -1;
+
+    cname_reset(emit);
 
     /* Emit body with implicit return */
     if (method->fn_decl.body) {
@@ -2469,7 +2556,8 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                     "file_write","file_close","file_read_all","file_write_all","file_exists",
                     "list_dir","shell","shell_output","env","exit","getcwd","mkdir","args",
                     "ord","chr","alloc","bytes","peek_u32","peek_ptr","poke_f32","poke_u32","poke_ptr","pack2","pack3","list_to_f32","free_mem",
-                    "panic","assert","len","type_of","sizeof",NULL};
+                    "panic","assert","len","type_of","sizeof",
+                    "random_seed","random_int","random_float","time_now_ms","int_to_hex","int_to_bin",NULL};
                 for (int b = 0; builtins[b]; b++) {
                     if (strcmp(sym->name, builtins[b]) == 0) { is_local = true; break; }
                 }
@@ -2665,6 +2753,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
         fprintf(emit->out, ") {\n");
         emit->indent = 1;
 
+        cname_reset(emit);
         for (int j = 0; j < lam->lambda.param_count; j++) {
             ind(emit); fprintf(emit->out, "int64_t v_%s = p_%s;\n",
                     lam->lambda.param_names[j], lam->lambda.param_names[j]);

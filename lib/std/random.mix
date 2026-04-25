@@ -1,0 +1,26 @@
+// MIX Standard Library: random
+// Pseudo-random number generation. Wraps libc rand/srand via runtime.
+// Seed once at program start with `seed(time_now_ms())` for non-determinism.
+
+pub seed(s: int)
+    random_seed(s)
+
+pub next_int() -> int
+    random_int()
+
+pub next_float() -> float
+    random_float()
+
+abs_int(n: int) -> int
+    if n < 0
+        done -n
+    n
+
+// Uniform integer in [lo, hi). Caller ensures hi > lo.
+pub range(lo: int, hi: int) -> int
+    span = hi - lo
+    lo + abs_int(random_int()) % span
+
+// Coin flip
+pub coin_flip() -> bool
+    random_int() % 2 == 0

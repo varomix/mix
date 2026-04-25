@@ -1,0 +1,20 @@
+// MIX Standard Library: time
+// Wall-clock helpers. Resolution: milliseconds.
+
+pub now_ms() -> int
+    time_now_ms()
+
+pub elapsed(start_ms: int) -> int
+    time_now_ms() - start_ms
+
+pub shape Stopwatch
+    start_ms: int
+
+    elapsed_ms() -> int
+        time_now_ms() - start_ms
+
+    reset!()
+        start_ms = time_now_ms()
+
+pub stopwatch() -> Stopwatch
+    Stopwatch(start_ms: time_now_ms())

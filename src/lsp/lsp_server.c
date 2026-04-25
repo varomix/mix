@@ -7,20 +7,29 @@
 void lsp_server_init(LspServer *server) {
     memset(server, 0, sizeof(LspServer));
     server->documents = docstore_create();
+    workspace_init(&server->workspace);
 }
 
 void lsp_server_destroy(LspServer *server) {
     docstore_destroy(&server->documents);
+    workspace_destroy(&server->workspace);
     free(server->root_uri);
     free(server->root_path);
 }
 
 // --- Handlers ---
 
+#define WORKSPACE_FILE_CAP 5000
+
 static void handle_initialize(LspServer *server, int64_t id, JsonValue *params) {
     JsonValue *root = json_get(params, "rootUri");
     if (root && root->kind == JSON_STRING) {
         server->root_uri = strdup(root->string.data);
+        server->root_path = lsp_uri_to_path(server->root_uri);
+        // Eagerly index the workspace so the first workspace/symbol query is
+        // fast. For very large projects this may need to be made async, but
+        // for typical MIX projects (<100 files) it's well under 50ms.
+        workspace_scan(&server->workspace, server->root_path, WORKSPACE_FILE_CAP);
     }
 
     server->initialized = true;
@@ -66,6 +75,22 @@ static void handle_initialize(LspServer *server, int64_t id, JsonValue *params) 
           jw_array_end(&w);
         jw_object_end(&w);
 
+        // Phase B: document outline (functions, shapes, methods, consts)
+        jw_key(&w, "documentSymbolProvider"); jw_bool(&w, true);
+
+        // Phase A stubs — advertised so default keymaps stop being silent.
+        // Handlers return null/empty until their phase ships.
+        jw_key(&w, "referencesProvider"); jw_bool(&w, true);
+        jw_key(&w, "workspaceSymbolProvider"); jw_bool(&w, true);
+        jw_key(&w, "renameProvider");
+        jw_object_start(&w);
+          jw_key(&w, "prepareProvider"); jw_bool(&w, true);
+        jw_object_end(&w);
+        jw_key(&w, "documentHighlightProvider"); jw_bool(&w, true);
+        jw_key(&w, "inlayHintProvider"); jw_bool(&w, true);
+        jw_key(&w, "documentFormattingProvider"); jw_bool(&w, true);
+        jw_key(&w, "codeActionProvider"); jw_bool(&w, true);
+
       jw_object_end(&w); // capabilities
 
       jw_key(&w, "serverInfo");
@@ -106,6 +131,12 @@ static void handle_did_change(LspServer *server, JsonValue *params) {
     const char *text = json_get_string(changes->array.items[0], "text");
     if (uri && text) {
         docstore_update(&server->documents, uri, text, version);
+        // Mark workspace cache for this file stale; next workspace_get
+        // re-analyzes from the saved-on-disk text. (We could also
+        // analyze in-memory text, but that diverges from saved state.)
+        char *path = lsp_uri_to_path(uri);
+        workspace_invalidate(&server->workspace, path);
+        free(path);
     }
 }
 
@@ -597,6 +628,812 @@ static void handle_completion_request(LspServer *server, int64_t id, JsonValue *
     jw_free(&w);
 }
 
+// --- Document Symbols (outline) ---
+
+// Emit one DocumentSymbol JSON object. range is a single-line span starting
+// at def_loc; selectionRange is the same. children is optional.
+static void emit_doc_symbol(JsonWriter *w, const char *name,
+                            const char *detail, int kind, SrcLoc loc,
+                            int name_len) {
+    int line = loc.line > 0 ? loc.line - 1 : 0;
+    int col = loc.col > 0 ? loc.col - 1 : 0;
+    jw_object_start(w);
+      jw_key(w, "name"); jw_string(w, name);
+      if (detail) { jw_key(w, "detail"); jw_string(w, detail); }
+      jw_key(w, "kind"); jw_int(w, kind);
+      jw_key(w, "range");
+      jw_object_start(w);
+        jw_key(w, "start");
+        jw_object_start(w);
+          jw_key(w, "line"); jw_int(w, line);
+          jw_key(w, "character"); jw_int(w, col);
+        jw_object_end(w);
+        jw_key(w, "end");
+        jw_object_start(w);
+          jw_key(w, "line"); jw_int(w, line);
+          jw_key(w, "character"); jw_int(w, col + name_len);
+        jw_object_end(w);
+      jw_object_end(w);
+      jw_key(w, "selectionRange");
+      jw_object_start(w);
+        jw_key(w, "start");
+        jw_object_start(w);
+          jw_key(w, "line"); jw_int(w, line);
+          jw_key(w, "character"); jw_int(w, col);
+        jw_object_end(w);
+        jw_key(w, "end");
+        jw_object_start(w);
+          jw_key(w, "line"); jw_int(w, line);
+          jw_key(w, "character"); jw_int(w, col + name_len);
+        jw_object_end(w);
+      jw_object_end(w);
+}
+
+// LSP SymbolKind values we use:
+//   12 = Function, 7 = Method, 23 = Struct, 14 = Constant,
+//   13 = Variable, 26 = TypeParameter (used here for type aliases)
+static int symbol_kind_for(NodeKind k, const char *container) {
+    if (k == NODE_FN_DECL) return container ? 7 : 12;
+    if (k == NODE_SHAPE_DECL) return 23;
+    if (k == NODE_CONST_DECL) return 14;
+    if (k == NODE_TYPE_ALIAS) return 26;
+    if (k == NODE_VAR_DECL) return 13;
+    return 13;
+}
+
+static void handle_document_symbol(LspServer *server, int64_t id, JsonValue *params) {
+    const char *uri = json_get_string(json_get(params, "textDocument"), "uri");
+
+    LspDocument *doc = docstore_find(&server->documents, uri);
+    if (!doc) {
+        lsp_send_response(id, "[]");
+        return;
+    }
+    document_ensure_analyzed(doc);
+
+    JsonWriter w;
+    jw_init(&w);
+    jw_array_start(&w);
+
+    // Two-pass emit: top-level shapes/functions/consts/aliases first, then
+    // for each shape we emit its methods nested as `children`. Local var
+    // decls are intentionally skipped — the outline is for navigable
+    // declarations, and including every loop var would just be noise.
+    for (int i = 0; i < doc->symbols.all_count; i++) {
+        SymbolEntry *e = doc->symbols.all[i];
+        if (e->container) continue;            // method — handled below
+        if (e->decl_kind == NODE_VAR_DECL) continue;
+
+        char detail[256] = "";
+        if (e->type) mix_type_to_string(e->type, detail, sizeof(detail));
+        const char *detail_ptr = detail[0] ? detail : NULL;
+        int name_len = (int)strlen(e->name);
+        int kind = symbol_kind_for(e->decl_kind, NULL);
+
+        emit_doc_symbol(&w, e->name, detail_ptr, kind, e->def_loc, name_len);
+
+        // For shapes, attach methods + fields as children
+        if (e->decl_kind == NODE_SHAPE_DECL) {
+            jw_key(&w, "children");
+            jw_array_start(&w);
+            // Fields (if we know the shape type)
+            if (e->type && e->type->kind == TYPE_SHAPE) {
+                MixType *st = e->type;
+                for (int fi = 0; fi < st->shape.field_count; fi++) {
+                    char ftype[128] = "";
+                    mix_type_to_string(st->shape.fields[fi].type, ftype, sizeof(ftype));
+                    // No usable field SrcLoc on MixType; reuse the shape's location
+                    // so the outline can still expand without the editor erroring.
+                    emit_doc_symbol(&w, st->shape.fields[fi].name,
+                                    ftype[0] ? ftype : NULL,
+                                    8, // 8 = Field
+                                    e->def_loc,
+                                    (int)strlen(st->shape.fields[fi].name));
+                    jw_object_end(&w);
+                }
+            }
+            // Methods: any symbol whose container matches this shape
+            for (int j = 0; j < doc->symbols.all_count; j++) {
+                SymbolEntry *m = doc->symbols.all[j];
+                if (!m->container) continue;
+                if (strcmp(m->container, e->name) != 0) continue;
+                char mdetail[256] = "";
+                if (m->type) mix_type_to_string(m->type, mdetail, sizeof(mdetail));
+                emit_doc_symbol(&w, m->name, mdetail[0] ? mdetail : NULL,
+                                7 /* Method */, m->def_loc,
+                                (int)strlen(m->name));
+                jw_object_end(&w);
+            }
+            jw_array_end(&w);
+        }
+
+        jw_object_end(&w);
+    }
+
+    jw_array_end(&w);
+    lsp_send_response(id, w.buf);
+    jw_free(&w);
+}
+
+// --- Inlay Hints ---
+
+// True when the init expression makes the type obvious enough that an inline
+// `: T` hint would be noise.
+static bool is_obvious_literal(AstNode *e) {
+    if (!e) return true;
+    switch (e->kind) {
+        case NODE_INT_LIT:
+        case NODE_FLOAT_LIT:
+        case NODE_STRING_LIT:
+        case NODE_STRING_INTERP:
+        case NODE_BOOL_LIT:
+        case NODE_NONE_LIT:
+        case NODE_SHAPE_LIT:    // `Vec(x: 1, y: 2)` — type name is already there
+        case NODE_LIST_LIT:     // `[1, 2, 3]`
+        case NODE_MAP_LIT:
+        case NODE_SET_LIT:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static void emit_inlay_hint(JsonWriter *w, int line, int col, const char *text) {
+    jw_object_start(w);
+      jw_key(w, "position");
+      jw_object_start(w);
+        jw_key(w, "line"); jw_int(w, line);
+        jw_key(w, "character"); jw_int(w, col);
+      jw_object_end(w);
+      jw_key(w, "label"); jw_string(w, text);
+      jw_key(w, "kind"); jw_int(w, 1);  // 1 = Type
+      jw_key(w, "paddingLeft"); jw_bool(w, false);
+      jw_key(w, "paddingRight"); jw_bool(w, false);
+    jw_object_end(w);
+}
+
+// Forward declarations for the recursive walker.
+static void hint_block(JsonWriter *w, AstNode *block, int range_start, int range_end);
+static void hint_stmt(JsonWriter *w, AstNode *s, int range_start, int range_end);
+
+static void hint_stmt(JsonWriter *w, AstNode *s, int range_start, int range_end) {
+    if (!s) return;
+    int line0 = s->loc.line - 1;
+    if (line0 < range_start || line0 > range_end) {
+        // Out of requested range — but still recurse so nested decls are
+        // covered when the block straddles the boundary.
+    }
+
+    switch (s->kind) {
+        case NODE_VAR_DECL: {
+            const char *name = s->var_decl.name;
+            if (!name || strcmp(name, "_") == 0) break;
+            if (s->var_decl.type_ann) break;            // user wrote a type
+            if (is_obvious_literal(s->var_decl.init_expr)) break;
+
+            MixType *t = s->resolved_type;
+            if (!t || t->kind == TYPE_VOID || t->kind == TYPE_INFER) break;
+            char tbuf[128];
+            mix_type_to_string(t, tbuf, sizeof(tbuf));
+            char label[160];
+            snprintf(label, sizeof(label), ": %s", tbuf);
+
+            int line = s->loc.line - 1;
+            int col = s->loc.col - 1 + (int)strlen(name);
+            // Mutable bindings (`x! = ...`) include the `!` in the source —
+            // shift the hint past it.
+            if (s->var_decl.is_mutable) col += 1;
+            if (line >= range_start && line <= range_end) {
+                emit_inlay_hint(w, line, col, label);
+            }
+            break;
+        }
+        case NODE_IF_STMT:
+            hint_block(w, s->if_stmt.then_block, range_start, range_end);
+            if (s->if_stmt.else_block) {
+                if (s->if_stmt.else_block->kind == NODE_BLOCK)
+                    hint_block(w, s->if_stmt.else_block, range_start, range_end);
+                else
+                    hint_stmt(w, s->if_stmt.else_block, range_start, range_end);
+            }
+            break;
+        case NODE_WHILE_STMT:
+            hint_block(w, s->while_stmt.body, range_start, range_end);
+            break;
+        case NODE_FOR_STMT:
+            hint_block(w, s->for_stmt.body, range_start, range_end);
+            break;
+        case NODE_MATCH_STMT:
+            for (int i = 0; i < s->match_stmt.arm_count; i++) {
+                AstNode *body = s->match_stmt.arms[i].body;
+                if (body) {
+                    if (body->kind == NODE_BLOCK)
+                        hint_block(w, body, range_start, range_end);
+                    else
+                        hint_stmt(w, body, range_start, range_end);
+                }
+            }
+            break;
+        case NODE_DEFER_STMT:
+            hint_stmt(w, s->defer_stmt.stmt, range_start, range_end);
+            break;
+        case NODE_UNSAFE_BLOCK:
+            hint_block(w, s->unsafe_block.body, range_start, range_end);
+            break;
+        case NODE_ZONE_STMT:
+            hint_block(w, s->zone_stmt.body, range_start, range_end);
+            break;
+        default:
+            break;
+    }
+}
+
+static void hint_block(JsonWriter *w, AstNode *block, int range_start, int range_end) {
+    if (!block || block->kind != NODE_BLOCK) return;
+    for (int i = 0; i < block->block.stmt_count; i++)
+        hint_stmt(w, block->block.stmts[i], range_start, range_end);
+}
+
+static void handle_inlay_hint(LspServer *server, int64_t id, JsonValue *params) {
+    const char *uri = json_get_string(json_get(params, "textDocument"), "uri");
+    JsonValue *range = json_get(params, "range");
+    int rs = 0, re = 1 << 30;
+    if (range) {
+        JsonValue *start = json_get(range, "start");
+        JsonValue *end = json_get(range, "end");
+        if (start) rs = (int)json_get_int(start, "line");
+        if (end)   re = (int)json_get_int(end, "line");
+    }
+
+    LspDocument *doc = docstore_find(&server->documents, uri);
+    if (!doc) { lsp_send_response(id, "[]"); return; }
+    document_ensure_analyzed(doc);
+    if (!doc->ast) { lsp_send_response(id, "[]"); return; }
+
+    JsonWriter w;
+    jw_init(&w);
+    jw_array_start(&w);
+
+    // Walk top-level decls; descend into function/method bodies.
+    AstNode *prog = doc->ast;
+    if (prog->kind == NODE_PROGRAM) {
+        for (int i = 0; i < prog->program.decl_count; i++) {
+            AstNode *d = prog->program.decls[i];
+            if (d->kind == NODE_FN_DECL) {
+                hint_block(&w, d->fn_decl.body, rs, re);
+            } else if (d->kind == NODE_SHAPE_DECL) {
+                for (int j = 0; j < d->shape_decl.method_count; j++)
+                    hint_block(&w, d->shape_decl.methods[j]->fn_decl.body, rs, re);
+            } else if (d->kind == NODE_COND_DECL && d->cond_decl.active) {
+                for (int j = 0; j < d->cond_decl.decl_count; j++) {
+                    AstNode *cd = d->cond_decl.decls[j];
+                    if (cd->kind == NODE_FN_DECL)
+                        hint_block(&w, cd->fn_decl.body, rs, re);
+                }
+            }
+        }
+    }
+
+    jw_array_end(&w);
+    lsp_send_response(id, w.buf);
+    jw_free(&w);
+}
+
+// --- Rename ---
+
+// Forward decl — defined alongside the highlight/references handlers below.
+static SymbolEntry *symbol_at_cursor(LspDocument *doc, int line, int col,
+                                     char *out_name, int out_size);
+
+// Reject names that would shadow a keyword, type keyword, builtin function,
+// or aren't a valid identifier. Returns NULL on success, error message on
+// failure (caller surfaces to the client).
+static const char *validate_rename(const char *name) {
+    if (!name || !*name) return "rename: empty name";
+    if (!(isalpha((unsigned char)name[0]) || name[0] == '_'))
+        return "rename: name must start with a letter or underscore";
+    for (const char *p = name; *p; p++) {
+        if (!(isalnum((unsigned char)*p) || *p == '_'))
+            return "rename: name contains an invalid character";
+    }
+    static const char *reserved[] = {
+        "if","else","while","for","in","match","break","continue","done",
+        "shape","union","extern","use","pub","type","zone","defer","unsafe",
+        "and","or","not","go","run","wait","stream","yield","shared","repeat",
+        "as","then","set","true","false","none",
+        "int","float","bool","byte","str",
+        "int8","int16","int32","int64","uint8","uint16","uint32","uint64",
+        "float32","float64",
+        // Common builtins (subset — name collision will be reported at edit time too)
+        "print","panic","assert","len","sizeof","type_of","ord","chr",
+        "alloc","bytes","free_mem","peek_u32","peek_ptr","poke_u32","poke_ptr",
+        NULL
+    };
+    for (int i = 0; reserved[i]; i++) {
+        if (strcmp(name, reserved[i]) == 0) return "rename: name is reserved";
+    }
+    return NULL;
+}
+
+static void handle_prepare_rename(LspServer *server, int64_t id, JsonValue *params) {
+    const char *uri = json_get_string(json_get(params, "textDocument"), "uri");
+    JsonValue *pos = json_get(params, "position");
+    int line = (int)json_get_int(pos, "line") + 1;
+    int col = (int)json_get_int(pos, "character") + 1;
+
+    LspDocument *doc = docstore_find(&server->documents, uri);
+    if (!doc) { lsp_send_response(id, "null"); return; }
+    document_ensure_analyzed(doc);
+
+    char name[256];
+    SymbolEntry *e = symbol_at_cursor(doc, line, col, name, sizeof(name));
+    if (!e) { lsp_send_response(id, "null"); return; }
+
+    // Find the actual token range under cursor for the editor to highlight.
+    Token *tok = tokens_find_at(doc->tokens, doc->token_count, line, col);
+    if (!tok) { lsp_send_response(id, "null"); return; }
+    int len = (int)strlen(name);
+
+    JsonWriter w;
+    jw_init(&w);
+    jw_object_start(&w);
+      jw_key(&w, "start");
+      jw_object_start(&w);
+        jw_key(&w, "line"); jw_int(&w, tok->line - 1);
+        jw_key(&w, "character"); jw_int(&w, tok->col - 1);
+      jw_object_end(&w);
+      jw_key(&w, "end");
+      jw_object_start(&w);
+        jw_key(&w, "line"); jw_int(&w, tok->line - 1);
+        jw_key(&w, "character"); jw_int(&w, tok->col - 1 + len);
+      jw_object_end(&w);
+    jw_object_end(&w);
+
+    lsp_send_response(id, w.buf);
+    jw_free(&w);
+}
+
+// Emit one TextEdit. Helper used to keep the rename handler readable.
+static void emit_text_edit(JsonWriter *w, SrcLoc loc, int len, const char *new_text) {
+    int line = loc.line > 0 ? loc.line - 1 : 0;
+    int col = loc.col > 0 ? loc.col - 1 : 0;
+    jw_object_start(w);
+      jw_key(w, "range");
+      jw_object_start(w);
+        jw_key(w, "start");
+        jw_object_start(w);
+          jw_key(w, "line"); jw_int(w, line);
+          jw_key(w, "character"); jw_int(w, col);
+        jw_object_end(w);
+        jw_key(w, "end");
+        jw_object_start(w);
+          jw_key(w, "line"); jw_int(w, line);
+          jw_key(w, "character"); jw_int(w, col + len);
+        jw_object_end(w);
+      jw_object_end(w);
+      jw_key(w, "newText"); jw_string(w, new_text);
+    jw_object_end(w);
+}
+
+static void handle_rename(LspServer *server, int64_t id, JsonValue *params) {
+    const char *uri = json_get_string(json_get(params, "textDocument"), "uri");
+    const char *new_name = json_get_string(params, "newName");
+    JsonValue *pos = json_get(params, "position");
+    int line = (int)json_get_int(pos, "line") + 1;
+    int col = (int)json_get_int(pos, "character") + 1;
+
+    const char *err = validate_rename(new_name);
+    if (err) { lsp_send_error(id, -32602, err); return; }
+
+    LspDocument *doc = docstore_find(&server->documents, uri);
+    if (!doc) { lsp_send_response(id, "null"); return; }
+    document_ensure_analyzed(doc);
+
+    char name[256];
+    SymbolEntry *e = symbol_at_cursor(doc, line, col, name, sizeof(name));
+    if (!e) { lsp_send_response(id, "null"); return; }
+    int name_len = (int)strlen(name);
+
+    JsonWriter w;
+    jw_init(&w);
+    jw_object_start(&w);
+      jw_key(&w, "changes");
+      jw_object_start(&w);
+        // Current document edits
+        jw_key(&w, uri);
+        jw_array_start(&w);
+        if (e->def_loc.line > 0)
+            emit_text_edit(&w, e->def_loc, name_len, new_name);
+        for (Reference *r = e->uses; r; r = r->next)
+            emit_text_edit(&w, r->loc, r->name_len, new_name);
+        jw_array_end(&w);
+
+        // Cross-file edits via the workspace cache. Same name-based matching
+        // as references — see caveat there.
+        char *cur_path = lsp_uri_to_path(uri);
+        for (WorkspaceFile *wf = server->workspace.head; wf; wf = wf->next) {
+            if (!wf->valid) continue;
+            if (cur_path && strcmp(wf->path, cur_path) == 0) continue;
+            SymbolEntry *we = symbol_index_lookup(&wf->symbols, name);
+            if (!we) continue;
+            jw_key(&w, wf->uri);
+            jw_array_start(&w);
+            if (we->def_loc.line > 0)
+                emit_text_edit(&w, we->def_loc, name_len, new_name);
+            for (Reference *r = we->uses; r; r = r->next)
+                emit_text_edit(&w, r->loc, r->name_len, new_name);
+            jw_array_end(&w);
+        }
+        free(cur_path);
+      jw_object_end(&w);
+    jw_object_end(&w);
+
+    lsp_send_response(id, w.buf);
+    jw_free(&w);
+}
+
+// --- Code Actions ---
+
+// Extract the suggested name from a `did you mean 'X'?` diagnostic message.
+// Returns true with `out` filled, or false if the message doesn't match.
+static bool parse_did_you_mean(const char *msg, char *out, int out_size) {
+    const char *needle = "did you mean '";
+    const char *p = strstr(msg, needle);
+    if (!p) return false;
+    p += strlen(needle);
+    int i = 0;
+    while (*p && *p != '\'' && i < out_size - 1) out[i++] = *p++;
+    if (*p != '\'') return false;
+    out[i] = '\0';
+    return true;
+}
+
+// Echo back a diagnostic record so the editor associates the action with
+// the correct underline. We reconstruct from the fields we care about
+// rather than serializing the whole JsonValue.
+static void emit_diag_echo(JsonWriter *w, JsonValue *d) {
+    if (!d) return;
+    JsonValue *range = json_get(d, "range");
+    JsonValue *start = range ? json_get(range, "start") : NULL;
+    JsonValue *end = range ? json_get(range, "end") : NULL;
+    const char *msg = json_get_string(d, "message");
+    int sev = (int)json_get_int(d, "severity");
+
+    jw_object_start(w);
+      jw_key(w, "severity"); jw_int(w, sev);
+      if (start && end) {
+          jw_key(w, "range");
+          jw_object_start(w);
+            jw_key(w, "start");
+            jw_object_start(w);
+              jw_key(w, "line"); jw_int(w, json_get_int(start, "line"));
+              jw_key(w, "character"); jw_int(w, json_get_int(start, "character"));
+            jw_object_end(w);
+            jw_key(w, "end");
+            jw_object_start(w);
+              jw_key(w, "line"); jw_int(w, json_get_int(end, "line"));
+              jw_key(w, "character"); jw_int(w, json_get_int(end, "character"));
+            jw_object_end(w);
+          jw_object_end(w);
+      }
+      if (msg) { jw_key(w, "message"); jw_string(w, msg); }
+    jw_object_end(w);
+}
+
+// Emit one CodeAction whose only effect is a single TextEdit on `uri`.
+static void emit_quickfix(JsonWriter *w, const char *title, const char *uri,
+                          int line, int col_start, int col_end,
+                          const char *new_text, JsonValue *src_diag) {
+    jw_object_start(w);
+      jw_key(w, "title"); jw_string(w, title);
+      jw_key(w, "kind"); jw_string(w, "quickfix");
+      if (src_diag) {
+          jw_key(w, "diagnostics");
+          jw_array_start(w);
+            emit_diag_echo(w, src_diag);
+          jw_array_end(w);
+      }
+      jw_key(w, "edit");
+      jw_object_start(w);
+        jw_key(w, "changes");
+        jw_object_start(w);
+          jw_key(w, uri);
+          jw_array_start(w);
+            jw_object_start(w);
+              jw_key(w, "range");
+              jw_object_start(w);
+                jw_key(w, "start");
+                jw_object_start(w);
+                  jw_key(w, "line"); jw_int(w, line);
+                  jw_key(w, "character"); jw_int(w, col_start);
+                jw_object_end(w);
+                jw_key(w, "end");
+                jw_object_start(w);
+                  jw_key(w, "line"); jw_int(w, line);
+                  jw_key(w, "character"); jw_int(w, col_end);
+                jw_object_end(w);
+              jw_object_end(w);
+              jw_key(w, "newText"); jw_string(w, new_text);
+            jw_object_end(w);
+          jw_array_end(w);
+        jw_object_end(w);
+      jw_object_end(w);
+    jw_object_end(w);
+}
+
+static void handle_code_action(LspServer *server, int64_t id, JsonValue *params) {
+    const char *uri = json_get_string(json_get(params, "textDocument"), "uri");
+    JsonValue *ctx = json_get(params, "context");
+    JsonValue *diags = ctx ? json_get(ctx, "diagnostics") : NULL;
+
+    LspDocument *doc = docstore_find(&server->documents, uri);
+    if (!doc || !diags || diags->kind != JSON_ARRAY) {
+        lsp_send_response(id, "[]");
+        return;
+    }
+    document_ensure_analyzed(doc);
+
+    JsonWriter w;
+    jw_init(&w);
+    jw_array_start(&w);
+
+    for (int i = 0; i < diags->array.count; i++) {
+        JsonValue *d = diags->array.items[i];
+        const char *msg = json_get_string(d, "message");
+        if (!msg) continue;
+
+        char suggestion[128];
+        if (!parse_did_you_mean(msg, suggestion, sizeof(suggestion))) continue;
+
+        // Diagnostic ranges from the LSP are 1-char wide (see
+        // lsp_diagnostics.c). Find the identifier token at that position to
+        // get the actual word length we need to replace.
+        JsonValue *range = json_get(d, "range");
+        JsonValue *start = range ? json_get(range, "start") : NULL;
+        if (!start) continue;
+        int line0 = (int)json_get_int(start, "line");
+        int col0  = (int)json_get_int(start, "character");
+        Token *tok = tokens_find_at(doc->tokens, doc->token_count,
+                                    line0 + 1, col0 + 1);
+        if (!tok || (tok->kind != TOK_IDENT && tok->kind != TOK_IDENT_MUT))
+            continue;
+
+        char title[256];
+        snprintf(title, sizeof(title), "Replace with '%s'", suggestion);
+        emit_quickfix(&w, title, uri,
+                      tok->line - 1,
+                      tok->col - 1,
+                      tok->col - 1 + tok->length,
+                      suggestion, d);
+    }
+
+    jw_array_end(&w);
+    lsp_send_response(id, w.buf);
+    jw_free(&w);
+}
+
+// --- Workspace Symbols ---
+
+// Case-insensitive substring check.
+static bool str_contains_ci(const char *haystack, const char *needle) {
+    if (!needle || !*needle) return true;
+    size_t nlen = strlen(needle);
+    for (const char *p = haystack; *p; p++) {
+        size_t i = 0;
+        while (i < nlen && p[i] &&
+               tolower((unsigned char)p[i]) == tolower((unsigned char)needle[i]))
+            i++;
+        if (i == nlen) return true;
+    }
+    return false;
+}
+
+static void handle_workspace_symbol(LspServer *server, int64_t id, JsonValue *params) {
+    const char *query = json_get_string(params, "query");
+    if (!query) query = "";
+
+    JsonWriter w;
+    jw_init(&w);
+    jw_array_start(&w);
+
+    int emitted = 0;
+    const int LIMIT = 256;  // editors render large lists badly
+
+    // Walk the workspace cache (analyzed files).
+    for (WorkspaceFile *wf = server->workspace.head; wf && emitted < LIMIT; wf = wf->next) {
+        if (!wf->valid) continue;
+        for (int i = 0; i < wf->symbols.all_count && emitted < LIMIT; i++) {
+            SymbolEntry *e = wf->symbols.all[i];
+            if (e->decl_kind == NODE_VAR_DECL) continue;  // locals are noise here
+            if (!str_contains_ci(e->name, query)) continue;
+
+            int line = e->def_loc.line > 0 ? e->def_loc.line - 1 : 0;
+            int col = e->def_loc.col > 0 ? e->def_loc.col - 1 : 0;
+            int name_len = (int)strlen(e->name);
+
+            // Use SymbolInformation (LSP 3.16+ also has WorkspaceSymbol; both work)
+            jw_object_start(&w);
+              jw_key(&w, "name"); jw_string(&w, e->name);
+              jw_key(&w, "kind");
+              if (e->container) jw_int(&w, 7);                      // Method
+              else if (e->decl_kind == NODE_FN_DECL) jw_int(&w, 12); // Function
+              else if (e->decl_kind == NODE_SHAPE_DECL) jw_int(&w, 23);
+              else if (e->decl_kind == NODE_CONST_DECL) jw_int(&w, 14);
+              else jw_int(&w, 13);                                   // Variable fallback
+              if (e->container) {
+                  jw_key(&w, "containerName"); jw_string(&w, e->container);
+              }
+              jw_key(&w, "location");
+              jw_object_start(&w);
+                jw_key(&w, "uri"); jw_string(&w, wf->uri);
+                jw_key(&w, "range");
+                jw_object_start(&w);
+                  jw_key(&w, "start");
+                  jw_object_start(&w);
+                    jw_key(&w, "line"); jw_int(&w, line);
+                    jw_key(&w, "character"); jw_int(&w, col);
+                  jw_object_end(&w);
+                  jw_key(&w, "end");
+                  jw_object_start(&w);
+                    jw_key(&w, "line"); jw_int(&w, line);
+                    jw_key(&w, "character"); jw_int(&w, col + name_len);
+                  jw_object_end(&w);
+                jw_object_end(&w);
+              jw_object_end(&w);
+            jw_object_end(&w);
+            emitted++;
+        }
+    }
+
+    jw_array_end(&w);
+    lsp_send_response(id, w.buf);
+    jw_free(&w);
+}
+
+// --- Document Highlight & Find References ---
+
+// Both handlers do the same thing: find the symbol at the cursor and emit its
+// uses. documentHighlight is current-doc, write-aware. references can include
+// the def location and (later) cross-file uses from the workspace cache.
+
+static void emit_range_obj(JsonWriter *w, int line0, int col0, int len) {
+    jw_object_start(w);
+      jw_key(w, "line"); jw_int(w, line0);
+      jw_key(w, "character"); jw_int(w, col0);
+    jw_object_end(w);
+    (void)len;
+}
+
+static void emit_loc_range(JsonWriter *w, SrcLoc loc, int len) {
+    int line = loc.line > 0 ? loc.line - 1 : 0;
+    int col = loc.col > 0 ? loc.col - 1 : 0;
+    jw_key(w, "range");
+    jw_object_start(w);
+      jw_key(w, "start"); emit_range_obj(w, line, col, len);
+      jw_key(w, "end"); emit_range_obj(w, line, col + len, len);
+    jw_object_end(w);
+}
+
+// Look up the identifier the cursor is on. Returns NULL if not on an ident.
+static SymbolEntry *symbol_at_cursor(LspDocument *doc, int line, int col,
+                                     char *out_name, int out_size) {
+    if (!doc || !doc->analysis_valid) return NULL;
+    Token *tok = tokens_find_at(doc->tokens, doc->token_count, line, col);
+    if (!tok || (tok->kind != TOK_IDENT && tok->kind != TOK_IDENT_MUT)) return NULL;
+    if (!token_ident_name(tok, out_name, out_size)) return NULL;
+    return symbol_index_lookup(&doc->symbols, out_name);
+}
+
+static void handle_document_highlight(LspServer *server, int64_t id, JsonValue *params) {
+    const char *uri = json_get_string(json_get(params, "textDocument"), "uri");
+    JsonValue *pos = json_get(params, "position");
+    int line = (int)json_get_int(pos, "line") + 1;
+    int col = (int)json_get_int(pos, "character") + 1;
+
+    LspDocument *doc = docstore_find(&server->documents, uri);
+    if (!doc) { lsp_send_response(id, "[]"); return; }
+    document_ensure_analyzed(doc);
+
+    char name[256];
+    SymbolEntry *e = symbol_at_cursor(doc, line, col, name, sizeof(name));
+    if (!e) { lsp_send_response(id, "[]"); return; }
+
+    JsonWriter w;
+    jw_init(&w);
+    jw_array_start(&w);
+    int name_len = (int)strlen(e->name);
+
+    // Definition
+    if (e->def_loc.line > 0) {
+        jw_object_start(&w);
+        emit_loc_range(&w, e->def_loc, name_len);
+        jw_key(&w, "kind"); jw_int(&w, 1); // 1 = Text
+        jw_object_end(&w);
+    }
+
+    for (Reference *r = e->uses; r; r = r->next) {
+        jw_object_start(&w);
+        emit_loc_range(&w, r->loc, r->name_len);
+        // 1=Text, 2=Read, 3=Write
+        jw_key(&w, "kind"); jw_int(&w, r->is_write ? 3 : 2);
+        jw_object_end(&w);
+    }
+
+    jw_array_end(&w);
+    lsp_send_response(id, w.buf);
+    jw_free(&w);
+}
+
+static void handle_references(LspServer *server, int64_t id, JsonValue *params) {
+    const char *uri = json_get_string(json_get(params, "textDocument"), "uri");
+    JsonValue *pos = json_get(params, "position");
+    int line = (int)json_get_int(pos, "line") + 1;
+    int col = (int)json_get_int(pos, "character") + 1;
+
+    bool include_decl = false;
+    JsonValue *ctx = json_get(params, "context");
+    if (ctx) {
+        JsonValue *idv = json_get(ctx, "includeDeclaration");
+        if (idv && idv->kind == JSON_BOOL) include_decl = idv->boolean;
+    }
+
+    LspDocument *doc = docstore_find(&server->documents, uri);
+    if (!doc) { lsp_send_response(id, "[]"); return; }
+    document_ensure_analyzed(doc);
+
+    char name[256];
+    SymbolEntry *e = symbol_at_cursor(doc, line, col, name, sizeof(name));
+    if (!e) { lsp_send_response(id, "[]"); return; }
+
+    JsonWriter w;
+    jw_init(&w);
+    jw_array_start(&w);
+    int name_len = (int)strlen(e->name);
+
+    if (include_decl && e->def_loc.line > 0) {
+        jw_object_start(&w);
+          jw_key(&w, "uri"); jw_string(&w, uri);
+          emit_loc_range(&w, e->def_loc, name_len);
+        jw_object_end(&w);
+    }
+    for (Reference *r = e->uses; r; r = r->next) {
+        jw_object_start(&w);
+          jw_key(&w, "uri"); jw_string(&w, uri);
+          emit_loc_range(&w, r->loc, r->name_len);
+        jw_object_end(&w);
+    }
+
+    // Cross-file uses: walk the workspace cache for symbols with the same
+    // name. Skip the file we already covered above. This is name-based
+    // matching, not type-aware — same-named locals in unrelated files will
+    // appear. Acceptable for an MVP; can be tightened later by scoping
+    // top-level functions/shapes to the cached file's pub/use edges.
+    char *cur_path = lsp_uri_to_path(uri);
+    for (WorkspaceFile *wf = server->workspace.head; wf; wf = wf->next) {
+        if (!wf->valid) continue;
+        if (cur_path && strcmp(wf->path, cur_path) == 0) continue;
+        SymbolEntry *we = symbol_index_lookup(&wf->symbols, name);
+        if (!we) continue;
+        if (include_decl && we->def_loc.line > 0) {
+            jw_object_start(&w);
+              jw_key(&w, "uri"); jw_string(&w, wf->uri);
+              emit_loc_range(&w, we->def_loc, name_len);
+            jw_object_end(&w);
+        }
+        for (Reference *r = we->uses; r; r = r->next) {
+            jw_object_start(&w);
+              jw_key(&w, "uri"); jw_string(&w, wf->uri);
+              emit_loc_range(&w, r->loc, r->name_len);
+            jw_object_end(&w);
+        }
+    }
+    free(cur_path);
+
+    jw_array_end(&w);
+    lsp_send_response(id, w.buf);
+    jw_free(&w);
+}
+
 // --- Signature Help ---
 
 static void handle_signature_help(LspServer *server, int64_t id, JsonValue *params) {
@@ -813,6 +1650,28 @@ void lsp_server_dispatch(LspServer *server, JsonValue *msg, Arena *scratch) {
         handle_completion_request(server, id, params);
     } else if (strcmp(method, "textDocument/signatureHelp") == 0) {
         handle_signature_help(server, id, params);
+    } else if (strcmp(method, "textDocument/documentSymbol") == 0) {
+        handle_document_symbol(server, id, params);
+    } else if (strcmp(method, "textDocument/documentHighlight") == 0) {
+        handle_document_highlight(server, id, params);
+    } else if (strcmp(method, "textDocument/references") == 0) {
+        handle_references(server, id, params);
+    } else if (strcmp(method, "workspace/symbol") == 0) {
+        handle_workspace_symbol(server, id, params);
+    } else if (strcmp(method, "textDocument/inlayHint") == 0) {
+        handle_inlay_hint(server, id, params);
+    } else if (strcmp(method, "textDocument/prepareRename") == 0) {
+        handle_prepare_rename(server, id, params);
+    } else if (strcmp(method, "textDocument/rename") == 0) {
+        handle_rename(server, id, params);
+    } else if (strcmp(method, "textDocument/codeAction") == 0) {
+        handle_code_action(server, id, params);
+    }
+    // Phase A stubs — advertised but not yet implemented. Returning an empty
+    // result (instead of "method not found") prevents the editor from
+    // disabling the corresponding default keymap.
+    else if (strcmp(method, "textDocument/formatting") == 0) {
+        if (id >= 0) lsp_send_response(id, "[]");
     }
     // Unknown
     else {

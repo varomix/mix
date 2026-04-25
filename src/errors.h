@@ -20,6 +20,9 @@ void errors_init(void);
 // Set a diagnostic callback. Pass NULL to restore default stderr behavior.
 void errors_set_callback(DiagnosticCallback cb, void *userdata);
 
+// Read the current callback (and its userdata). Either output may be NULL.
+void errors_get_callback(DiagnosticCallback *cb, void **userdata);
+
 // Reset the global error count (needed for re-analysis in LSP)
 void errors_reset(void);
 

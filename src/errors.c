@@ -40,6 +40,11 @@ void errors_set_callback(DiagnosticCallback cb, void *userdata) {
     g_diag_userdata = userdata;
 }
 
+void errors_get_callback(DiagnosticCallback *cb, void **userdata) {
+    if (cb) *cb = g_diag_callback;
+    if (userdata) *userdata = g_diag_userdata;
+}
+
 void errors_reset(void) {
     g_error_count = 0;
     error_limit_hit = false;
@@ -129,7 +134,12 @@ void mix_error(SrcLoc loc, const char *fmt, ...) {
     g_error_count++;
     if (g_error_count >= MAX_ERRORS) {
         error_limit_hit = true;
-        fprintf(stderr, "mix: too many errors emitted, stopping\n");
+        // Don't pollute stderr when a host (e.g. the LSP) is consuming
+        // diagnostics through the callback — they get the same signal via
+        // mix_error_limit_reached().
+        if (!g_diag_callback) {
+            fprintf(stderr, "mix: too many errors emitted, stopping\n");
+        }
     }
 }
 

@@ -38,12 +38,27 @@ void symbol_index_clear(SymbolIndex *idx) {
                 free(e->param_type_strs);
             }
             free(e->return_type_str);
+            Reference *r = e->uses;
+            while (r) { Reference *rn = r->next; free(r); r = rn; }
             free(e);
             e = next;
         }
         idx->buckets[i] = NULL;
     }
     idx->all_count = 0;
+}
+
+// Append a use site to the symbol with the given name, if it exists.
+static void sym_add_use(SymbolIndex *idx, const char *name,
+                        SrcLoc loc, bool is_write) {
+    SymbolEntry *e = symbol_index_lookup(idx, name);
+    if (!e) return;
+    Reference *r = calloc(1, sizeof(Reference));
+    r->loc = loc;
+    r->name_len = (int)strlen(name);
+    r->is_write = is_write;
+    r->next = e->uses;
+    e->uses = r;
 }
 
 void symbol_index_destroy(SymbolIndex *idx) {
@@ -140,6 +155,184 @@ static void index_block(SymbolIndex *idx, AstNode *block) {
     }
 }
 
+// Recursively walk an expression collecting use sites. We avoid descending
+// into nested function/shape bodies — those are walked separately at the
+// top level so each scope contributes its own uses.
+static void collect_uses_expr(SymbolIndex *idx, AstNode *e);
+static void collect_uses_stmt(SymbolIndex *idx, AstNode *s);
+
+static void collect_uses_expr(SymbolIndex *idx, AstNode *e) {
+    if (!e) return;
+    switch (e->kind) {
+        case NODE_IDENT:
+            sym_add_use(idx, e->ident.name, e->loc, false);
+            break;
+        case NODE_CALL_EXPR:
+            sym_add_use(idx, e->call.name, e->loc, false);
+            for (int i = 0; i < e->call.arg_count; i++)
+                collect_uses_expr(idx, e->call.args[i]);
+            break;
+        case NODE_FIELD_EXPR:
+            collect_uses_expr(idx, e->field_expr.object);
+            // Field access uses the field NAME — only matched if a same-name
+            // local exists. Real shape-field navigation needs type-aware
+            // resolution; we'll add that when we wire workspace support.
+            break;
+        case NODE_METHOD_CALL:
+            collect_uses_expr(idx, e->method_call.object);
+            sym_add_use(idx, e->method_call.method_name, e->loc, false);
+            for (int i = 0; i < e->method_call.arg_count; i++)
+                collect_uses_expr(idx, e->method_call.args[i]);
+            break;
+        case NODE_SHAPE_LIT:
+            sym_add_use(idx, e->shape_lit.shape_name, e->loc, false);
+            for (int i = 0; i < e->shape_lit.field_count; i++)
+                collect_uses_expr(idx, e->shape_lit.field_values[i]);
+            break;
+        case NODE_BINARY_EXPR:
+            collect_uses_expr(idx, e->binary.left);
+            collect_uses_expr(idx, e->binary.right);
+            break;
+        case NODE_UNARY_EXPR:
+            collect_uses_expr(idx, e->unary.operand);
+            break;
+        case NODE_INDEX_EXPR:
+            collect_uses_expr(idx, e->index_expr.object);
+            collect_uses_expr(idx, e->index_expr.index);
+            break;
+        case NODE_SLICE_EXPR:
+            collect_uses_expr(idx, e->slice_expr.object);
+            collect_uses_expr(idx, e->slice_expr.start);
+            collect_uses_expr(idx, e->slice_expr.end);
+            break;
+        case NODE_LIST_LIT:
+            for (int i = 0; i < e->list_lit.element_count; i++)
+                collect_uses_expr(idx, e->list_lit.elements[i]);
+            break;
+        case NODE_SET_LIT:
+            for (int i = 0; i < e->set_lit.element_count; i++)
+                collect_uses_expr(idx, e->set_lit.elements[i]);
+            break;
+        case NODE_MAP_LIT:
+            for (int i = 0; i < e->map_lit.entry_count; i++) {
+                collect_uses_expr(idx, e->map_lit.keys[i]);
+                collect_uses_expr(idx, e->map_lit.values[i]);
+            }
+            break;
+        case NODE_LIST_COMP:
+            collect_uses_expr(idx, e->list_comp.iterable);
+            collect_uses_expr(idx, e->list_comp.expr);
+            collect_uses_expr(idx, e->list_comp.condition);
+            break;
+        case NODE_ELSE_EXPR:
+            collect_uses_expr(idx, e->else_expr.value);
+            collect_uses_expr(idx, e->else_expr.fallback);
+            break;
+        case NODE_CAST_EXPR:
+            collect_uses_expr(idx, e->cast_expr.value);
+            break;
+        case NODE_STRING_INTERP:
+            for (int i = 0; i < e->string_interp.expr_count; i++)
+                collect_uses_expr(idx, e->string_interp.exprs[i]);
+            break;
+        case NODE_TRY_EXPR:
+            collect_uses_expr(idx, e->try_expr.expr);
+            break;
+        case NODE_GO_EXPR:
+            collect_uses_expr(idx, e->go_expr.call_expr);
+            break;
+        case NODE_WAIT_EXPR:
+            collect_uses_expr(idx, e->wait_expr.handle_expr);
+            break;
+        case NODE_SHARED_EXPR:
+            collect_uses_expr(idx, e->shared_expr.init_expr);
+            break;
+        default:
+            break;
+    }
+}
+
+static void collect_uses_block(SymbolIndex *idx, AstNode *block) {
+    if (!block || block->kind != NODE_BLOCK) return;
+    for (int i = 0; i < block->block.stmt_count; i++)
+        collect_uses_stmt(idx, block->block.stmts[i]);
+}
+
+static void collect_uses_stmt(SymbolIndex *idx, AstNode *s) {
+    if (!s) return;
+    switch (s->kind) {
+        case NODE_VAR_DECL:
+            collect_uses_expr(idx, s->var_decl.init_expr);
+            break;
+        case NODE_ASSIGN:
+            sym_add_use(idx, s->assign.name, s->loc, true);
+            collect_uses_expr(idx, s->assign.value);
+            break;
+        case NODE_IF_STMT:
+            collect_uses_expr(idx, s->if_stmt.condition);
+            collect_uses_block(idx, s->if_stmt.then_block);
+            if (s->if_stmt.else_block) {
+                if (s->if_stmt.else_block->kind == NODE_BLOCK)
+                    collect_uses_block(idx, s->if_stmt.else_block);
+                else
+                    collect_uses_stmt(idx, s->if_stmt.else_block);
+            }
+            break;
+        case NODE_WHILE_STMT:
+            collect_uses_expr(idx, s->while_stmt.condition);
+            collect_uses_block(idx, s->while_stmt.body);
+            break;
+        case NODE_FOR_STMT:
+            collect_uses_expr(idx, s->for_stmt.iterable);
+            collect_uses_block(idx, s->for_stmt.body);
+            break;
+        case NODE_MATCH_STMT:
+            collect_uses_expr(idx, s->match_stmt.subject);
+            for (int i = 0; i < s->match_stmt.arm_count; i++) {
+                collect_uses_expr(idx, s->match_stmt.arms[i].pattern);
+                AstNode *body = s->match_stmt.arms[i].body;
+                if (body) {
+                    if (body->kind == NODE_BLOCK) collect_uses_block(idx, body);
+                    else collect_uses_stmt(idx, body);
+                }
+            }
+            break;
+        case NODE_DONE_STMT:
+            collect_uses_expr(idx, s->done_stmt.value);
+            break;
+        case NODE_EXPR_STMT:
+            collect_uses_expr(idx, s->expr_stmt.expr);
+            break;
+        case NODE_DEFER_STMT:
+            collect_uses_stmt(idx, s->defer_stmt.stmt);
+            break;
+        case NODE_UNSAFE_BLOCK:
+            collect_uses_block(idx, s->unsafe_block.body);
+            break;
+        case NODE_ZONE_STMT:
+            collect_uses_block(idx, s->zone_stmt.body);
+            break;
+        case NODE_FAIL_STMT:
+            collect_uses_expr(idx, s->fail_stmt.value);
+            break;
+        case NODE_DEREF_ASSIGN:
+            collect_uses_expr(idx, s->deref_assign.ptr_expr);
+            collect_uses_expr(idx, s->deref_assign.value);
+            break;
+        case NODE_FIELD_ASSIGN:
+            collect_uses_expr(idx, s->field_assign.object);
+            collect_uses_expr(idx, s->field_assign.value);
+            break;
+        case NODE_INDEX_ASSIGN:
+            collect_uses_expr(idx, s->index_assign.object);
+            collect_uses_expr(idx, s->index_assign.index);
+            collect_uses_expr(idx, s->index_assign.value);
+            break;
+        default:
+            break;
+    }
+}
+
 void symbol_index_build(SymbolIndex *idx, AstNode *program) {
     if (!program || program->kind != NODE_PROGRAM) return;
 
@@ -165,7 +358,7 @@ void symbol_index_build(SymbolIndex *idx, AstNode *program) {
 
             case NODE_SHAPE_DECL:
                 sym_add(idx, decl->shape_decl.name, decl->loc,
-                        NULL, NODE_SHAPE_DECL, NULL);
+                        decl->resolved_type, NODE_SHAPE_DECL, NULL);
                 // Index methods
                 for (int j = 0; j < decl->shape_decl.method_count; j++) {
                     AstNode *m = decl->shape_decl.methods[j];
@@ -219,6 +412,39 @@ void symbol_index_build(SymbolIndex *idx, AstNode *program) {
                 }
                 break;
 
+            default:
+                break;
+        }
+    }
+
+    // Second pass: collect use sites for every symbol in the index. We walk
+    // the same top-level decls and recurse into their bodies. Definition
+    // locations themselves are NOT recorded as uses (handled separately by
+    // the references handler when includeDeclaration is true).
+    for (int i = 0; i < program->program.decl_count; i++) {
+        AstNode *decl = program->program.decls[i];
+        switch (decl->kind) {
+            case NODE_FN_DECL:
+                collect_uses_block(idx, decl->fn_decl.body);
+                break;
+            case NODE_SHAPE_DECL:
+                for (int j = 0; j < decl->shape_decl.method_count; j++) {
+                    AstNode *m = decl->shape_decl.methods[j];
+                    collect_uses_block(idx, m->fn_decl.body);
+                }
+                break;
+            case NODE_CONST_DECL:
+                collect_uses_expr(idx, decl->const_decl.value);
+                break;
+            case NODE_COND_DECL:
+                if (decl->cond_decl.active) {
+                    for (int j = 0; j < decl->cond_decl.decl_count; j++) {
+                        AstNode *cd = decl->cond_decl.decls[j];
+                        if (cd->kind == NODE_FN_DECL)
+                            collect_uses_block(idx, cd->fn_decl.body);
+                    }
+                }
+                break;
             default:
                 break;
         }

@@ -28,6 +28,10 @@ out/
 # examples/ — the .mix sources are tracked; their compiled output is not
 examples/hello
 examples/opengl_triangle
+examples/raylib_C_example
+examples/raylib_shapes_example
+examples/sdl3_use_c
+examples/shapes_methods
 examples/gpu_triangle/gpu_triangle
 examples/gpu_triangle_mix/gpu_*
 examples/gpu_triangle_mix/test_*

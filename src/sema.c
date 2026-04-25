@@ -1853,6 +1853,9 @@ void sema_analyze(Sema *sema, AstNode *program) {
                 shape_type->shape.total_size = (offset + 7) & ~7;
             }
             shape_type->shape.alignment = 8;
+            // Annotate the AST node so downstream tools (e.g. the LSP outline)
+            // can read the shape's MixType without re-doing the symbol lookup.
+            decl->resolved_type = shape_type;
 
             // Handle tagged union variants
             if (decl->shape_decl.variant_count > 0) {

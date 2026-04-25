@@ -3,9 +3,11 @@
 
 #include "lsp_document.h"
 #include "lsp_json.h"
+#include "lsp_workspace.h"
 
 typedef struct {
     DocumentStore documents;
+    WorkspaceCache workspace;
     bool initialized;
     bool shutdown_requested;
     char *root_uri;

@@ -2,10 +2,10 @@
   "name": "mix-lang",
   "displayName": "MIX Language",
   "description": "MIX language support: syntax highlighting, diagnostics, hover",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "varomix",
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
     "Programming Languages"
@@ -49,9 +49,24 @@
       "[mix]": {
         "editor.quickSuggestions": {
           "strings": "on"
-        }
+        },
+        "editor.inlayHints.enabled": "on"
       }
-    }
+    },
+    "commands": [
+      {
+        "command": "mix.restartServer",
+        "title": "MIX: Restart Language Server"
+      },
+      {
+        "command": "mix.showOutput",
+        "title": "MIX: Show Server Output"
+      },
+      {
+        "command": "mix.toggleInlayHints",
+        "title": "MIX: Toggle Inlay Hints"
+      }
+    ]
   },
   "scripts": {
     "compile": "tsc -p ./",

@@ -44,13 +44,31 @@ export function activate(context: vscode.ExtensionContext) {
 
     client.start();
 
-    context.subscriptions.push({
-        dispose: () => {
+    context.subscriptions.push(
+        vscode.commands.registerCommand('mix.restartServer', async () => {
             if (client) {
-                client.stop();
+                await client.stop();
+                await client.start();
+                vscode.window.showInformationMessage('MIX language server restarted.');
             }
+        }),
+        vscode.commands.registerCommand('mix.showOutput', () => {
+            if (client) client.outputChannel.show(true);
+        }),
+        vscode.commands.registerCommand('mix.toggleInlayHints', async () => {
+            // Toggle the workspace setting for the [mix] language scope.
+            const cfg = vscode.workspace.getConfiguration('editor', { languageId: 'mix' });
+            const cur = cfg.get<string>('inlayHints.enabled', 'on');
+            const next = (cur === 'off') ? 'on' : 'off';
+            await cfg.update('inlayHints.enabled', next,
+                vscode.ConfigurationTarget.Global, true);
+            vscode.window.showInformationMessage(
+                `MIX inlay hints: ${next}`);
+        }),
+        {
+            dispose: () => { if (client) client.stop(); }
         }
-    });
+    );
 }
 
 export function deactivate(): Thenable<void> | undefined {

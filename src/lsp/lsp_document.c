@@ -11,11 +11,19 @@ static unsigned int hash_string(const char *s) {
 }
 
 // Convert file:// URI to filesystem path
-static char *uri_to_path(const char *uri) {
+char *lsp_uri_to_path(const char *uri) {
     if (strncmp(uri, "file://", 7) == 0) {
         return strdup(uri + 7);
     }
     return strdup(uri);
+}
+
+// Convert filesystem path to file:// URI. No URL-encoding for now.
+char *lsp_path_to_uri(const char *path) {
+    size_t n = strlen(path);
+    char *out = malloc(n + 8);
+    snprintf(out, n + 8, "file://%s", path);
+    return out;
 }
 
 DocumentStore docstore_create(void) {
@@ -58,7 +66,7 @@ LspDocument *docstore_open(DocumentStore *store, const char *uri,
                            const char *text, int version) {
     LspDocument *doc = calloc(1, sizeof(LspDocument));
     doc->uri = strdup(uri);
-    doc->filepath = uri_to_path(uri);
+    doc->filepath = lsp_uri_to_path(uri);
     doc->source = strdup(text);
     doc->version = version;
     doc->doc_arena = arena_create(ARENA_DEFAULT_CAP);
@@ -107,11 +115,6 @@ void docstore_close(DocumentStore *store, const char *uri) {
     }
 }
 
-// No-op diagnostic callback to silently discard sema errors
-static void discard_diagnostic(DiagSeverity sev, SrcLoc loc, const char *msg, void *ud) {
-    (void)sev; (void)loc; (void)msg; (void)ud;
-}
-
 void document_analyze(LspDocument *doc) {
     // Destroy old arena, create fresh
     arena_destroy(&doc->doc_arena);
@@ -146,21 +149,16 @@ void document_analyze(LspDocument *doc) {
                                    &doc->doc_arena, doc->filepath);
     doc->ast = parser_parse(&parser);
 
-    // Sema — try even with parse errors for best-effort type info
-    // Note: sema runs without module context, so it will report false errors
-    // for imported functions. We capture the error count before sema and only
-    // keep parse errors (before sema) as diagnostics.
+    // Sema — try even with parse errors for best-effort type info.
+    //
+    // We let sema diagnostics through to the editor so quick fixes like
+    // "did you mean" can offer code actions. Imports aren't loaded into
+    // sema yet (TODO: pre-analyze module ASTs into the same sema), so files
+    // that `use` external modules will see false-positive "undefined" errors
+    // on imported names. Acceptable trade-off until proper import loading.
     if (doc->ast && doc->ast->kind == NODE_PROGRAM) {
-        int parse_diag_count = doc->diagnostics.count;
         Sema sema = sema_create(&doc->doc_arena);
-
-        // Suppress sema error output — we only want it for type info
-        errors_set_callback(discard_diagnostic, NULL);
         sema_analyze(&sema, doc->ast);
-
-        // Restore callback and trim diagnostics to parse-only errors
-        errors_set_callback(lsp_diagnostic_callback, &doc->diagnostics);
-        doc->diagnostics.count = parse_diag_count;
 
         // Build symbol index from analyzed AST (includes imported modules)
         symbol_index_build_with_imports(&doc->symbols, doc->ast, doc->filepath);

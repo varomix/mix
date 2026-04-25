@@ -4,6 +4,14 @@
 #include "../ast.h"
 #include "../types.h"
 
+// One occurrence of a symbol — used by find references and document highlight.
+typedef struct Reference {
+    SrcLoc loc;        // 1-based line/col of the identifier
+    int name_len;      // length of the identifier (for end column)
+    bool is_write;     // true if this is the LHS of an assignment
+    struct Reference *next;
+} Reference;
+
 typedef struct SymbolEntry {
     char *name;
     SrcLoc def_loc;
@@ -15,6 +23,10 @@ typedef struct SymbolEntry {
     char **param_type_strs;  // type as string when MixType not available
     int param_name_count;
     char *return_type_str;   // return type as string when MixType not available
+    // All use sites in the indexed document(s). Owned linked list, freed in
+    // symbol_index_clear. Definition itself is NOT included — caller may
+    // include def_loc separately when answering find-references.
+    Reference *uses;
     struct SymbolEntry *next;
 } SymbolEntry;
 

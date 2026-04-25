@@ -54,4 +54,9 @@ static inline void document_ensure_analyzed(LspDocument *doc) {
     if (doc && !doc->analysis_valid) document_analyze(doc);
 }
 
+// file:// URI -> filesystem path. Caller frees.
+char *lsp_uri_to_path(const char *uri);
+// Filesystem path -> file:// URI. Caller frees.
+char *lsp_path_to_uri(const char *path);
+
 #endif // LSP_DOCUMENT_H

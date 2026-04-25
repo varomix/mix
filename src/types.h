@@ -50,6 +50,10 @@ struct MixType {
             struct MixType **param_types;
             int param_count;
             bool is_variadic;
+            // Generic constraints copied from the AST so call sites can
+            // enforce `@T has +, ==, area` without re-walking the program.
+            char **constraints;
+            int constraint_count;
         } func;
         struct {
             char *name;

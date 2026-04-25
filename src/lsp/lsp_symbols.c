@@ -822,26 +822,64 @@ static void index_c_header(SymbolIndex *idx, const char *header_path,
     free(bind_src);
 }
 
-// Resolve a module path from a use declaration relative to the main file
-static char *resolve_use_path(const char *main_filepath, const char *module_path) {
-    // Get directory of the main file
+// Build "<dir>/<module-with-slashes>.mix" into out_buf. Returns out_buf.
+static const char *build_module_path(char *out_buf, size_t out_size,
+                                     const char *dir, const char *module_path) {
+    int off = snprintf(out_buf, out_size, "%s/", dir);
+    for (const char *p = module_path; *p && off + 5 < (int)out_size; p++) {
+        out_buf[off++] = (*p == '.') ? '/' : *p;
+    }
+    out_buf[off] = '\0';
+    strncat(out_buf, ".mix", out_size - strlen(out_buf) - 1);
+    return out_buf;
+}
+
+// Resolve a `use a.b.c` to an absolute filesystem path. Tries:
+//   1. Relative to the file's own directory.
+//   2. For `std.*`: walk parent directories looking for `lib/std/<rest>.mix`.
+char *lsp_resolve_use_path(const char *main_filepath, const char *module_path) {
     char *dir_copy = strdup(main_filepath);
     char *dir = dirname(dir_copy);
 
     char path[1024];
-    int off = snprintf(path, sizeof(path), "%s/", dir);
-    for (const char *p = module_path; *p; p++) {
-        if (*p == '.') path[off++] = '/';
-        else path[off++] = *p;
+    struct stat st;
+
+    // (1) Relative to the file's directory
+    build_module_path(path, sizeof(path), dir, module_path);
+    if (stat(path, &st) == 0) {
+        free(dir_copy);
+        return strdup(path);
     }
-    path[off] = '\0';
-    strncat(path, ".mix", sizeof(path) - strlen(path) - 1);
+
+    // (2) Stdlib: walk up parent dirs looking for lib/std/<rest>.mix
+    if (strncmp(module_path, "std.", 4) == 0) {
+        const char *rest = module_path + 4;
+        char ascend[1024];
+        snprintf(ascend, sizeof(ascend), "%s", dir);
+        // Walk up until we hit "/" or run out of components.
+        for (int i = 0; i < 32; i++) {
+            snprintf(path, sizeof(path), "%s/lib/std/", ascend);
+            int off = (int)strlen(path);
+            for (const char *p = rest; *p && off + 5 < (int)sizeof(path); p++) {
+                path[off++] = (*p == '.') ? '/' : *p;
+            }
+            path[off] = '\0';
+            strncat(path, ".mix", sizeof(path) - strlen(path) - 1);
+            if (stat(path, &st) == 0) {
+                free(dir_copy);
+                return strdup(path);
+            }
+            // Ascend one directory; stop at root.
+            char *parent = dirname(ascend);
+            if (!parent || strcmp(parent, ascend) == 0 || strcmp(parent, ".") == 0) break;
+            // dirname may or may not modify ascend; resync.
+            char tmp[1024];
+            snprintf(tmp, sizeof(tmp), "%s", parent);
+            snprintf(ascend, sizeof(ascend), "%s", tmp);
+        }
+    }
 
     free(dir_copy);
-
-    // Check if file exists
-    struct stat st;
-    if (stat(path, &st) == 0) return strdup(path);
     return NULL;
 }
 
@@ -856,7 +894,7 @@ void symbol_index_build_with_imports(SymbolIndex *idx, AstNode *program,
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
         if (decl->kind == NODE_USE_DECL) {
-            char *mod_path = resolve_use_path(filepath, decl->use_decl.module_path);
+            char *mod_path = lsp_resolve_use_path(filepath, decl->use_decl.module_path);
             if (mod_path) {
                 index_module_file(idx, mod_path);
                 free(mod_path);

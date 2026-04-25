@@ -1946,6 +1946,8 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
             int subject = emit_expr(emit, stmt->match_stmt.subject);
             MixType *subj_type = stmt->match_stmt.subject->resolved_type;
             bool is_tagged = subj_type && subj_type->kind == TYPE_SHAPE && subj_type->shape.is_tagged_union;
+            bool is_optional = subj_type && subj_type->kind == TYPE_OPTIONAL;
+            bool is_result = subj_type && subj_type->kind == TYPE_RESULT;
 
             MixType *match_type = stmt->resolved_type;
             bool has_result = match_type && match_type->kind != TYPE_VOID;
@@ -1962,12 +1964,30 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                 tag_val = next_temp(emit);
                 ind(emit); fprintf(emit->out, "int64_t t%d = *(int64_t *)t%d;\n", tag_val, subject);
             }
+            int has_val = -1;
+            if (is_optional) {
+                has_val = next_temp(emit);
+                ind(emit); fprintf(emit->out, "int64_t t%d = mix_optional_has(t%d);\n",
+                        has_val, subject);
+            } else if (is_result) {
+                has_val = next_temp(emit);
+                ind(emit); fprintf(emit->out, "int64_t t%d = mix_result_is_ok(t%d);\n",
+                        has_val, subject);
+            }
 
             /* Pre-evaluate all pattern expressions so temps are in scope */
             int pat_temps[64];
             for (int i = 0; i < stmt->match_stmt.arm_count; i++) {
                 struct MatchArm *arm = &stmt->match_stmt.arms[i];
-                if (!arm->is_wildcard && !(is_tagged && arm->pattern && arm->pattern->kind == NODE_CALL_EXPR)) {
+                bool is_capture_pat = arm->pattern && (
+                    (is_optional && (arm->pattern->kind == NODE_NONE_LIT ||
+                                     (arm->pattern->kind == NODE_CALL_EXPR &&
+                                      strcmp(arm->pattern->call.name, "some") == 0))) ||
+                    (is_result && arm->pattern->kind == NODE_CALL_EXPR &&
+                     (strcmp(arm->pattern->call.name, "ok") == 0 ||
+                      strcmp(arm->pattern->call.name, "err") == 0)));
+                if (!arm->is_wildcard && !is_capture_pat &&
+                    !(is_tagged && arm->pattern && arm->pattern->kind == NODE_CALL_EXPR)) {
                     pat_temps[i] = emit_expr(emit, arm->pattern);
                 } else {
                     pat_temps[i] = -1;
@@ -1997,6 +2017,56 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                     }
                     emit->indent--;
                     ind(emit); fprintf(emit->out, "}\n");
+                    first_arm = false;
+                } else if ((is_optional || is_result) && arm->pattern) {
+                    AstNode *pat = arm->pattern;
+                    bool match_truthy;
+                    const char *bind_name = NULL;
+                    const char *accessor = NULL;
+                    if (pat->kind == NODE_NONE_LIT) {
+                        match_truthy = false;
+                    } else if (pat->kind == NODE_CALL_EXPR) {
+                        if (strcmp(pat->call.name, "some") == 0 ||
+                            strcmp(pat->call.name, "ok") == 0) {
+                            match_truthy = true;
+                            accessor = is_optional ? "mix_optional_get" : "mix_result_unwrap";
+                        } else if (strcmp(pat->call.name, "err") == 0) {
+                            match_truthy = false;
+                            accessor = "mix_result_unwrap_err";
+                        } else {
+                            continue;
+                        }
+                        if (pat->call.arg_count > 0 &&
+                            pat->call.args[0]->kind == NODE_IDENT)
+                            bind_name = pat->call.args[0]->ident.name;
+                    } else {
+                        continue;
+                    }
+
+                    if (!first_arm) {
+                        ind(emit); fprintf(emit->out, "} else ");
+                    } else {
+                        ind(emit);
+                    }
+                    fprintf(emit->out, "if (t%d %s 0) {\n",
+                            has_val, match_truthy ? "!=" : "==");
+                    emit->indent++;
+                    if (bind_name && accessor) {
+                        const char *cn = cname_decl(emit, bind_name);
+                        ind(emit); fprintf(emit->out, "int64_t v_%s = %s(t%d);\n",
+                                cn, accessor, subject);
+                    }
+                    if (arm->body) {
+                        if (arm->body->kind == NODE_BLOCK)
+                            emit_block(emit, arm->body);
+                        else {
+                            int val = emit_expr(emit, arm->body);
+                            if (has_result) {
+                                ind(emit); fprintf(emit->out, "t%d = t%d;\n", match_result, val);
+                            }
+                        }
+                    }
+                    emit->indent--;
                     first_arm = false;
                 } else if (is_tagged && arm->pattern && arm->pattern->kind == NODE_CALL_EXPR) {
                     const char *var_name = arm->pattern->call.name;

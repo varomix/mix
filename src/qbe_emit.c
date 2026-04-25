@@ -2216,6 +2216,8 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             const char *sty = qbe_type(subj_type);
             bool is_flt = subj_type && type_is_float(subj_type);
             bool is_tagged = subj_type && subj_type->kind == TYPE_SHAPE && subj_type->shape.is_tagged_union;
+            bool is_optional = subj_type && subj_type->kind == TYPE_OPTIONAL;
+            bool is_result = subj_type && subj_type->kind == TYPE_RESULT;
             int l_end3 = next_label(emit);
 
             // Only thread results when match has a resolved type (used as expression)
@@ -2235,6 +2237,17 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 tag_val = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l loadl %%t%d\n", tag_val, subject);
             }
+            // For optional/result, query the discriminator once.
+            int has_val = -1;
+            if (is_optional) {
+                has_val = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =l call $mix_optional_has(l %%t%d)\n",
+                        has_val, subject);
+            } else if (is_result) {
+                has_val = next_temp(emit);
+                fprintf(emit->out, "\t%%t%d =l call $mix_result_is_ok(l %%t%d)\n",
+                        has_val, subject);
+            }
 
             for (int i = 0; i < stmt->match_stmt.arm_count; i++) {
                 struct MatchArm *arm = &stmt->match_stmt.arms[i];
@@ -2252,6 +2265,66 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                         }
                     }
                     fprintf(emit->out, "\tjmp @L%d\n", l_end3);
+                } else if ((is_optional || is_result) && arm->pattern) {
+                    // Pattern arms over optional/result subjects:
+                    //   some(v) / ok(v)  → matches when discriminator == 1
+                    //   none / err(e)    → matches when discriminator == 0
+                    // The captured name (v or e) is bound by loading from the
+                    // appropriate runtime accessor.
+                    AstNode *pat = arm->pattern;
+                    bool match_truthy;     // true → take this arm when has_val != 0
+                    const char *bind_name = NULL;
+                    const char *accessor = NULL;
+                    if (pat->kind == NODE_NONE_LIT) {
+                        match_truthy = false;
+                    } else if (pat->kind == NODE_CALL_EXPR) {
+                        if (strcmp(pat->call.name, "some") == 0 ||
+                            strcmp(pat->call.name, "ok") == 0) {
+                            match_truthy = true;
+                            accessor = is_optional ? "mix_optional_get" : "mix_result_unwrap";
+                        } else if (strcmp(pat->call.name, "err") == 0) {
+                            match_truthy = false;
+                            accessor = "mix_result_unwrap_err";
+                        } else {
+                            // Unknown call-shaped pattern — fall through to next arm.
+                            continue;
+                        }
+                        if (pat->call.arg_count > 0 &&
+                            pat->call.args[0]->kind == NODE_IDENT)
+                            bind_name = pat->call.args[0]->ident.name;
+                    } else {
+                        continue;
+                    }
+
+                    int l_match = next_label(emit);
+                    int l_next = next_label(emit);
+                    if (match_truthy)
+                        fprintf(emit->out, "\tjnz %%t%d, @L%d, @L%d\n", has_val, l_match, l_next);
+                    else
+                        fprintf(emit->out, "\tjnz %%t%d, @L%d, @L%d\n", has_val, l_next, l_match);
+
+                    fprintf(emit->out, "@L%d\n", l_match);
+
+                    if (bind_name && accessor) {
+                        int v = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =l call $%s(l %%t%d)\n",
+                                v, accessor, subject);
+                        fprintf(emit->out, "\t%%v.%s =l copy %%t%d\n", bind_name, v);
+                    }
+
+                    if (arm->body) {
+                        if (arm->body->kind == NODE_BLOCK)
+                            emit_block(emit, arm->body);
+                        else {
+                            int val = emit_expr(emit, arm->body);
+                            if (has_result) {
+                                const char *rty = qbe_type(match_type);
+                                fprintf(emit->out, "\t%%t%d =%s copy %%t%d\n", match_result, rty, val);
+                            }
+                        }
+                    }
+                    fprintf(emit->out, "\tjmp @L%d\n", l_end3);
+                    fprintf(emit->out, "@L%d\n", l_next);
                 } else if (is_tagged && arm->pattern && arm->pattern->kind == NODE_CALL_EXPR) {
                     // Tagged union match: Circle(r) => ...
                     const char *var_name = arm->pattern->call.name;

@@ -115,6 +115,79 @@ void docstore_close(DocumentStore *store, const char *uri) {
     }
 }
 
+// Discard sema diagnostics from imported modules — they would point to lines
+// the user isn't editing and would clutter the editor.
+static void discard_diagnostic(DiagSeverity sev, SrcLoc loc, const char *msg, void *ud) {
+    (void)sev; (void)loc; (void)msg; (void)ud;
+}
+
+// Read entire file into a malloc'd buffer. Returns NULL on error.
+static char *read_file_contents(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size < 0) { fclose(f); return NULL; }
+    char *buf = malloc((size_t)size + 1);
+    if (!buf) { fclose(f); return NULL; }
+    size_t rd = fread(buf, 1, (size_t)size, f);
+    buf[rd] = '\0';
+    fclose(f);
+    return buf;
+}
+
+// Walk the main file's AST for NODE_USE_DECLs. For each, lex+parse+sema the
+// module file into the SHARED sema so its pub symbols become visible. Module
+// diagnostics are silently discarded.
+//
+// Recursion depth is shallow in practice (modules importing modules is
+// uncommon for MIX); we cap at 16 to avoid runaway includes.
+static void load_module_imports(AstNode *program, const char *filepath,
+                                Sema *sema, Arena *arena) {
+    static int depth = 0;
+    if (depth >= 16) return;
+    if (!program || program->kind != NODE_PROGRAM) return;
+
+    DiagnosticCallback prev_cb = NULL;
+    void *prev_ud = NULL;
+    errors_get_callback(&prev_cb, &prev_ud);
+    errors_set_callback(discard_diagnostic, NULL);
+
+    for (int i = 0; i < program->program.decl_count; i++) {
+        AstNode *decl = program->program.decls[i];
+        if (decl->kind != NODE_USE_DECL) continue;
+
+        char *mod_path = lsp_resolve_use_path(filepath, decl->use_decl.module_path);
+        if (!mod_path) continue;
+
+        char *src = read_file_contents(mod_path);
+        if (!src) { free(mod_path); continue; }
+
+        errors_set_source(src, mod_path);
+        Lexer lex = lexer_create(src, mod_path, arena);
+        lexer_tokenize(&lex);
+        Parser ps = parser_create(lex.tokens, lex.token_count, arena, mod_path);
+        AstNode *mod_prog = parser_parse(&ps);
+
+        if (mod_prog && mod_prog->kind == NODE_PROGRAM) {
+            // Recurse first so transitive pub symbols populate the symtab
+            // before this module's own sema runs.
+            depth++;
+            load_module_imports(mod_prog, mod_path, sema, arena);
+            depth--;
+            errors_set_source(src, mod_path);
+            sema_analyze(sema, mod_prog);
+        }
+
+        free(src);
+        free(lex.tokens);
+        free(mod_path);
+    }
+
+    errors_set_callback(prev_cb, prev_ud);
+}
+
 void document_analyze(LspDocument *doc) {
     // Destroy old arena, create fresh
     arena_destroy(&doc->doc_arena);
@@ -152,12 +225,22 @@ void document_analyze(LspDocument *doc) {
     // Sema — try even with parse errors for best-effort type info.
     //
     // We let sema diagnostics through to the editor so quick fixes like
-    // "did you mean" can offer code actions. Imports aren't loaded into
-    // sema yet (TODO: pre-analyze module ASTs into the same sema), so files
-    // that `use` external modules will see false-positive "undefined" errors
-    // on imported names. Acceptable trade-off until proper import loading.
+    // "did you mean" can offer code actions. Before analyzing the main
+    // file, we run sema on each `use`d module's AST into the SAME sema
+    // (with a discard callback so module diagnostics don't leak), so the
+    // main file's sema sees imported pub symbols. Stdlib resolution walks
+    // up the file's directory tree looking for `lib/std/`; if not found,
+    // the file falls back to single-file analysis (false positives for
+    // imports remain in that case).
     if (doc->ast && doc->ast->kind == NODE_PROGRAM) {
         Sema sema = sema_create(&doc->doc_arena);
+
+        load_module_imports(doc->ast, doc->filepath, &sema, &doc->doc_arena);
+
+        // Restore the publishing callback for the main file's analysis and
+        // re-set the source so error gutters point to the right buffer.
+        errors_set_callback(lsp_diagnostic_callback, &doc->diagnostics);
+        errors_set_source(doc->source, doc->filepath);
         sema_analyze(&sema, doc->ast);
 
         // Build symbol index from analyzed AST (includes imported modules)

@@ -32,14 +32,14 @@ This spec is the language as designed. Some sections describe features that ship
 | 1 | Variables | shipping |
 | 2 | Primitive Types | shipping |
 | 3 | Functions | shipping |
-| 4 | Control Flow | shipping (match exhaustiveness now warns) |
+| 4 | Control Flow | shipping (match exhaustiveness warns for tagged unions, optionals, and results) |
 | 5 | Shapes (Structs) | shipping (generic shapes: see §11) |
 | 6 | Collections | shipping (map/set keys: string-only) |
 | 7 | Strings | shipping |
-| 8 | Optionals | partial — `else` and `?` work; `some(v)/none` pattern syntax planned |
-| 9 | Error Handling | partial — `fail`, `?`, `else` work; `err(...)` pattern matching planned |
+| 8 | Optionals | shipping — `else`, `?`, `some(v)/none` pattern arms |
+| 9 | Error Handling | partial — `fail`, `?`, `else`, `ok(v)/err(e)` pattern arms work; nested `err(AppError.Variant(p))` patterns planned |
 | 10 | Memory — Zones | partial — `zone`/`defer` work; `->` move operator and `stack/heap` allocators planned |
-| 11 | Generics | partial — generic functions ship; generic shapes ship via type erasure for word-sized T (int/str/ptr/bool); `has` constraints parsed but not enforced |
+| 11 | Generics | partial — generic functions ship; generic shapes ship via type erasure for word-sized T (int/str/ptr/bool); `has` constraints enforced for operators and shape methods at call sites |
 | 12 | Concurrency | partial — `go`/`wait`/`shared` ship; `run`, `stream`/`yield`, `channel` planned |
 | 13 | Modules | partial — `use path.to.module`, aliases, `pub`, selective imports (`use m: a, b`) ship; external registry planned |
 | 14 | Compile-time | shipping (`@const`, `@os`, `@arch`, `@debug`, `@release`) |
@@ -505,8 +505,8 @@ find(list: [int], val: int) -> int?
 Handling an optional:
 
 ```mix
-// pattern match  *(planned — some/none arms not yet supported)*
-result = find(nums, 7)
+// pattern match  [shipping]
+match find(nums, 7)
     some(v) => print("found {v}")
     none    => print("not there")
 
@@ -552,12 +552,11 @@ read(path: str) -> str ~
 // provide a fallback  [shipping]
 data = read("file.txt") else "default"
 
-// catch specific variants — same pattern as match  *(planned — ok/err arms not yet supported)*
-data = read("file.txt")
-    ok(v)                            => v
-    err(AppError.NotFound(p))        => "default content"
-    err(AppError.PermissionDenied(p)) => panic("no access: {p}")
-    err(e)                           => panic("unknown: {e}")
+// pattern arms over a Result  [shipping for ok(v) / err(e); nested
+// err(AppError.Variant(p)) destructuring planned]
+match read("file.txt")
+    ok(v)  => print(v)
+    err(e) => panic("read failed")
 
 // propagate manually with ?  [shipping]
 data = read("file.txt")?
@@ -681,7 +680,7 @@ map(list: [T], f: T -> K) -> [K]
     [f(x) for x in list]
 ```
 
-### Constraints  *(partial — `has` is parsed but not enforced yet)*
+### Constraints  *(shipping — operators and shape methods checked at call sites)*
 
 ```mix
 @T has area

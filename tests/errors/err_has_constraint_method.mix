@@ -1,0 +1,14 @@
+// ERROR: does not satisfy constraint 'area'
+shape Square
+    side: float
+
+    side_length() -> float
+        side
+
+@T has area
+total(shapes: [T]) -> float
+    0.0
+
+main()
+    sqs = [Square(side: 3.0)]
+    total(sqs)

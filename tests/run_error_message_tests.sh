@@ -150,6 +150,56 @@ fi
 
 rm -f /tmp/mix_nonexh.mix /tmp/mix_exh_wc.mix
 
+# --- Exhaustiveness for optional/result patterns ---
+cat > /tmp/mix_exh_opt.mix << 'MIXEOF'
+make_some() -> int?
+    42
+
+main()
+    match make_some()
+        some(v) => print(v)
+MIXEOF
+output=$("$MIXC" /tmp/mix_exh_opt.mix -o /tmp/mix_errtest_bin 2>&1)
+
+echo "$output" | grep -q "non-exhaustive match on optional: 'none' arm missing" \
+    && ok "exhaustive optional: warns on missing 'none'" \
+    || ng "exhaustive optional: warns on missing 'none'"
+
+cat > /tmp/mix_exh_res.mix << 'MIXEOF'
+read(s: str) -> int ~
+    if s == "ok"
+        done 1
+    fail "no"
+
+main()
+    match read("ok")
+        ok(v) => print(v)
+MIXEOF
+output=$("$MIXC" /tmp/mix_exh_res.mix -o /tmp/mix_errtest_bin 2>&1)
+
+echo "$output" | grep -q "non-exhaustive match on result: 'err' arm missing" \
+    && ok "exhaustive result: warns on missing 'err'" \
+    || ng "exhaustive result: warns on missing 'err'"
+
+cat > /tmp/mix_exh_opt_wc.mix << 'MIXEOF'
+make_some() -> int?
+    42
+
+main()
+    match make_some()
+        some(v) => print(v)
+        _ => print(0)
+MIXEOF
+output=$("$MIXC" /tmp/mix_exh_opt_wc.mix -o /tmp/mix_errtest_bin 2>&1)
+
+if echo "$output" | grep -q "non-exhaustive match"; then
+    ng "exhaustive optional: wildcard suppresses warning"
+else
+    ok "exhaustive optional: wildcard suppresses warning"
+fi
+
+rm -f /tmp/mix_exh_opt.mix /tmp/mix_exh_res.mix /tmp/mix_exh_opt_wc.mix
+
 # --- Both backends produce same error for type mismatch ---
 output_qbe=$("$MIXC" tests/errors/err_str_to_int_param.mix -o /tmp/mix_errtest_bin 2>&1)
 output_c=$(MIX_BACKEND=c "$MIXC" tests/errors/err_str_to_int_param.mix -o /tmp/mix_errtest_bin 2>&1)

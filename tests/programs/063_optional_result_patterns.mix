@@ -1,0 +1,30 @@
+// Pattern arms over optional and result subjects.
+// `some(v)` / `none` for optionals, `ok(v)` / `err(e)` for results.
+
+make_some() -> int?
+    42
+
+make_none() -> int?
+    none
+
+read_age(s: str) -> int ~
+    if s == "alice"
+        done 30
+    fail "unknown"
+
+main()
+    match make_some()
+        some(v) => print(v)
+        none    => print(-1)
+
+    match make_none()
+        some(v) => print(v)
+        none    => print(-1)
+
+    match read_age("alice")
+        ok(v)  => print(v)
+        err(e) => print(-2)
+
+    match read_age("bob")
+        ok(v)  => print(v)
+        err(e) => print(-2)

@@ -127,6 +127,98 @@ static const char *type_name(Arena *a, MixType *t) {
 }
 
 /* Check if two types are compatible (same kind + matching inner types) */
+// Does `t` satisfy a `has` constraint? For operator constraints (+, -, *, /,
+// %, ==, !=, <, >, <=, >=) we know the built-in type rules. For named
+// method constraints (e.g. `area`, `len`) we look for a matching shape
+// method via `Shape_method` in the symbol table.
+static bool type_satisfies_constraint(MixType *t, const char *cons, SymTab *st) {
+    if (!t || !cons) return true;
+    if (t->kind == TYPE_GENERIC || t->kind == TYPE_INFER) return true;
+
+    bool is_op = (cons[0] == '+' || cons[0] == '-' || cons[0] == '*' ||
+                  cons[0] == '/' || cons[0] == '%' || cons[0] == '<' ||
+                  cons[0] == '>' || cons[0] == '=' || cons[0] == '!');
+    if (is_op) {
+        bool eq_like = strcmp(cons, "==") == 0 || strcmp(cons, "!=") == 0;
+        bool ord_like = strcmp(cons, "<") == 0 || strcmp(cons, ">") == 0 ||
+                         strcmp(cons, "<=") == 0 || strcmp(cons, ">=") == 0;
+        bool plus = strcmp(cons, "+") == 0;
+        // Numeric ops on numbers
+        if (type_is_numeric(t)) return true;
+        // == / != / < / > / <= / >= / + on strings
+        if (t->kind == TYPE_STR && (eq_like || ord_like || plus)) return true;
+        // == / != on bools and pointers
+        if (eq_like && (t->kind == TYPE_BOOL || t->kind == TYPE_PTR)) return true;
+        // User shape: look for the matching op_* method
+        if (t->kind == TYPE_SHAPE) {
+            const char *m = NULL;
+            if (plus) m = "op_add";
+            else if (strcmp(cons, "-") == 0) m = "op_sub";
+            else if (strcmp(cons, "*") == 0) m = "op_mul";
+            else if (strcmp(cons, "/") == 0) m = "op_div";
+            else if (strcmp(cons, "%") == 0) m = "op_mod";
+            else if (strcmp(cons, "==") == 0) m = "op_eq";
+            else if (strcmp(cons, "!=") == 0) m = "op_neq";
+            else if (strcmp(cons, "<") == 0)  m = "op_lt";
+            else if (strcmp(cons, ">") == 0)  m = "op_gt";
+            else if (strcmp(cons, "<=") == 0) m = "op_lte";
+            else if (strcmp(cons, ">=") == 0) m = "op_gte";
+            if (m) {
+                char mangled[256];
+                snprintf(mangled, sizeof(mangled), "%s_%s", t->shape.name, m);
+                Symbol *sym = symtab_lookup(st, mangled);
+                if (sym && sym->type && sym->type->kind == TYPE_FUNC) return true;
+            }
+        }
+        return false;
+    }
+
+    // Named method constraint (e.g. `area`, `len`). For shapes, check methods.
+    if (t->kind == TYPE_SHAPE) {
+        char mangled[256];
+        snprintf(mangled, sizeof(mangled), "%s_%s", t->shape.name, cons);
+        Symbol *sym = symtab_lookup(st, mangled);
+        if (sym && sym->type && sym->type->kind == TYPE_FUNC) return true;
+    }
+    // Built-in `len` on str/list/map/set
+    if (strcmp(cons, "len") == 0) {
+        if (t->kind == TYPE_STR || t->kind == TYPE_LIST ||
+            t->kind == TYPE_MAP || t->kind == TYPE_SET) return true;
+    }
+    return false;
+}
+
+// Pretty-print a constraint name for diagnostics (operators stay as-is,
+// named methods get a `()` suffix to read clearly).
+static const char *constraint_label(const char *c) {
+    if (!c) return "?";
+    if (c[0] >= 'a' && c[0] <= 'z') {
+        // method name — keep raw; caller wraps in quotes
+        return c;
+    }
+    return c;
+}
+
+// Find the concrete type that should bind to `T` (TYPE_GENERIC) by scanning
+// param/arg pairs. Looks for both bare `T` and `[T]` patterns.
+static MixType *infer_generic_arg(MixType *func_type, AstNode **args, int arg_count) {
+    if (!func_type) return NULL;
+    int n = func_type->func.param_count < arg_count
+        ? func_type->func.param_count : arg_count;
+    for (int i = 0; i < n; i++) {
+        MixType *pt = func_type->func.param_types[i];
+        MixType *at = args[i]->resolved_type;
+        if (!pt || !at) continue;
+        if (pt->kind == TYPE_GENERIC) return at;
+        if (pt->kind == TYPE_LIST && pt->list.elem_type &&
+            pt->list.elem_type->kind == TYPE_GENERIC &&
+            at->kind == TYPE_LIST && at->list.elem_type) {
+            return at->list.elem_type;
+        }
+    }
+    return NULL;
+}
+
 static bool types_compatible(MixType *expected, MixType *actual) {
     if (!expected || !actual) return true;  /* unknown types — don't error */
     if (expected->kind == TYPE_INFER || actual->kind == TYPE_INFER) return true;
@@ -543,6 +635,23 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                                   i + 1, expr->call.name,
                                   type_name(sema->arena, expected),
                                   type_name(sema->arena, actual));
+                    }
+                }
+                // Enforce `has` constraints on the inferred type parameter.
+                // Only applies to generic functions (constraint_count > 0).
+                if (ftype->func.constraint_count > 0) {
+                    MixType *t_concrete = infer_generic_arg(
+                        ftype, expr->call.args, expr->call.arg_count);
+                    if (t_concrete) {
+                        for (int ci = 0; ci < ftype->func.constraint_count; ci++) {
+                            const char *c = ftype->func.constraints[ci];
+                            if (!type_satisfies_constraint(t_concrete, c, &sema->symtab)) {
+                                mix_error(expr->loc,
+                                    "type %s does not satisfy constraint '%s' on '%s'",
+                                    type_name(sema->arena, t_concrete),
+                                    constraint_label(c), expr->call.name);
+                            }
+                        }
                     }
                 }
             }
@@ -1016,18 +1125,61 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
         case NODE_MATCH_STMT: {
             MixType *subj_type = resolve_expr(sema, stmt->match_stmt.subject);
             bool is_tagged = subj_type && subj_type->kind == TYPE_SHAPE && subj_type->shape.is_tagged_union;
+            bool is_optional = subj_type && subj_type->kind == TYPE_OPTIONAL;
+            bool is_result = subj_type && subj_type->kind == TYPE_RESULT;
 
             for (int i2 = 0; i2 < stmt->match_stmt.arm_count; i2++) {
                 struct MatchArm *arm_s = &stmt->match_stmt.arms[i2];
                 AstNode *body = arm_s->body;
+                AstNode *pat = arm_s->pattern;
 
-                if (is_tagged && arm_s->pattern && arm_s->pattern->kind == NODE_CALL_EXPR) {
+                // some(v) / none / ok(v) / err(e) patterns bind a fresh name
+                // visible inside the body. The pattern itself is not type-
+                // checked as a regular expression (would resolve `some` as
+                // an undefined identifier).
+                bool is_capture_pat = false;
+                if (pat) {
+                    if (is_optional &&
+                        ((pat->kind == NODE_CALL_EXPR && strcmp(pat->call.name, "some") == 0) ||
+                         pat->kind == NODE_NONE_LIT))
+                        is_capture_pat = true;
+                    else if (is_result && pat->kind == NODE_CALL_EXPR &&
+                             (strcmp(pat->call.name, "ok") == 0 ||
+                              strcmp(pat->call.name, "err") == 0))
+                        is_capture_pat = true;
+                }
+
+                if (is_capture_pat) {
+                    symtab_push_scope(&sema->symtab);
+                    if (pat->kind == NODE_CALL_EXPR && pat->call.arg_count > 0 &&
+                        pat->call.args[0]->kind == NODE_IDENT) {
+                        const char *bind_name = pat->call.args[0]->ident.name;
+                        MixType *bind_type;
+                        if (is_optional)
+                            bind_type = subj_type->optional.inner;
+                        else if (strcmp(pat->call.name, "ok") == 0)
+                            bind_type = subj_type->result.ok_type;
+                        else
+                            // err carries the user's error value as a generic int
+                            bind_type = make_type(sema->arena, TYPE_INT);
+                        symtab_insert(&sema->symtab, bind_name, bind_type, false);
+                    }
+                    if (body) {
+                        if (body->kind == NODE_BLOCK) {
+                            for (int k = 0; k < body->block.stmt_count; k++)
+                                analyze_stmt(sema, body->block.stmts[k]);
+                        } else {
+                            resolve_expr(sema, body);
+                        }
+                    }
+                    symtab_pop_scope(&sema->symtab);
+                } else if (is_tagged && pat && pat->kind == NODE_CALL_EXPR) {
                     // Variant pattern: Circle(r) → add r to scope for the body
-                    ShapeVariant *sv = type_find_variant(subj_type, arm_s->pattern->call.name);
+                    ShapeVariant *sv = type_find_variant(subj_type, pat->call.name);
                     symtab_push_scope(&sema->symtab);
                     if (sv) {
-                        for (int k = 0; k < arm_s->pattern->call.arg_count && k < sv->field_count; k++) {
-                            AstNode *binding = arm_s->pattern->call.args[k];
+                        for (int k = 0; k < pat->call.arg_count && k < sv->field_count; k++) {
+                            AstNode *binding = pat->call.args[k];
                             if (binding->kind == NODE_IDENT) {
                                 symtab_insert(&sema->symtab, binding->ident.name,
                                               sv->fields[k].type, false);
@@ -1044,7 +1196,7 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                     }
                     symtab_pop_scope(&sema->symtab);
                 } else {
-                    if (arm_s->pattern) resolve_expr(sema, arm_s->pattern);
+                    if (pat) resolve_expr(sema, pat);
                     if (body) {
                         if (body->kind == NODE_BLOCK) analyze_block(sema, body);
                         else resolve_expr(sema, body);
@@ -1094,6 +1246,38 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                             break;
                         }
                     }
+                }
+            }
+            // Exhaustiveness for optional / result subjects: both branches
+            // (some+none / ok+err) must be present, or there must be a `_`.
+            if (is_optional || is_result) {
+                bool has_wildcard = false;
+                bool saw_truthy = false;     // some / ok
+                bool saw_falsy = false;      // none / err
+                for (int ai = 0; ai < stmt->match_stmt.arm_count; ai++) {
+                    struct MatchArm *a = &stmt->match_stmt.arms[ai];
+                    if (a->is_wildcard) { has_wildcard = true; continue; }
+                    AstNode *pat = a->pattern;
+                    if (!pat) continue;
+                    if (pat->kind == NODE_NONE_LIT) saw_falsy = true;
+                    else if (pat->kind == NODE_CALL_EXPR) {
+                        if (strcmp(pat->call.name, "some") == 0 ||
+                            strcmp(pat->call.name, "ok") == 0)
+                            saw_truthy = true;
+                        else if (strcmp(pat->call.name, "err") == 0)
+                            saw_falsy = true;
+                    }
+                }
+                if (!has_wildcard && !(saw_truthy && saw_falsy)) {
+                    const char *kind = is_optional ? "optional" : "result";
+                    const char *missing = saw_truthy
+                        ? (is_optional ? "none" : "err")
+                        : (is_optional ? "some" : "ok");
+                    mix_warning(stmt->loc,
+                        "non-exhaustive match on %s: '%s' arm missing", kind, missing);
+                    mix_note(stmt->loc,
+                        "add a '%s%s' arm or '_' wildcard to silence this warning",
+                        missing, strcmp(missing, "none") == 0 ? "" : "(...)");
                 }
             }
             break;
@@ -1223,6 +1407,13 @@ static void register_fn(Sema *sema, AstNode *fn) {
                 fn->fn_decl.params[i].type->resolved_type = ptype;
             }
         }
+    }
+
+    // Carry generic constraints onto the function type so call sites can
+    // enforce them without walking back to the AST.
+    if (fn->fn_decl.constraint_count > 0) {
+        func_type->func.constraints = fn->fn_decl.constraints;
+        func_type->func.constraint_count = fn->fn_decl.constraint_count;
     }
 
     symtab_insert(&sema->symtab, fn->fn_decl.name, func_type, false);

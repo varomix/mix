@@ -1288,6 +1288,75 @@ static bool parse_did_you_mean(const char *msg, char *out, int out_size) {
     return true;
 }
 
+// Parse "non-exhaustive match on 'Shape': variant 'Y' not handled".
+// Returns true with `out_variant` filled. `out_kind` is set to "variant".
+static bool parse_nonexh_variant(const char *msg, char *out_variant, int out_size) {
+    const char *needle = "variant '";
+    const char *p = strstr(msg, needle);
+    if (!p) return false;
+    p += strlen(needle);
+    int i = 0;
+    while (*p && *p != '\'' && i < out_size - 1) out_variant[i++] = *p++;
+    if (*p != '\'') return false;
+    out_variant[i] = '\0';
+    return true;
+}
+
+// Parse "non-exhaustive match on optional: 'none' arm missing" / similar
+// for "result: 'err' arm missing". Returns the missing arm name.
+static bool parse_nonexh_opt_or_result(const char *msg, char *out_name, int out_size) {
+    if (!strstr(msg, "non-exhaustive match")) return false;
+    const char *p = strstr(msg, ": '");
+    if (!p) return false;
+    p += 3;
+    int i = 0;
+    while (*p && *p != '\'' && i < out_size - 1) out_name[i++] = *p++;
+    if (*p != '\'') return false;
+    out_name[i] = '\0';
+    return true;
+}
+
+// Look at a line in the source by 0-based line number; returns the indent
+// (number of leading spaces) and a pointer to start of content.
+// Returns -1 if line doesn't exist.
+static int line_indent(const char *src, int line0) {
+    int cur = 0;
+    const char *p = src;
+    while (*p && cur < line0) { if (*p++ == '\n') cur++; }
+    if (!*p && cur < line0) return -1;
+    int indent = 0;
+    while (*p == ' ') { indent++; p++; }
+    return indent;
+}
+
+// Find the end of a match block: the line that has indent <= the match
+// keyword's indent, OR end of file. Returns the 0-based line just AFTER
+// the last arm. The arm-body indent is returned via `arm_indent_out`.
+static int find_match_block_end(const char *src, int match_line0, int *arm_indent_out) {
+    int match_indent = line_indent(src, match_line0);
+    if (match_indent < 0) return match_line0 + 1;
+    // Arms are at match_indent + 4. Walk lines until we find one that
+    // isn't part of the match block.
+    if (arm_indent_out) *arm_indent_out = match_indent + 4;
+    int line = match_line0 + 1;
+    int last_arm_line = match_line0;
+    while (1) {
+        int ind = line_indent(src, line);
+        if (ind < 0) break;            // EOF
+        if (ind == 0) {
+            // Blank or zero-indent: check if blank (skip) or real content
+            // at a lower level.
+            // Quick blank check:
+            int cur = 0; const char *p = src;
+            while (*p && cur < line) { if (*p++ == '\n') cur++; }
+            if (*p == '\n' || *p == '\0') { line++; continue; }
+        }
+        if (ind > match_indent) { last_arm_line = line; line++; continue; }
+        break;
+    }
+    return last_arm_line + 1;
+}
+
 // Echo back a diagnostic record so the editor associates the action with
 // the correct underline. We reconstruct from the fields we care about
 // rather than serializing the whole JsonValue.
@@ -1317,6 +1386,48 @@ static void emit_diag_echo(JsonWriter *w, JsonValue *d) {
           jw_object_end(w);
       }
       if (msg) { jw_key(w, "message"); jw_string(w, msg); }
+    jw_object_end(w);
+}
+
+// Emit a CodeAction whose edit inserts text at a 0-based (line, col).
+// LSP represents inserts as a TextEdit with start == end.
+static void emit_insert_action(JsonWriter *w, const char *title, const char *uri,
+                               int line, int col, const char *new_text,
+                               JsonValue *src_diag) {
+    jw_object_start(w);
+      jw_key(w, "title"); jw_string(w, title);
+      jw_key(w, "kind"); jw_string(w, "quickfix");
+      if (src_diag) {
+          jw_key(w, "diagnostics");
+          jw_array_start(w);
+            emit_diag_echo(w, src_diag);
+          jw_array_end(w);
+      }
+      jw_key(w, "edit");
+      jw_object_start(w);
+        jw_key(w, "changes");
+        jw_object_start(w);
+          jw_key(w, uri);
+          jw_array_start(w);
+            jw_object_start(w);
+              jw_key(w, "range");
+              jw_object_start(w);
+                jw_key(w, "start");
+                jw_object_start(w);
+                  jw_key(w, "line"); jw_int(w, line);
+                  jw_key(w, "character"); jw_int(w, col);
+                jw_object_end(w);
+                jw_key(w, "end");
+                jw_object_start(w);
+                  jw_key(w, "line"); jw_int(w, line);
+                  jw_key(w, "character"); jw_int(w, col);
+                jw_object_end(w);
+              jw_object_end(w);
+              jw_key(w, "newText"); jw_string(w, new_text);
+            jw_object_end(w);
+          jw_array_end(w);
+        jw_object_end(w);
+      jw_object_end(w);
     jw_object_end(w);
 }
 
@@ -1382,29 +1493,78 @@ static void handle_code_action(LspServer *server, int64_t id, JsonValue *params)
         const char *msg = json_get_string(d, "message");
         if (!msg) continue;
 
-        char suggestion[128];
-        if (!parse_did_you_mean(msg, suggestion, sizeof(suggestion))) continue;
-
-        // Diagnostic ranges from the LSP are 1-char wide (see
-        // lsp_diagnostics.c). Find the identifier token at that position to
-        // get the actual word length we need to replace.
         JsonValue *range = json_get(d, "range");
         JsonValue *start = range ? json_get(range, "start") : NULL;
         if (!start) continue;
         int line0 = (int)json_get_int(start, "line");
         int col0  = (int)json_get_int(start, "character");
-        Token *tok = tokens_find_at(doc->tokens, doc->token_count,
-                                    line0 + 1, col0 + 1);
-        if (!tok || (tok->kind != TOK_IDENT && tok->kind != TOK_IDENT_MUT))
-            continue;
 
-        char title[256];
-        snprintf(title, sizeof(title), "Replace with '%s'", suggestion);
-        emit_quickfix(&w, title, uri,
-                      tok->line - 1,
-                      tok->col - 1,
-                      tok->col - 1 + tok->length,
-                      suggestion, d);
+        // Quick fix #1: "did you mean 'X'?" -> Replace with 'X'.
+        char suggestion[128];
+        if (parse_did_you_mean(msg, suggestion, sizeof(suggestion))) {
+            Token *tok = tokens_find_at(doc->tokens, doc->token_count,
+                                        line0 + 1, col0 + 1);
+            if (!tok || (tok->kind != TOK_IDENT && tok->kind != TOK_IDENT_MUT))
+                continue;
+            char title[256];
+            snprintf(title, sizeof(title), "Replace with '%s'", suggestion);
+            emit_quickfix(&w, title, uri,
+                          tok->line - 1,
+                          tok->col - 1,
+                          tok->col - 1 + tok->length,
+                          suggestion, d);
+            continue;
+        }
+
+        // Quick fix #2: tagged-union exhaustiveness — "variant 'X' not
+        // handled". Insert a stub arm at the end of the match block.
+        char variant[128];
+        if (parse_nonexh_variant(msg, variant, sizeof(variant))) {
+            int arm_indent = 0;
+            int insert_line = find_match_block_end(doc->source, line0, &arm_indent);
+            // Build "<indent>X(...) => 0\n" or "<indent>X => 0\n" — we
+            // can't know the field count from the diagnostic, so use a
+            // safe placeholder with a wildcard pattern that the user
+            // edits.
+            char text[256];
+            int n = snprintf(text, sizeof(text), "%*s%s(_) => 0\n",
+                             arm_indent, "", variant);
+            (void)n;
+            char title[256];
+            snprintf(title, sizeof(title), "Add '%s' arm", variant);
+            emit_insert_action(&w, title, uri, insert_line, 0, text, d);
+
+            // Also offer the wildcard option.
+            char wc[128];
+            snprintf(wc, sizeof(wc), "%*s_ => 0\n", arm_indent, "");
+            emit_insert_action(&w, "Add '_' wildcard arm", uri,
+                               insert_line, 0, wc, d);
+            continue;
+        }
+
+        // Quick fix #3: optional/result exhaustiveness — "'none' arm
+        // missing" / "'err' arm missing".
+        char missing[64];
+        if (parse_nonexh_opt_or_result(msg, missing, sizeof(missing))) {
+            int arm_indent = 0;
+            int insert_line = find_match_block_end(doc->source, line0, &arm_indent);
+            char text[256];
+            if (strcmp(missing, "none") == 0) {
+                snprintf(text, sizeof(text), "%*snone => 0\n", arm_indent, "");
+            } else if (strcmp(missing, "err") == 0) {
+                snprintf(text, sizeof(text), "%*serr(e) => 0\n", arm_indent, "");
+            } else if (strcmp(missing, "some") == 0) {
+                snprintf(text, sizeof(text), "%*ssome(v) => 0\n", arm_indent, "");
+            } else if (strcmp(missing, "ok") == 0) {
+                snprintf(text, sizeof(text), "%*sok(v) => 0\n", arm_indent, "");
+            } else {
+                continue;
+            }
+            char title[64];
+            snprintf(title, sizeof(title), "Add '%s' arm", missing);
+            emit_insert_action(&w, title, uri, insert_line, 0, text, d);
+            continue;
+        }
     }
 
     jw_array_end(&w);

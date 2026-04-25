@@ -318,6 +318,50 @@ static int format_tokens(Token *toks, int n_toks, FmtCommentList *cl, FILE *out)
             continue;
         }
 
+        // Mid-expression comments. The lexer drops `// ...` and (inside
+        // brackets) suppresses NEWLINEs, so a comment between two tokens
+        // on different source lines would normally vanish. When that
+        // happens, emit the comment(s) inline with line breaks, padding
+        // to roughly the original column.
+        while (line_has_content && comment_idx < cl->count &&
+               cl->items[comment_idx].line < t->line) {
+            FmtComment *c = &cl->items[comment_idx];
+            if (c->standalone) {
+                // Standalone comment between expressions — emit on its own
+                // line, matching the original column.
+                fout_newline(&o);
+                int spaces = c->col - 1;
+                if (spaces < o.indent_level * 4) spaces = o.indent_level * 4;
+                for (int s = 0; s < spaces; s++) fputc(' ', o.out);
+                fputs(c->text, o.out);
+                o.at_line_start = false;
+            } else {
+                // Trailing comment glued to the previous source line.
+                fputs("  ", o.out);
+                fputs(c->text, o.out);
+            }
+            last_src_line = c->line;
+            comment_idx++;
+        }
+        // If we emitted a mid-expression comment, the current token
+        // should start on a fresh line at its source column.
+        if (line_has_content && last_src_line > 0 && t->line > last_src_line) {
+            fout_newline(&o);
+            // Indent to match the source column of this token.
+            int spaces = t->col - 1;
+            if (spaces < o.indent_level * 4) spaces = o.indent_level * 4;
+            for (int s = 0; s < spaces; s++) fputc(' ', o.out);
+            o.at_line_start = false;
+            line_has_content = true;
+            // Skip the normal space-after logic below by skipping past it.
+            emit_token_text(&o, t);
+            last_emitted_line = t->line;
+            last_src_line = t->line;
+            prev_prev_kind = prev_kind;
+            prev_kind = t->kind;
+            continue;
+        }
+
         // Preserve user-intentional blank lines: if the original had a
         // gap between the previous emission and this token, emit one
         // blank line. (No auto-blank between adjacent top-level decls —

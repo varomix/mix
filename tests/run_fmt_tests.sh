@@ -77,6 +77,27 @@ echo "$out" | grep -q 'set{"a"' \
     || ng "fmt: set literal binds keyword to {"
 rm -f /tmp/mix_typector.mix
 
+# --- Mid-expression comments survive across line breaks inside brackets ---
+cat > /tmp/mix_midcomm.mix << 'MIXEOF'
+sumof(a: int, b: int, c: int) -> int
+    a + b + c
+
+main()
+    print(sumof(1,
+                // doc for b
+                2,
+                3))
+MIXEOF
+out=$("$MIXC" fmt /tmp/mix_midcomm.mix)
+echo "$out" | grep -q "// doc for b" \
+    && ok "fmt: mid-expression comment preserved" \
+    || ng "fmt: mid-expression comment preserved"
+out2=$(echo "$out" | "$MIXC" fmt)
+[ "$out" = "$out2" ] \
+    && ok "fmt: mid-expression comment idempotent" \
+    || ng "fmt: mid-expression comment idempotent"
+rm -f /tmp/mix_midcomm.mix
+
 # --- Real-world: stdlib + examples must already be canonically formatted ---
 "$MIXC" fmt --check lib/std/ > /dev/null 2>&1
 [ "$?" = "0" ] && ok "fmt: stdlib is canonically formatted" \

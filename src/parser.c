@@ -138,6 +138,26 @@ static AstNode *parse_type(Parser *p) {
         node->type_name.type_kind = TOK_INT;
     }
 
+    // Generic instantiation: Name[T1, T2, ...]. Only attempt for IDENT
+    // (named) types, not keywords like `int`.
+    if (node->type_name.type_kind == TOK_IDENT && check(p, TOK_LBRACKET)) {
+        advance_tok(p); // skip '['
+        AstNode **args = NULL;
+        int n = 0, cap = 0;
+        do {
+            if (n >= cap) {
+                cap = cap ? cap * 2 : 4;
+                AstNode **na = arena_alloc(p->arena, sizeof(AstNode*) * cap);
+                if (args) memcpy(na, args, sizeof(AstNode*) * n);
+                args = na;
+            }
+            args[n++] = parse_type(p);
+        } while (match_tok(p, TOK_COMMA));
+        expect(p, TOK_RBRACKET);
+        node->type_name.type_args = args;
+        node->type_name.type_arg_count = n;
+    }
+
     // Check for optional postfix: T?
     if (match_tok(p, TOK_QUESTION)) {
         AstNode *opt = ast_new(p->arena, NODE_TYPE_OPTIONAL, loc);
@@ -452,6 +472,28 @@ static AstNode *parse_primary(Parser *p) {
                 return node;
             }
 
+            // Generic shape constructor: PascalCase[Type, ...](args).
+            // Disambiguate from `nums[0]` (index) by requiring the name to
+            // start with an uppercase letter — MIX convention is PascalCase
+            // for shapes, snake_case for values.
+            AstNode **type_args = NULL;
+            int type_arg_count = 0;
+            if (check(p, TOK_LBRACKET) &&
+                name[0] >= 'A' && name[0] <= 'Z') {
+                advance_tok(p); // skip '['
+                int cap = 0;
+                do {
+                    if (type_arg_count >= cap) {
+                        cap = cap ? cap * 2 : 4;
+                        AstNode **na = arena_alloc(p->arena, sizeof(AstNode*) * cap);
+                        if (type_args) memcpy(na, type_args, sizeof(AstNode*) * type_arg_count);
+                        type_args = na;
+                    }
+                    type_args[type_arg_count++] = parse_type(p);
+                } while (match_tok(p, TOK_COMMA));
+                expect(p, TOK_RBRACKET);
+            }
+
             // Check for function call or shape literal: ident(
             if (check(p, TOK_LPAREN)) {
                 advance_tok(p); // skip (
@@ -470,6 +512,8 @@ static AstNode *parse_primary(Parser *p) {
                     // Parse shape literal
                     AstNode *node = ast_new(p->arena, NODE_SHAPE_LIT, loc);
                     node->shape_lit.shape_name = name;
+                    node->shape_lit.type_args = type_args;
+                    node->shape_lit.type_arg_count = type_arg_count;
 
                     char **field_names = NULL;
                     AstNode **field_values = NULL;

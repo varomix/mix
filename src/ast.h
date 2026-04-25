@@ -389,12 +389,17 @@ struct AstNode {
             int arg_count;
         } method_call;
 
-        // NODE_SHAPE_LIT  (Vec2(x: 1.0, y: 2.0))
+        // NODE_SHAPE_LIT  (Vec2(x: 1.0, y: 2.0)  or  Stack[int](items: []))
         struct {
             char *shape_name;
             char **field_names;
             AstNode **field_values;
             int field_count;
+            // Optional generic type args from `Name[T1, T2]`. Each entry is
+            // a NODE_TYPE_NAME / NODE_TYPE_PTR / etc. Sema instantiates the
+            // template using these.
+            AstNode **type_args;
+            int type_arg_count;
         } shape_lit;
 
         // NODE_FIELD_ASSIGN (obj.field = expr)
@@ -413,7 +418,13 @@ struct AstNode {
         } index_assign;
 
         // NODE_TYPE_NAME
-        struct { char *name; TokenKind type_kind; } type_name;
+        struct {
+            char *name;
+            TokenKind type_kind;
+            // Optional generic instantiation args (`Stack[int]` -> 1 arg).
+            AstNode **type_args;
+            int type_arg_count;
+        } type_name;
 
         // NODE_TYPE_PTR
         struct { AstNode *base_type; } type_ptr;

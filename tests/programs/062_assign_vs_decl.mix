@@ -1,0 +1,21 @@
+// Regression: `name = expr` after `name! = ...` is an assignment, not a
+// shadowing redeclaration. Previously this was parsed as VAR_DECL, which
+// caused QBE to clobber the alloc and the C backend to leak the inner
+// "shadow" past its block.
+
+acc(n: int) -> int
+    s! = 0
+    for i in 0..n
+        s = s + i
+    s
+
+abs_int(x: int) -> int
+    r! = x
+    if r < 0
+        r = -r
+    r
+
+main()
+    print(acc(10))      // 0+1+...+9 = 45
+    print(abs_int(-7))  // 7
+    print(abs_int(7))   // 7

@@ -11,15 +11,13 @@ pub next_int() -> int
 pub next_float() -> float
     random_float()
 
-abs_int(n: int) -> int
-    if n < 0
-        done -n
-    n
-
 // Uniform integer in [lo, hi). Caller ensures hi > lo.
 pub range(lo: int, hi: int) -> int
     span = hi - lo
-    lo + abs_int(random_int()) % span
+    raw! = random_int()
+    if raw < 0
+        raw = -raw
+    lo + raw % span
 
 // Coin flip
 pub coin_flip() -> bool

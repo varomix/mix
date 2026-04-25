@@ -2,6 +2,9 @@ CC = cc
 CFLAGS = -Wall -Wextra -std=c11 -g -O0
 QBE = qbe
 
+# Stamped into the binary so `mix --help` / `mix --version` shows the build date.
+BUILD_DATE := $(shell date +%Y-%m-%d)
+
 SRC_DIR = src
 BUILD_DIR = build
 
@@ -32,6 +35,11 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/lsp_%.o: $(SRC_DIR)/lsp/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# main.o is always rebuilt so MIX_VERSION_DATE tracks today's build.
+.PHONY: $(BUILD_DIR)/main.o
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -DMIX_VERSION_DATE='"$(BUILD_DATE)"' -c $< -o $@
 
 $(BIN): $(FRONTEND_OBJS) $(COMPILER_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@

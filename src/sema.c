@@ -904,6 +904,25 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
 
     switch (stmt->kind) {
         case NODE_VAR_DECL: {
+            // Parser produces VAR_DECL for any `name = expr`. If `name` is
+            // already declared as mutable in an enclosing scope and this
+            // VAR_DECL doesn't add `!` or a type annotation, it is really
+            // an assignment — rewrite it. This makes `s! = 0; ...; s = s + 1`
+            // work as expected and avoids spurious shadowing in both backends.
+            if (!stmt->var_decl.is_mutable && !stmt->var_decl.type_ann) {
+                Symbol *existing = symtab_lookup(&sema->symtab, stmt->var_decl.name);
+                if (existing && existing->is_mutable) {
+                    AstNode *init = stmt->var_decl.init_expr;
+                    char *name = stmt->var_decl.name;
+                    stmt->kind = NODE_ASSIGN;
+                    stmt->assign.name = name;
+                    stmt->assign.op = TOK_EQ;
+                    stmt->assign.value = init;
+                    analyze_stmt(sema, stmt);
+                    break;
+                }
+            }
+
             MixType *type;
             if (stmt->var_decl.type_ann) {
                 type = resolve_type_node(sema, stmt->var_decl.type_ann);

@@ -2,7 +2,12 @@
 #define MIX_H
 
 #define MIX_VERSION "0.1.0"
-#define MIX_VERSION_DATE "2026-03-04"
+/* MIX_VERSION_DATE is normally injected by the Makefile via
+ * -DMIX_VERSION_DATE="..." so it tracks the build date. The fallback
+ * below only kicks in when building outside the Makefile. */
+#ifndef MIX_VERSION_DATE
+#define MIX_VERSION_DATE "0000-00-00"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>

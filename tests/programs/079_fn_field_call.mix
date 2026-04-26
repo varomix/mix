@@ -1,0 +1,21 @@
+// `obj.field(args)` should compile to an indirect call when the field
+// holds a function pointer (or the `int` placeholder used pre fn-types).
+// Mirrors the lambda-variable indirect-call path.
+
+shape Box
+    fn: int
+
+dbl(x: int) -> int
+    x * 2
+
+inc(x: int) -> int
+    x + 1
+
+main()
+    b = Box(fn: dbl)
+    print(b.fn(21))           // 42 — direct field call
+
+    // Reassigning the field takes a mutable receiver.
+    b2! = Box(fn: dbl)
+    b2.fn = inc
+    print(b2.fn(99))          // 100

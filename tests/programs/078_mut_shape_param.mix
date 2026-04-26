@@ -1,0 +1,20 @@
+// A mutable shape parameter must propagate field mutations back to the
+// caller. Pre-fix the QBE backend silently dropped the mutation because
+// the alloca slot for the param wasn't marked is_pointer_slot in sema.
+
+shape Counter
+    n: int
+
+bump(c!: Counter)
+    c.n = c.n + 1
+
+bump_by(c!: Counter, by: int)
+    c.n = c.n + by
+
+main()
+    c! = Counter(n: 0)
+    bump(c)
+    bump(c)
+    bump(c)
+    bump_by(c, 7)
+    print(c.n)        // 10

@@ -1443,6 +1443,42 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             // Determine shape name for mangled function name
             MixType *obj_type = expr->method_call.object->resolved_type;
 
+            // Indirect call through a fn-typed field: load the field, then
+            // call it with just the user args (no `self`). Sema sets
+            // is_field_call when no real method exists by that name but a
+            // fn-typed field does.
+            if (expr->method_call.is_field_call
+                && obj_type && obj_type->kind == TYPE_SHAPE) {
+                ShapeFieldInfo *fi = type_find_field(obj_type, expr->method_call.method_name);
+                if (fi) {
+                    int faddr = obj_temp;
+                    if (fi->offset != 0) {
+                        faddr = next_temp(emit);
+                        fprintf(emit->out, "\t%%t%d =l add %%t%d, %d\n",
+                                faddr, obj_temp, fi->offset);
+                    }
+                    int fptr = next_temp(emit);
+                    fprintf(emit->out, "\t%%t%d =l loadl %%t%d\n", fptr, faddr);
+                    int t = next_temp(emit);
+                    const char *ret_sig = qbe_sig_type(expr->resolved_type, emit->arena);
+                    bool has_return = !(expr->resolved_type
+                            && expr->resolved_type->kind == TYPE_VOID);
+                    if (has_return) {
+                        fprintf(emit->out, "\t%%t%d =%s call %%t%d(", t, ret_sig, fptr);
+                    } else {
+                        fprintf(emit->out, "\tcall %%t%d(", fptr);
+                    }
+                    for (int i = 0; i < expr->method_call.arg_count; i++) {
+                        if (i > 0) fprintf(emit->out, ", ");
+                        const char *aty = qbe_sig_type(
+                            expr->method_call.args[i]->resolved_type, emit->arena);
+                        fprintf(emit->out, "%s %%t%d", aty, arg_temps2[i]);
+                    }
+                    fprintf(emit->out, ")\n");
+                    return t;
+                }
+            }
+
             // Shared built-in methods: .read(), .update!(fn)
             if (obj_type && obj_type->kind == TYPE_SHARED) {
                 const char *m = expr->method_call.method_name;

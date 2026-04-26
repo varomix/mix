@@ -384,11 +384,15 @@ struct AstNode {
         } field_expr;
 
         // NODE_METHOD_CALL (obj.method(args))
+        // is_field_call=true means there's no `Shape_method` definition but
+        // the shape has a fn-typed field by that name; emit as an indirect
+        // call through the field, no `self` prepended.
         struct {
             AstNode *object;
             char *method_name;
             AstNode **args;
             int arg_count;
+            bool is_field_call;
         } method_call;
 
         // NODE_SHAPE_LIT  (Vec2(x: 1.0, y: 2.0)  or  Stack[int](items: []))

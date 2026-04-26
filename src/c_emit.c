@@ -1410,6 +1410,38 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
 
             MixType *obj_type = expr->method_call.object->resolved_type;
 
+            /* Indirect call through a fn-typed field — set by sema when
+             * no real method exists by this name but a fn-pointer (or `int`
+             * placeholder) field does. Cast through (void *) so the call
+             * shape stays generic; mirrors the lambda-var indirect-call
+             * path in NODE_CALL_EXPR. */
+            if (expr->method_call.is_field_call
+                && obj_type && obj_type->kind == TYPE_SHAPE) {
+                ShapeFieldInfo *fi = type_find_field(obj_type, expr->method_call.method_name);
+                if (fi) {
+                    int t = next_temp(emit);
+                    const char *rty = c_type(expr->resolved_type);
+                    if (!expr->resolved_type
+                        || expr->resolved_type->kind == TYPE_VOID)
+                        rty = "int64_t";
+                    /* Build the function-pointer cast string */
+                    ind(emit);
+                    fprintf(emit->out, "%s t%d = ((%s(*)(", rty, t, rty);
+                    for (int i = 0; i < expr->method_call.arg_count; i++) {
+                        if (i > 0) fprintf(emit->out, ", ");
+                        fprintf(emit->out, "int64_t");
+                    }
+                    fprintf(emit->out, "))((%s *)t%d)->%s)(",
+                            obj_type->shape.name, obj_temp, fi->name);
+                    for (int i = 0; i < expr->method_call.arg_count; i++) {
+                        if (i > 0) fprintf(emit->out, ", ");
+                        fprintf(emit->out, "(int64_t)t%d", arg_temps2[i]);
+                    }
+                    fprintf(emit->out, ");\n");
+                    return t;
+                }
+            }
+
             /* Shared methods */
             if (obj_type && obj_type->kind == TYPE_SHARED) {
                 const char *m = expr->method_call.method_name;

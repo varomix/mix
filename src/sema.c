@@ -57,6 +57,20 @@ static MixType *make_type(Arena *a, TypeKind kind) {
     return t;
 }
 
+// Insert a function/method parameter into the current scope. For mutable
+// shape params, mark the symbol as `is_pointer_slot=true` — QBE allocates
+// an alloca slot to hold the pointer (so `c! = other` re-assignment works),
+// and NODE_IDENT must `loadl` that slot to get the actual shape pointer.
+// Without this, field reads/writes through the param walk an offset off
+// the slot address instead of the shape, corrupting memory.
+static void insert_param(SymTab *st, Param *param, MixType *ptype) {
+    symtab_insert(st, param->name, ptype, param->is_mutable);
+    if (param->is_mutable && ptype && ptype->kind == TYPE_SHAPE) {
+        Symbol *psym = symtab_lookup_current(st, param->name);
+        if (psym) psym->is_pointer_slot = true;
+    }
+}
+
 static MixType *make_ptr_type(Arena *a, MixType *base) {
     MixType *t = make_type(a, TYPE_PTR);
     t->ptr.base = base;
@@ -1281,9 +1295,40 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                         }
                     }
                 } else {
-                    mix_error(expr->loc, "shape '%s' has no method '%s'",
-                              obj_type->shape.name, expr->method_call.method_name);
-                    expr->resolved_type = make_type(sema->arena, TYPE_VOID);
+                    // No method by that name — fall back to a fn-typed field
+                    // (e.g. `Timer.fn(t)` where `fn` is a callback field).
+                    // Indirect call through the field; no `self` prepended.
+                    // Field type may be TYPE_FUNC (real fn) or TYPE_INT
+                    // (the placeholder MIX programs use today since there's
+                    // no fn-type syntax in the parser yet) — both are
+                    // callable, mirroring the lambda-variable indirect-call
+                    // path which is similarly untyped.
+                    ShapeFieldInfo *fi = type_find_field(obj_type, expr->method_call.method_name);
+                    bool callable_field = fi && fi->type
+                        && (fi->type->kind == TYPE_FUNC
+                            || fi->type->kind == TYPE_INT);
+                    if (callable_field) {
+                        expr->method_call.is_field_call = true;
+                        // For real fn types, use the declared return. For the
+                        // `int` placeholder convention, default to int (matches
+                        // NODE_CALL_EXPR's lambda-var fallback).
+                        if (fi->type->kind == TYPE_FUNC && fi->type->func.return_type) {
+                            expr->resolved_type = fi->type->func.return_type;
+                        } else {
+                            expr->resolved_type = make_type(sema->arena, TYPE_INT);
+                        }
+                    } else if (fi) {
+                        mix_error(expr->loc,
+                                  "field '%s.%s' is not callable (type %s)",
+                                  obj_type->shape.name,
+                                  expr->method_call.method_name,
+                                  type_name(sema->arena, fi->type));
+                        expr->resolved_type = make_type(sema->arena, TYPE_VOID);
+                    } else {
+                        mix_error(expr->loc, "shape '%s' has no method '%s'",
+                                  obj_type->shape.name, expr->method_call.method_name);
+                        expr->resolved_type = make_type(sema->arena, TYPE_VOID);
+                    }
                 }
             } else {
                 expr->resolved_type = make_type(sema->arena, TYPE_VOID);
@@ -2778,7 +2823,7 @@ void sema_analyze(Sema *sema, AstNode *program) {
                 MixType *ptype = param->type
                     ? resolve_type_node(sema, param->type)
                     : make_type(sema->arena, TYPE_INFER);
-                symtab_insert(&sema->symtab, param->name, ptype, param->is_mutable);
+                insert_param(&sema->symtab, param, ptype);
             }
 
             // Analyze body
@@ -2843,7 +2888,7 @@ void sema_analyze(Sema *sema, AstNode *program) {
                     MixType *ptype = param->type
                         ? resolve_type_node(sema, param->type)
                         : make_type(sema->arena, TYPE_INFER);
-                    symtab_insert(&sema->symtab, param->name, ptype, param->is_mutable);
+                    insert_param(&sema->symtab, param, ptype);
                 }
 
                 if (method->fn_decl.body) {
@@ -2871,7 +2916,7 @@ void sema_analyze(Sema *sema, AstNode *program) {
                         MixType *ptype = param->type
                             ? resolve_type_node(sema, param->type)
                             : make_type(sema->arena, TYPE_INFER);
-                        symtab_insert(&sema->symtab, param->name, ptype, param->is_mutable);
+                        insert_param(&sema->symtab, param, ptype);
                     }
                     if (cd->fn_decl.body) {
                         AstNode *body = cd->fn_decl.body;
@@ -2917,7 +2962,7 @@ void sema_analyze(Sema *sema, AstNode *program) {
                     MixType *ptype = param->type
                         ? resolve_type_node(sema, param->type)
                         : make_type(sema->arena, TYPE_INFER);
-                    symtab_insert(&sema->symtab, param->name, ptype, param->is_mutable);
+                    insert_param(&sema->symtab, param, ptype);
                 }
                 if (method->fn_decl.body) {
                     AstNode *body = method->fn_decl.body;

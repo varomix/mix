@@ -1,0 +1,46 @@
+// Declaring a fresh shape var inside a loop and pushing to a list.
+// Two QBE bugs were hiding here:
+//   1. SHAPE_LIT used `alloc8` (stack), and QBE hoists alloca to the
+//      function entry block — so every iteration's "fresh" Sprite returned
+//      the *same* slot, and the list ended up holding three pointers to
+//      identical memory containing only the last iteration's data.
+//   2. Even with mix_alloc, `qbe_sig_type` used the QBE `:Shape` aggregate
+//      type for shape-typed function returns/params, which silently
+//      degraded to passing just the first 8 bytes by-value at the ABI
+//      boundary. Returning a `Group` from `make_group()` then storing into
+//      `balls` actually stored the inner *list pointer* instead of the
+//      Group's heap address; subsequent `balls.sprites.push(...)` went
+//      through corrupted memory.
+
+shape Vec2
+    x: float
+    y: float
+
+shape Sprite
+    pos: Vec2
+    vel: Vec2
+
+shape Group
+    sprites: [Sprite]
+
+make_group() -> Group
+    Group(sprites: [])
+
+group_add(gr: Group, s: Sprite)
+    gr.sprites.push!(s)
+
+main()
+    balls! = make_group()
+    i! = 0
+    while i < 3
+        s! = Sprite(
+            pos: Vec2(x: 1.0, y: 2.0),
+            vel: Vec2(x: 0.0, y: 0.0)
+        )
+        s.vel.x = to_float(i) * 5.0
+        group_add(balls, s)
+        i! = i + 1
+
+    // Each sprite should retain its own vel.x (0, 5, 10).
+    for s in balls.sprites
+        print(s.vel.x)

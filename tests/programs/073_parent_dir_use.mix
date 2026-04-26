@@ -1,0 +1,10 @@
+// `use ../...` — path-style use that traverses parent directories.
+// `use ../programs/parentlib_073/util` resolves to
+// tests/<..>/programs/parentlib_073/util.mix. The intermediate `..`
+// is a no-op here but it forces the path-style branch in the parser
+// (and in the resolver: presence of '/' bypasses dot-to-slash).
+use ../programs/parentlib_073/util
+
+main() ~
+    greet()
+    print(doubled(7))

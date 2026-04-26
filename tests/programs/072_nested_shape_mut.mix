@@ -1,0 +1,58 @@
+// Nested-shape mutation: a shape field that is itself a shape.
+// Covers the cases that previously segfaulted on QBE and emitted
+// invalid pointer-to-int casts on the C backend.
+//   1. external `s!.pos = Vec2(...)`         (whole-field replace)
+//   2. external `s.pos.x = v`                (deep scalar write)
+//   3. internal `pos!.x += v` inside method  (compound on inline scalar)
+//   4. internal `pos! = Vec2(...)` inside method (whole-field replace via field name)
+//   5. internal `self.pos = Vec2(...)`       (explicit self)
+
+shape Vec2
+    x: float
+    y: float
+
+shape Sprite
+    pos: Vec2
+    vel: Vec2
+
+    update(dt: float) !
+        pos!.x += vel.x * dt
+        pos!.y += vel.y * dt
+
+    teleport(x: float, y: float) !
+        pos! = Vec2(x: x, y: y)
+
+    reset() !
+        self.pos = Vec2(x: 0.0, y: 0.0)
+        self.vel = Vec2(x: 0.0, y: 0.0)
+
+main()
+    s! = Sprite(pos: Vec2(x: 1.0, y: 2.0), vel: Vec2(x: 10.0, y: 20.0))
+
+    // case 1: whole-field replace from outside
+    s!.pos = Vec2(x: 5.0, y: 6.0)
+    print(s.pos.x)
+    print(s.pos.y)
+
+    // case 2: deep scalar write
+    s.pos.x = 100.0
+    s.pos.y = 200.0
+    print(s.pos.x)
+    print(s.pos.y)
+
+    // case 3: compound on inline scalar inside method
+    s.update!(1.0)
+    print(s.pos.x)
+    print(s.pos.y)
+
+    // case 4: whole-field replace via field name inside method
+    s.teleport!(50.0, 60.0)
+    print(s.pos.x)
+    print(s.pos.y)
+
+    // case 5: explicit self.field = Vec2(...) inside method
+    s.reset!()
+    print(s.pos.x)
+    print(s.pos.y)
+    print(s.vel.x)
+    print(s.vel.y)

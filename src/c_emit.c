@@ -481,6 +481,14 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 ShapeFieldInfo *fi = type_find_field(emit->current_shape, expr->ident.name);
                 if (fi) {
                     int t = next_temp(emit);
+                    // Sub-shapes are stored inline; expose their address rather
+                    // than scalar-loading 8 bytes (which would compile-error
+                    // and at best read a pointer-sized chunk of an aggregate).
+                    if (fi->type && fi->type->kind == TYPE_SHAPE) {
+                        ind(emit); fprintf(emit->out, "%s *t%d = &v_self->%s;\n",
+                                fi->type->shape.name, t, fi->name);
+                        return t;
+                    }
                     const char *fty = c_type(fi->type);
                     ind(emit); fprintf(emit->out, "%s t%d = v_self->%s;\n", fty, t, fi->name);
                     return t;
@@ -1644,8 +1652,14 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                     ShapeFieldInfo *fi = type_find_field(stype, expr->shape_lit.field_names[i]);
                     if (!fi) continue;
                     int val = emit_expr(emit, expr->shape_lit.field_values[i]);
-                    ind(emit); fprintf(emit->out, "t%d->%s = (%s)t%d;\n",
-                            t, fi->name, c_type(fi->type), val);
+                    // Sub-shape stored inline — memcpy from the value pointer.
+                    if (fi->type && fi->type->kind == TYPE_SHAPE) {
+                        ind(emit); fprintf(emit->out, "memcpy(&t%d->%s, t%d, sizeof(%s));\n",
+                                t, fi->name, val, fi->type->shape.name);
+                    } else {
+                        ind(emit); fprintf(emit->out, "t%d->%s = (%s)t%d;\n",
+                                t, fi->name, c_type(fi->type), val);
+                    }
                 }
             } else {
                 ind(emit); fprintf(emit->out, "void *t%d = 0;\n", t);
@@ -2259,6 +2273,19 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
             int val = emit_expr(emit, stmt->field_assign.value);
             MixType *obj_type = stmt->field_assign.object->resolved_type;
             if (obj_type && obj_type->kind == TYPE_SHAPE) {
+                ShapeFieldInfo *fi_dst =
+                    type_find_field(obj_type, stmt->field_assign.field_name);
+                // Whole-shape replacement: `s.pos = Vec2(...)`. The field is
+                // stored inline; the value is a pointer to the source shape.
+                // Scalar assignment would only copy 8 bytes — memcpy the rest.
+                if (fi_dst && fi_dst->type && fi_dst->type->kind == TYPE_SHAPE &&
+                    stmt->field_assign.op == TOK_EQ) {
+                    ind(emit); fprintf(emit->out,
+                            "memcpy(&((%s *)t%d)->%s, t%d, sizeof(%s));\n",
+                            obj_type->shape.name, obj, stmt->field_assign.field_name,
+                            val, fi_dst->type->shape.name);
+                    break;
+                }
                 if (stmt->field_assign.op == TOK_EQ) {
                     ind(emit); fprintf(emit->out, "((%s *)t%d)->%s = t%d;\n",
                             obj_type->shape.name, obj, stmt->field_assign.field_name, val);
@@ -2615,8 +2642,10 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                 for (int j = 0; j < decl->shape_decl.field_count; j++) {
                     ShapeField *sf = &decl->shape_decl.fields[j];
                     MixType *ftype = sf->type ? sf->type->resolved_type : NULL;
+                    // Inline sub-shapes (no pointer): matches the QBE backend's
+                    // memory layout and lets `s.pos.x = v` write into the parent.
                     if (ftype && ftype->kind == TYPE_SHAPE)
-                        fprintf(emit->out, "    %s *%s;\n", ftype->shape.name, sf->name);
+                        fprintf(emit->out, "    %s %s;\n", ftype->shape.name, sf->name);
                     else
                         fprintf(emit->out, "    %s %s;\n", c_type(ftype), sf->name);
                 }
@@ -2645,9 +2674,16 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                         const char *kw = sym->type->shape.is_union ? "union" : "struct";
                         fprintf(emit->out, "typedef %s {\n", kw);
                         for (int j = 0; j < sym->type->shape.field_count; j++) {
-                            fprintf(emit->out, "    %s %s;\n",
-                                    c_type(sym->type->shape.fields[j].type),
-                                    sym->type->shape.fields[j].name);
+                            MixType *fty = sym->type->shape.fields[j].type;
+                            // Inline sub-shapes (matches QBE layout).
+                            if (fty && fty->kind == TYPE_SHAPE)
+                                fprintf(emit->out, "    %s %s;\n",
+                                        fty->shape.name,
+                                        sym->type->shape.fields[j].name);
+                            else
+                                fprintf(emit->out, "    %s %s;\n",
+                                        c_type(fty),
+                                        sym->type->shape.fields[j].name);
                         }
                         fprintf(emit->out, "} %s;\n", sym->type->shape.name);
                         emitted_shapes[emitted_count++] = sym->type->shape.name;

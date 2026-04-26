@@ -268,7 +268,7 @@ struct AstNode {
         struct { bool value; } bool_lit;
 
         // NODE_IDENT
-        struct { char *name; bool is_mutable; } ident;
+        struct { char *name; bool is_mutable; bool is_pointer_slot; } ident;
 
         // NODE_BINARY_EXPR
         struct { TokenKind op; AstNode *left; AstNode *right; } binary;

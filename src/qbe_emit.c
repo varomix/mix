@@ -81,14 +81,16 @@ static int coerce_to_field_type(QbeEmitter *emit, int val, MixType *val_type,
     return val;
 }
 
-// Get QBE type for function signatures — uses :ShapeName for aggregates
+// Get QBE type for function signatures.
+// Shapes are passed/returned as `l` (pointer to heap-alloc'd shape) — using
+// QBE's `:Name` aggregate type would silently downgrade large shapes to
+// just-the-first-field-by-value at the ABI boundary, which corrupts state
+// when a function returns a Sprite-typed value or accepts one as a param.
+// (Methods and the rest of the QBE codegen already treat shapes as `l`.)
 static const char *qbe_sig_type(MixType *type, Arena *arena) {
+    (void)arena;
     if (!type) return "l";
-    if (type->kind == TYPE_SHAPE) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), ":%s", type->shape.name);
-        return arena_strdup(arena, buf);
-    }
+    if (type->kind == TYPE_SHAPE) return "l";
     return type_to_qbe(type);
 }
 
@@ -249,9 +251,20 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             if (emit->current_shape) {
                 ShapeFieldInfo *fi = type_find_field(emit->current_shape, expr->ident.name);
                 if (fi) {
+                    int t = next_temp(emit);
+                    // Shape-typed field stores its data inline in self; expose
+                    // the address (same model as NODE_FIELD_EXPR), not a load —
+                    // a "loadl" of an aggregate would only read 8 bytes.
+                    if (fi->type && fi->type->kind == TYPE_SHAPE) {
+                        if (fi->offset == 0) {
+                            fprintf(emit->out, "\t%%t%d =l copy %%v.self\n", t);
+                        } else {
+                            fprintf(emit->out, "\t%%t%d =l add %%v.self, %d\n", t, fi->offset);
+                        }
+                        return t;
+                    }
                     const char *reg_ty = type_to_qbe(fi->type);
                     const char *load_ty = type_to_qbe_load(fi->type);
-                    int t = next_temp(emit);
                     // Use %v.self directly instead of copying to intermediate temp
                     if (fi->offset == 0) {
                         fprintf(emit->out, "\t%%t%d =%s load%s %%v.self\n", t, reg_ty, load_ty);
@@ -272,9 +285,17 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                         t, ty, load_ty, expr->ident.name);
                 return t;
             }
-            // Shape variables are pointers — always copy
+            // Shape variables are pointers — usually `%v.x` IS the pointer
+            // (NODE_VAR_DECL emits `=l copy` aliasing). For-each loop vars
+            // over a shape list, in contrast, get an alloca slot holding the
+            // pointer; sema flags those so we know to load instead of taking
+            // the slot address.
             if (expr->resolved_type && expr->resolved_type->kind == TYPE_SHAPE) {
-                fprintf(emit->out, "\t%%t%d =l copy %%v.%s\n", t, expr->ident.name);
+                if (expr->ident.is_pointer_slot) {
+                    fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", t, expr->ident.name);
+                } else {
+                    fprintf(emit->out, "\t%%t%d =l copy %%v.%s\n", t, expr->ident.name);
+                }
             } else if (expr->ident.is_mutable) {
                 // Mutable variable — load from stack
                 fprintf(emit->out, "\t%%t%d =%s load%s %%v.%s\n", t, ty, ty, expr->ident.name);
@@ -1652,11 +1673,16 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             return t;
         }
         case NODE_SHAPE_LIT: {
-            // Allocate stack space for the shape and zero-initialize
+            // Heap-allocate the shape via mix_alloc (matches the C backend).
+            // Stack alloca was tempting but QBE hoists `alloc8` to the entry
+            // block, so a SHAPE_LIT inside a loop would return the *same*
+            // slot on every iteration and the values would alias each other.
+            // Heap allocation guarantees fresh memory per construction; the
+            // tradeoff is that SHAPE_LIT now leaks (same as the C backend).
             MixType *stype = expr->resolved_type;
             int size = stype ? stype->shape.total_size : 16;
             int t = next_temp(emit);
-            fprintf(emit->out, "\t%%t%d =l alloc8 %d\n", t, size);
+            fprintf(emit->out, "\t%%t%d =l call $mix_alloc(l %d)\n", t, size);
             // Zero-initialize (C struct interop requires unset fields = 0)
             fprintf(emit->out, "\tcall $memset(l %%t%d, w 0, l %d)\n", t, size);
 
@@ -1886,10 +1912,17 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
 
             const char *ty = qbe_type(stmt->resolved_type);
 
-            // Shape variables: init already returns a pointer to stack memory
+            // Shape variables hold a pointer to a heap-allocated shape (the
+            // result of SHAPE_LIT / make_*). Use an 8-byte alloca slot rather
+            // than the SSA `=l copy` aliasing pattern — that breaks when the
+            // declaration is inside a loop, since each iteration's fresh
+            // `mix_alloc` result has to live in the same name. NODE_IDENT
+            // sees `is_pointer_slot` (set by sema) and uses `loadl` to read
+            // the current pointer back.
             if (stmt->resolved_type && stmt->resolved_type->kind == TYPE_SHAPE) {
                 int init = emit_expr(emit, stmt->var_decl.init_expr);
-                fprintf(emit->out, "\t%%v.%s =l copy %%t%d\n", stmt->var_decl.name, init);
+                fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", stmt->var_decl.name);
+                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", init, stmt->var_decl.name);
             } else if (stmt->var_decl.is_mutable) {
                 int init = emit_expr(emit, stmt->var_decl.init_expr);
                 // Allocate stack space for mutable variable
@@ -2598,6 +2631,23 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             if (obj_type && obj_type->kind == TYPE_SHAPE) {
                 ShapeFieldInfo *fi = type_find_field(obj_type, stmt->field_assign.field_name);
                 if (fi) {
+                    // Whole-shape replacement: `s.pos = Vec2(...)`. Both sides are
+                    // pointers; the field is stored inline so a single store would
+                    // only copy 8 bytes. memcpy the full shape size instead.
+                    if (fi->type && fi->type->kind == TYPE_SHAPE &&
+                        stmt->field_assign.op == TOK_EQ) {
+                        int dst_addr;
+                        if (fi->offset == 0) {
+                            dst_addr = obj;
+                        } else {
+                            dst_addr = next_temp(emit);
+                            fprintf(emit->out, "\t%%t%d =l add %%t%d, %d\n",
+                                    dst_addr, obj, fi->offset);
+                        }
+                        fprintf(emit->out, "\tcall $memcpy(l %%t%d, l %%t%d, l %d)\n",
+                                dst_addr, val, fi->type->shape.total_size);
+                        break;
+                    }
                     const char *mem_ty = type_to_qbe_mem(fi->type);
                     if (stmt->field_assign.op != TOK_EQ) {
                         // Compound assignment: load old value, apply op, store

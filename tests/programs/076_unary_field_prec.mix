@@ -1,0 +1,27 @@
+// Unary `-` must bind looser than postfix `.field` / `[idx]`. Before the
+// parser fix, `-s.vel.x` parsed as `(-s).vel.x` — the unary applied to the
+// raw sprite pointer, then the field arithmetic ran on a negative address,
+// loading from random memory and segfaulting.
+
+shape Vec2
+    x: float
+    y: float
+
+shape Sprite
+    pos: Vec2
+    vel: Vec2
+
+main()
+    a = Sprite(pos: Vec2(x: 0.0, y: 0.0), vel: Vec2(x: 7.0, y: 8.0))
+    b = Sprite(pos: Vec2(x: 0.0, y: 0.0), vel: Vec2(x: 9.0, y: 10.0))
+    list = [a, b]
+    for sp in list
+        // Read, negate, write back through nested fields — exercises the
+        // unary-vs-field precedence and the for-each-loop-var pointer slot.
+        print(sp.vel.x)
+        sp.vel.x = -sp.vel.x
+        print(sp.vel.x)
+        // Also a non-method form: negate then field-access on a stored
+        // pointer to be sure the precedence change didn't regress.
+        s2 = a
+        print(-s2.vel.y)

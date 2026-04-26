@@ -1,0 +1,8 @@
+// Helper module reached via a `..` use-path from 073_parent_dir_use.mix.
+// (The lib sits under a subdir so the test driver doesn't pick it up
+// as its own program — the driver globs *.mix at tests/programs/ only.)
+pub doubled(x: int) -> int
+    x * 2
+
+pub greet() ~
+    print("hello from parentlib_073/util")

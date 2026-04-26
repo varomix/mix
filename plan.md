@@ -475,3 +475,351 @@ cd ~/SynologyDrive/DEV/MIX_DEV/mixel/examples/01_hello
 ~/SynologyDrive/DEV/mix_lang/build/mix run main.mix
 ```
 
+---
+
+## Session log — 2026-04-25 (nested-shape mutation + mixel refactors)
+
+Continues the previous mixel-unblock session. The remaining mixel blocker
+(`shape Sprite { pos: Vec2 }` with `update!` mutating `pos.x`) was actually
+**not** fully fixed last session — flat-field mutation worked, but every
+nested-shape form (inside method, outside method, whole-shape replacement,
+deep scalar write) crashed or returned garbage. This session closes that
+gap on both backends and ports the mixel framework + hello demo to use
+the natural `Sprite { pos: Vec2, vel: Vec2 }` API.
+
+### What changed in the compiler
+
+| File | Change |
+|---|---|
+| `src/sema.c` | NODE_VAR_DECL → NODE_ASSIGN rewrite extended: when `existing` is a SHAPE *and* matches a field of `current_shape`, force NODE_ASSIGN (which then triggers the FIELD_ASSIGN rewrite against `self`). Without this, `pos! = Vec2(...)` inside an `update !` shadowed the field with a fresh local and silently dropped the write. |
+| `src/qbe_emit.c` | NODE_IDENT for shape-typed self-fields returns the **address** of the inline shape (copy `%v.self` if offset 0, `add %v.self,off` otherwise) instead of `loadl` (which would have read 8 bytes of an aggregate as a pointer). |
+| `src/qbe_emit.c` | NODE_FIELD_ASSIGN for a shape-typed field with `=` emits `call $memcpy(dst+off, val, total_size)` instead of a single-word store. |
+| `src/c_emit.c` | Switched nested-shape struct fields from `Vec2 *pos` to `Vec2 pos` (inline storage) — both in source-decl emission and in the imported-shapes-from-symtab pass. Matches the QBE memory model. |
+| `src/c_emit.c` | NODE_SHAPE_LIT for a nested-shape field emits `memcpy(&t->pos, val, sizeof(Vec2))` instead of a pointer assignment. |
+| `src/c_emit.c` | NODE_IDENT inside a method returns `<Shape> *t = &v_self->pos;` for shape-typed fields (not `int64_t t = v_self->pos;`, which warned and aliased a `Vec2 *` slot to scalar). |
+| `src/c_emit.c` | NODE_FIELD_ASSIGN for a shape-typed field emits `memcpy(&((Sprite *)obj)->pos, val, sizeof(Vec2))`. |
+
+### Tests
+
+- `tests/programs/072_nested_shape_mut.mix` (+ `expected/072.txt`) — covers the five cases that previously broke: external whole-field replace, external deep scalar write, internal compound on inline scalar, internal whole-field replace via field name, internal explicit `self.field = Vec2(...)`.
+- Both backends: 73 runtime + 16 error + 19 error-message + 29 fmt = **137 tests green on QBE**, 68 on C (5 pre-existing C-backend failures unrelated to this work: `006_extern`, `011_defer`, `013_match`, `022_unsafe`, `023_zones` — all `MIX_BACKEND=c` linker/codegen issues that already failed before this session).
+
+### What changed in mixel
+
+- Deleted `mixel_helper.h`, `mixel_helper.c`, and the `mixel_helper.{h,c}` symlinks under every example. Replaced every `mixel_*` call with the corresponding MIX builtin (`memcpy`, `peek_byte`, `peek_f32`, `peek_u32`).
+- Added `pub shape Vec2 { x, y: float }` and `pub shape Sprite { pos: Vec2, vel: Vec2, width, height: float, color: Color }` to `mixel.mix`, with `update(dt) !` and `draw(g) ~` methods, plus a `make_sprite(...)` constructor.
+- Rewrote `examples/01_hello/main.mix` against the new API: `s.update!(dt)`, `s.draw(g)`, `s.vel.x = ...` for input.
+- Updated `mixel/README.md`: project layout drops the helper files, public API section now shows `Sprite`/`Vec2`, "Pending refactor" replaced with "Recently landed", roadmap repointed at Phase 2 (Group / overlap / text / audio / Snake demo).
+
+### Open follow-ups for next session (in mixel order of urgency)
+
+1. **Phase 2 starts with `Group` and `physics/overlap`** per `mixel/PLAN.md`. Snake is the headline deliverable for Phase 2 — it pulls in `text` (SDL_ttf), `audio` (SDL_mixer), `timer`, `random`. Audio + text are the largest chunks of new C-binding work.
+2. **Module-level mutables, non-literal init** — would let mixel collapse the `g: Game` threading and adopt the Flixel `FlxG.*` global API. Needs a per-module `__mix_init` function emitted by both backends.
+3. **C-backend pre-existing failures** (006/011/013/022/023) deserve a pass at some point — `006_extern`'s `extern int32_t puts(void *)` vs libc `int puts(const char *)` is a C-binding signature mismatch in `cbind` or extern-decl lowering.
+4. **C-backend struct ordering** — switching nested shapes to inline storage now requires the inner shape to be declared *before* the outer one in the C output. The current emitter walks decls in source order and skips a topological sort. Fine for mixel (Vec2 before Sprite, naturally), but will bite if a user writes mutually-nested or out-of-order shape decls. Easy fix when it matters: topo-sort the shape decls before emit.
+
+### Things to know if resuming
+
+- `current_shape` is a `MixType *` pointer to the shape *type*, not the AST decl. To check whether a name corresponds to a self-field, use `type_find_field(sema->current_shape, name)`.
+- The QBE field-store and the C field-store paths now have the same shape-special-case structure — keep them in sync if you extend either (e.g. for compound `+=` on shape-typed fields, which would need an `op_add` method dispatch instead of a memcpy).
+- The C backend declares `Vec2 *t1 = mix_alloc(sizeof(Vec2));` for shape literals even when the literal is only used as the source of a memcpy into a parent's inline field. Slightly wasteful (one extra alloc per nested ctor), but correct. Optimization opportunity: detect "shape literal used only as memcpy source" and synthesize the copy in place.
+- Don't try to run mixel demos from inside the agent — they open windows and the sandbox doesn't have GUI. Compile-only verification is enough; the user runs from their shell.
+
+---
+
+## Session log — 2026-04-25 (path-style use paths)
+
+Same session as nested-shape mutation; user wanted `use ../../mixel` to work
+so demos don't need a `mixel.mix` symlink in each example directory.
+
+### What changed
+
+| File | Change |
+|---|---|
+| `src/parser.c` | When `use` is followed by `TOK_DOTDOT`, take a new "path-style" branch: parse `..` and ident-like segments separated by `/`, store the assembled string (e.g. `"../../mixel"`) in `use_decl.module_path`. Word-like keywords (e.g. `shared`, `int`) are accepted as path segments by sniffing the first byte of the token's source text. Selective-import `:` clause still works via a `goto` to the existing colon block. |
+| `src/main.c` | `resolve_module_path` recognises `module_path` containing `/` as a literal relative path and joins it under `base_dir` verbatim, skipping the dot-to-slash conversion. The std-prefix branch is unchanged. |
+
+Old syntax keeps working (`use mixel`, `use engine.physics`, `use std.math`,
+`use math: add, PI`) — the new branch only triggers when the very next token
+after `use` is `..`. 
+
+### Tests
+
+- `tests/programs/073_parent_dir_use.mix` + `parentlib_073/util.mix` (sub-dir,
+  not picked up by the *.mix glob). The main does `use ../programs/parentlib_073/util`
+  to exercise both `..` traversal and forward subdir steps in one shot.
+- 74 QBE + 16 + 19 + 29 = **138 green on QBE**, 69 on C (same 5 pre-existing
+  failures unrelated to this work).
+
+### What changed in mixel
+
+- `examples/01_hello/main.mix` now opens with `use ../../mixel`.
+- Removed the `examples/01_hello/mixel.mix` symlink.
+- README "Project layout" updated to show no symlink and to mention the
+  path-style import. The `shaders/` symlink stays (the framework still
+  loads `shaders/sprite.{vert,frag}.msl` via a relative path at runtime —
+  that's a separate problem, future cleanup).
+
+### Things to know if resuming
+
+- The path-style branch only fires when the literal next token is `..`.
+  It does *not* fire on `use ./mixel` (a single dot), and `.` after `use`
+  isn't currently meaningful. Add a TOK_DOT branch alongside the TOK_DOTDOT
+  one if you want `./` support — same shape.
+- Keyword-as-segment acceptance is "first byte is letter or `_`". That's
+  enough for `shared`, `int`, etc., but won't accept e.g. `123` as a
+  directory name (which is fine; numeric directory names are rare and
+  the lexer would tokenize them as TOK_INT_LIT anyway).
+- Path-style modules and the existing `compiling_modules` cycle detector
+  agree: keys are the resolved filesystem paths, not the source-level
+  `module_path` string. So `use ../foo` and `use foo` from a sibling won't
+  re-enter the same file twice.
+
+---
+
+## Session log — 2026-04-25 (for-each over [Shape] + mixel Group)
+
+Continuing the same session — adding `Group` to mixel so demos can do
+`group.update!(dt) / group.draw(g)` over a `[Sprite]`. The Group impl
+itself is trivial; the work was a QBE-backend bug it surfaced.
+
+### What changed in the compiler
+
+| File | Change |
+|---|---|
+| `src/symtab.h` | Added `Symbol.is_pointer_slot` — for SHAPE-typed vars, true means `%v.<name>` is an alloca slot holding a pointer (loop var case), false means `%v.<name>` IS the pointer (the `=l copy` aliasing case used by NODE_VAR_DECL). |
+| `src/symtab.c` | Initialise `is_pointer_slot = false` in `symtab_insert`. |
+| `src/sema.c` (FOR_STMT) | After inserting a shape-typed loop var, look it up via `symtab_lookup_current` and set `is_pointer_slot = true`. |
+| `src/sema.c` (NODE_IDENT resolve) | Mirror the symbol's `is_pointer_slot` onto `expr->ident.is_pointer_slot`, parallel to how `is_mutable` is captured — sema's scopes are gone by emit time, so the AST node has to carry the bit forward. |
+| `src/ast.h` | Add `bool is_pointer_slot` to the `ident` struct. |
+| `src/qbe_emit.c` (NODE_IDENT) | For shape-typed identifiers, branch on `expr->ident.is_pointer_slot`: `loadl %v.<name>` (load the pointer) when true, `copy %v.<name>` (the existing aliasing) when false. |
+
+The C backend was already correct here — its for-each loop emits
+`int64_t v_<name> = mix_list_get(...)` (the pointer value) and the
+NODE_IDENT path casts that to `Sprite *`, which works.
+
+### Why the symtab indirection step
+
+First attempt had QBE look up the symbol at emit time. Doesn't work:
+sema has popped all the function-local scopes by the time emit runs, so
+`symtab_lookup` for a loop var returns NULL (or worse, a same-named
+symbol from an outer scope). The AST-node mirror is the canonical
+pattern (compare `expr->ident.is_mutable`).
+
+### Tests
+
+- `tests/programs/074_for_shape_list.mix` (+ `expected/074.txt`) —
+  `for s in [Sprite] / s.update!(1.0)` and confirm the outer `a`/`b`
+  positions reflect the mutation.
+- 75 QBE + 16 + 19 + 29 = **139 green on QBE**, 70 on C (same 5
+  pre-existing C-backend failures, none from this session).
+
+### What changed in mixel
+
+- `mixel.mix` adds `pub shape Group { sprites: [Sprite] }` with
+  `update!(dt)` and `draw(g) ~` methods plus `make_group`,
+  `group_add`, `group_count` helpers.
+- `examples/02_groups/main.mix` — 100 colored balls bouncing inside the
+  window. Spawns sprites with random pos/vel/color into a Group, then
+  per frame: `balls.update!(dt)` → manual wall-bounce loop (per-sprite
+  position clamping + velocity flip) → `balls.draw(g)`.
+- `examples/02_groups/shaders` is a symlink back to `../../shaders`
+  (same model as 01_hello — the framework still does
+  `SDL_LoadFile("shaders/...", ...)` with a CWD-relative path).
+- README updated: project layout shows 02_groups, public-API section
+  documents Group, "Recently landed" entry, roadmap repointed at
+  overlap/timer/audio/text → Snake.
+
+### Things to know if resuming
+
+- `Group.update(dt)` is intentionally non-mutating in its method declaration
+  (no trailing `!`) — it doesn't change `self.sprites`. The mutation lives in
+  `s.update!(dt)` on each list element, which is independent of the Group's
+  own self. This matches the pattern of "iterate over a list of pointers and
+  mutate each via a method call."
+- For-each over a `[Shape]` now works as expected on QBE. For-each over a
+  list-of-list (`[[Sprite]]` etc.) hasn't been probed; the same is_pointer_slot
+  flag wouldn't kick in for non-SHAPE element types, so multi-level shape
+  containers may need similar attention if mixel ever wants them.
+- The C backend can't currently link a mixel demo (SDL3-related struct types
+  don't appear in the generated C). That's a separate cbind/extern issue, not
+  caused by this session. Mixel devs should default to QBE.
+
+---
+
+## Session log — 2026-04-25 (cwd-independent shader paths)
+
+The 02_groups binary crashed with "Vertex shader cannot be NULL!" when the
+user ran it directly from a terminal whose cwd wasn't the demo dir.
+Root cause: the framework called `SDL_LoadFile("shaders/sprite.vert.msl", ...)`
+with a CWD-relative path; SDL_LoadFile returned NULL when the file
+wasn't there, and SDL_CreateGPUShader propagated the NULL.
+
+### What changed in mixel (compiler unchanged)
+
+- `mixel.mix` `init_game` uses `SDL_GetBasePath()` to get the executable's
+  directory, then prefixes it onto `shaders/sprite.vert.msl` and
+  `shaders/sprite.frag.msl` before passing to `SDL_LoadFile`. The result
+  is that the binary works from any working directory as long as a
+  `shaders/` directory sits next to the binary.
+- README updated to document the new behavior.
+
+### Things to know if resuming
+
+- `*byte` (the bindgen mapping for `const char *`) auto-coerces to `str`
+  via a local type annotation: `bp_raw = SDL_GetBasePath(); bp: str = bp_raw`.
+  And `str` auto-coerces back to `*byte` for extern function calls. So the
+  framework can do `bp + "shaders/..."` (string concat) and pass the
+  result straight to `SDL_LoadFile` without a helper.
+- `SDL_GetBasePath` returns a pointer SDL owns; we don't free it.
+- The shaders symlink in each demo dir is still required because the
+  compiled binary lives in the demo dir. Long-term cleanup options:
+  embed the MSL as `@const str` (small files; ~few KB each), or add a
+  `init_game_with_shader_path(...)` overload. Both punted for now.
+- The previous-session note that called `SDL_LoadFile` "CWD-relative" is
+  now stale — the framework computes an absolute path before calling.
+
+---
+
+## Session log — 2026-04-25 (loop-declared shape vars + shape ABI)
+
+The 02_groups demo segfaulted at runtime — same session as the cwd fix.
+Probing revealed two stacked QBE bugs that surfaced as soon as we tried
+to construct N>1 shape values inside a loop and store them.
+
+### Bug 1 — SHAPE_LIT used stack alloca
+
+`emit_expr` for `NODE_SHAPE_LIT` emitted `%t = l alloc8 size`. QBE hoists
+allocas to the function entry block, so a `Sprite(...)` inside a loop
+returned the *same* slot on every iteration. Pushing the result into a
+`[Sprite]` list filled the list with N copies of one pointer, all
+pointing to the data the last iteration wrote. C backend wasn't affected
+— it already heap-alloc'd via `mix_alloc`.
+
+Fix in `src/qbe_emit.c`: switched the alloc to
+`%t = l call $mix_alloc(l size)`. Memory now leaks per shape literal
+(same as C backend); a future arena/zone pass can recover it.
+
+### Bug 2 — qbe_sig_type returned `:Shape` for ABI
+
+`qbe_sig_type` returned `:Group` / `:Sprite` for shape-typed function
+returns and parameters. QBE treats `:T` aggregates by value at the ABI
+boundary; for a `{ l }` aggregate (single field), it passes/returns just
+the 8 bytes of the field — not the heap pointer of the shape. So
+`balls = make_group()` ended up storing the *list pointer* (Group's
+first field) in `%v.balls`, not the Group's heap address. Subsequent
+`balls.sprites.push(...)` walked through corrupted memory.
+
+Fix in `src/qbe_emit.c`: `qbe_sig_type` now returns `"l"` (pointer) for
+all shape types, matching how the C backend already passes shapes
+(`void *`) and how the previous-session method fix passed `self`. The
+QBE `:ShapeName` typedefs still get emitted (`type :Group = { l }`)
+because the rest of the code may reference them, but no function
+signature uses them anymore.
+
+### Bug 3 — NODE_VAR_DECL aliased shape vars (loop-broken)
+
+Even with the two ABI fixes, `s! = Sprite(...)` inside the spawn loop
+still aliased `%v.s` SSA-style (`%v.s =l copy %t_init`) — repeating the
+same SSA name on every iteration is technically a violation, and worse,
+the var carried the same identity across iterations.
+
+Fix in `src/sema.c`: shape-typed local NODE_VAR_DECLs now mark the
+symbol with `is_pointer_slot = true` so the existing per-IDENT mirror
+captures it on the AST. In `src/qbe_emit.c` NODE_VAR_DECL the shape
+branch now emits `%v.s =l alloc8 8; storel %t_init, %v.s` (matching the
+for-each loop var pattern from the previous session). Reads via
+NODE_IDENT already do `loadl` when `is_pointer_slot` is set.
+
+### Tests
+
+- `tests/programs/075_loop_shape_decl.mix` (+ `expected/075.txt`) —
+  spawns 3 sprites with distinct `vel.x` inside a `while` loop, pushes
+  each via a function call (`group_add`) that returns nothing, then
+  iterates and confirms each sprite kept its own velocity. Failed in
+  multiple ways before this fix; now passes on both backends.
+- 76 QBE + 16 + 19 + 29 = **140 green on QBE**, 71 on C (same 5
+  pre-existing C failures).
+
+### What changed in mixel
+
+- Nothing in the framework code itself — the 02_groups demo built
+  earlier was hitting the compiler bugs above. After the fixes, the
+  demo runs correctly (verified via the smaller probe; the user runs
+  the GUI binary from their shell).
+
+### Things to know if resuming
+
+- The `is_pointer_slot` flag now blanket-applies to **all** local shape
+  NODE_VAR_DECLs (not just for-each loop vars). Globals (`is_global`)
+  are excluded. Function parameters still use the old aliasing pattern
+  (`%v.x =l copy %p.x`) — that's correct because params are declared
+  exactly once at function entry.
+- `mix_alloc` for SHAPE_LIT leaks memory. Acceptable for a small game
+  framework but worth a follow-up: SHAPE_LIT in a `zone { ... }` block
+  could allocate via `mix_zone_alloc` so the entire zone frees together.
+- The `:ShapeName` aggregate type-defs in QBE output are now vestigial
+  for function signatures — kept emitting them in case any other path
+  still references them, but the cleanup-pass would be safe to remove
+  if anyone wants to reduce output size.
+- The mixel C backend still doesn't link (SDL3 cbind issue from
+  previous sessions). Mixel devs should default to QBE.
+
+---
+
+## Session log — 2026-04-25 (unary `-` precedence vs postfix `.field`)
+
+After the previous fixes, 02_groups built cleanly but segfaulted in
+`main + 588` once the bounce loop ran `s.vel.x = -s.vel.x`. Disassembly
+showed the unary minus being applied to the *sprite pointer* (negating
+an address, then adding 16, then loading a double from the result).
+
+### What changed in the compiler
+
+`src/parser.c` — `parse_primary`'s prefix-unary handlers (TOK_MINUS,
+TOK_NOT, TOK_STAR, TOK_AMPERSAND) called `parse_primary(p)` for the
+operand. parse_primary doesn't run the postfix `.field` / `[idx]` loop
+— that lives in `parse_expr_prec`. So `-sp.vel.x` parsed as
+`(-sp).vel.x`: the unary wrapped IDENT(sp) only, and the outer
+parse_expr_prec then attached `.vel.x` to the negated value.
+
+Fix: each unary handler now calls `parse_expr_prec(p, PREC_UNARY)` for
+the operand. min_prec=PREC_UNARY means parse_expr_prec runs the prefix
+parse + postfix loop + try/else, then the binary-op loop bails
+immediately because all binary ops have lower precedence. Net effect:
+unary's operand correctly absorbs `.field` / `[idx]` / `?` / `else`.
+
+Added forward declaration `static AstNode *parse_expr_prec(...)` after
+the Precedence enum so parse_primary can call it.
+
+### Tests
+
+- `tests/programs/076_unary_field_prec.mix` (+ `expected/076.txt`) —
+  iterates `[Sprite]`, does `sp.vel.x = -sp.vel.x` (the exact 02_groups
+  bounce pattern), and a separate `print(-s2.vel.y)` to cover the
+  non-method form. Crashed before the parser fix; passes on both
+  backends now.
+- 77 QBE + 16 + 19 + 29 = **141 green on QBE**, 72 on C (same 5
+  pre-existing C failures).
+
+### What changed in mixel
+
+Nothing — the demo's source was always correct; the parser was
+miscompiling it. After the fix, `02_groups/main` runs as intended.
+
+### Things to know if resuming
+
+- Right-associativity of stacked unaries (`--x.y`) was not separately
+  fixed — it still parses as `(--x).y`. Single unary cases (the common
+  one) are now correct. If `--x.y` ever matters, the inner unary's
+  recursive parse would need to switch from parse_primary to
+  parse_expr_prec(PREC_UNARY) too — same shape as the outer fix.
+- The Pratt-style precedence table now correctly models PREC_CALL >
+  PREC_UNARY > PREC_FACTOR > PREC_TERM. PREC_CALL doesn't appear in
+  `get_precedence` because `.field` and `[idx]` are handled by the
+  postfix loop directly (not as binary operators) — that asymmetry is
+  the underlying reason the bug existed.
+- `parse_expr_prec(p, PREC_UNARY)` for the unary operand will also
+  consume a `?` (try) or an `else` clause attached to the operand. So
+  `-x?` is now `-(x?)` and `-x else 5` is `-(x else 5)`. Both are
+  reasonable, neither is observed in current tests.

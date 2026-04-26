@@ -184,6 +184,8 @@ typedef enum {
     PREC_CALL,        // () [] .
 } Precedence;
 
+static AstNode *parse_expr_prec(Parser *p, Precedence min_prec);
+
 static Precedence get_precedence(TokenKind kind) {
     switch (kind) {
         case TOK_OR:       return PREC_OR;
@@ -614,32 +616,36 @@ static AstNode *parse_primary(Parser *p) {
             expect(p, TOK_RPAREN);
             return expr;
         }
+        // Unary prefix ops bind looser than postfix `.field` / `[idx]` /
+        // method-call. Use parse_expr_prec(PREC_UNARY) (which runs the
+        // postfix loop after parse_primary) so `-s.vel.x` parses as
+        // `-(s.vel.x)`, not `(-s).vel.x`.
         case TOK_MINUS: {
             advance_tok(p);
             AstNode *node = ast_new(p->arena, NODE_UNARY_EXPR, loc);
             node->unary.op = TOK_MINUS;
-            node->unary.operand = parse_primary(p);
+            node->unary.operand = parse_expr_prec(p, PREC_UNARY);
             return node;
         }
         case TOK_NOT: {
             advance_tok(p);
             AstNode *node = ast_new(p->arena, NODE_UNARY_EXPR, loc);
             node->unary.op = TOK_NOT;
-            node->unary.operand = parse_primary(p);
+            node->unary.operand = parse_expr_prec(p, PREC_UNARY);
             return node;
         }
         case TOK_STAR: {
             advance_tok(p);
             AstNode *node = ast_new(p->arena, NODE_UNARY_EXPR, loc);
             node->unary.op = TOK_STAR;
-            node->unary.operand = parse_primary(p);
+            node->unary.operand = parse_expr_prec(p, PREC_UNARY);
             return node;
         }
         case TOK_AMPERSAND: {
             advance_tok(p);
             AstNode *node = ast_new(p->arena, NODE_UNARY_EXPR, loc);
             node->unary.op = TOK_AMPERSAND;
-            node->unary.operand = parse_primary(p);
+            node->unary.operand = parse_expr_prec(p, PREC_UNARY);
             return node;
         }
         case TOK_SHARED: {
@@ -1580,6 +1586,53 @@ static AstNode *parse_top_level(Parser *p) {
         node->use_decl.imports = NULL;
         node->use_decl.import_count = 0;
 
+        // Path-style use: starts with `..`. Slash-separated segments,
+        // each segment is `..` or an identifier. Lets a demo do
+        // `use ../../mixel` to import a sibling-of-grandparent module.
+        // No alias here (filesystem-shaped paths and aliases mix awkwardly);
+        // selective imports (`: name1, name2`) still work via the colon
+        // branch below.
+        if (check(p, TOK_DOTDOT)) {
+            char path[256];
+            int off = 0;
+            // First segment must be `..` (we already see TOK_DOTDOT).
+            advance_tok(p);
+            off += snprintf(path + off, sizeof(path) - off, "..");
+            while (match_tok(p, TOK_SLASH)) {
+                if (off >= (int)sizeof(path) - 4) {
+                    mix_error(loc, "use path too long");
+                    break;
+                }
+                if (check(p, TOK_DOTDOT)) {
+                    advance_tok(p);
+                    off += snprintf(path + off, sizeof(path) - off, "/..");
+                } else {
+                    // Accept any word-like token (TOK_IDENT or a keyword
+                    // whose source text starts with a letter/underscore) so
+                    // directory names like `shared` or `int` work even
+                    // though they collide with reserved words.
+                    Token *seg = current(p);
+                    if (seg->length > 0 &&
+                        (((unsigned char)seg->start[0] >= 'A' &&
+                          (unsigned char)seg->start[0] <= 'Z') ||
+                         ((unsigned char)seg->start[0] >= 'a' &&
+                          (unsigned char)seg->start[0] <= 'z') ||
+                         seg->start[0] == '_')) {
+                        advance_tok(p);
+                        off += snprintf(path + off, sizeof(path) - off,
+                                        "/%.*s", seg->length, seg->start);
+                    } else {
+                        mix_error(tok_loc(p),
+                                  "expected identifier or `..` after `/` in use path");
+                        break;
+                    }
+                }
+            }
+            node->use_decl.module_path = arena_strdup(p->arena, path);
+            // Fall through to colon check below for selective imports.
+            goto use_decl_colon_check;
+        }
+
         // First identifier
         Token *first = expect(p, TOK_IDENT);
         char path[256];
@@ -1614,6 +1667,7 @@ static AstNode *parse_top_level(Parser *p) {
             node->use_decl.module_path = arena_strdup(p->arena, path);
         }
 
+use_decl_colon_check:
         // Optional selective imports: ... : name1, name2
         if (match_tok(p, TOK_COLON)) {
             // Disallow combining with alias for now — it's confusing semantically.

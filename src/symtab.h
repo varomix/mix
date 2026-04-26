@@ -10,6 +10,12 @@ typedef struct Symbol {
     MixType *type;
     bool is_mutable;
     bool is_global;     // module-level mutable; emit/read as global storage
+    // For SHAPE-typed variables only: when true, %v.<name> is an alloca slot
+    // holding a pointer to the shape (e.g. a for-each loop var over a shape
+    // list). When false (the default), %v.<name> is the pointer itself —
+    // the QBE NODE_VAR_DECL `=l copy` aliasing pattern. The QBE NODE_IDENT
+    // path uses this flag to choose between `loadl %v.x` and `copy %v.x`.
+    bool is_pointer_slot;
     struct Symbol *next;
 } Symbol;
 

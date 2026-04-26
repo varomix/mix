@@ -593,6 +593,11 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                 // Mark whether the variable was declared as mutable
                 // (needed by emitter to know if load or copy)
                 expr->ident.is_mutable = sym->is_mutable;
+                // Sema's scopes are gone by emit time; capture this flag
+                // here so QBE knows whether `%v.<name>` is the pointer
+                // (the usual shape var) or a slot holding the pointer
+                // (a for-each loop var over a shape list).
+                expr->ident.is_pointer_slot = sym->is_pointer_slot;
             }
             return expr->resolved_type;
         }
@@ -1356,7 +1361,19 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                 Symbol *existing = symtab_lookup(&sema->symtab, stmt->var_decl.name);
                 bool target_is_shape = existing && existing->type &&
                     existing->type->kind == TYPE_SHAPE;
-                if (existing && existing->is_mutable && !target_is_shape) {
+                // Inside a mutating method, a shape-typed name that matches a
+                // field of `current_shape` should mutate the field, not shadow
+                // it with a local. The NODE_ASSIGN path rewrites it to a
+                // FIELD_ASSIGN against `self`, which the emitter handles via
+                // memcpy. Without this, `pos! = Vec2(...)` would silently
+                // create a fresh local `pos` and leave self.pos untouched.
+                bool target_is_self_field = false;
+                if (target_is_shape && sema->current_shape &&
+                    type_find_field(sema->current_shape, stmt->var_decl.name)) {
+                    target_is_self_field = true;
+                }
+                if (existing && existing->is_mutable &&
+                    (!target_is_shape || target_is_self_field)) {
                     AstNode *init = stmt->var_decl.init_expr;
                     char *name = stmt->var_decl.name;
                     stmt->kind = NODE_ASSIGN;
@@ -1390,6 +1407,13 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                 }
             }
             symtab_insert(&sema->symtab, stmt->var_decl.name, type, stmt->var_decl.is_mutable);
+            // Shape-typed local NODE_VAR_DECLs use an alloca slot in QBE
+            // (so loop-declared shape vars get a fresh slot per iteration);
+            // mark the symbol so NODE_IDENT loads from it.
+            if (type && type->kind == TYPE_SHAPE && !stmt->var_decl.is_global) {
+                Symbol *vsym = symtab_lookup_current(&sema->symtab, stmt->var_decl.name);
+                if (vsym) vsym->is_pointer_slot = true;
+            }
             break;
         }
         case NODE_ASSIGN: {
@@ -1516,6 +1540,15 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                 var_type = make_type(sema->arena, TYPE_INT);
             }
             symtab_insert(&sema->symtab, stmt->for_stmt.var_name, var_type, true);
+            // Shape-typed loop vars live in an 8-byte alloca slot holding a
+            // pointer (the list element value). The QBE NODE_IDENT path
+            // checks this flag to load the pointer instead of treating the
+            // slot address as the shape itself.
+            if (var_type && var_type->kind == TYPE_SHAPE) {
+                Symbol *vsym = symtab_lookup_current(&sema->symtab,
+                                                      stmt->for_stmt.var_name);
+                if (vsym) vsym->is_pointer_slot = true;
+            }
             if (stmt->for_stmt.index_name) {
                 // For maps: index_name = key type; for lists: index_name = int
                 MixType *idx_type = make_type(sema->arena, TYPE_INT);

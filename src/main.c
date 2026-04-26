@@ -417,8 +417,17 @@ static int fmt_dispatch(const char **paths, int n_paths,
 
 // Resolve module path: "math" -> "./math.mix", "engine.physics" -> "./engine/physics.mix"
 // For "std.*" modules, search relative to the compiler binary first.
+// Path-style modules (containing '/' from `use ../../mixel`) are joined to
+// base_dir verbatim — no dot-to-slash conversion.
 static char *resolve_module_path(Arena *arena, const char *base_dir,
                                   const char *module_path, const char *exe_dir) {
+    // Path-style: `use ../../mixel` parsed module_path = "../../mixel".
+    // Treat as a literal relative path under base_dir.
+    if (strchr(module_path, '/')) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/%s.mix", base_dir, module_path);
+        return arena_strdup(arena, path);
+    }
     // Check for stdlib import: starts with "std."
     if (strncmp(module_path, "std.", 4) == 0) {
         const char *rest = module_path + 4; // skip "std."

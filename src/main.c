@@ -477,6 +477,7 @@ static char *resolve_module_path(Arena *arena, const char *base_dir,
 // Entries are pushed on entry to compile_module and popped on exit,
 // so only modules on the current call-chain are tracked.
 #define MAX_COMPILING_MODULES 128
+#define MAX_LINK_FLAGS 64
 static const char *compiling_modules[MAX_COMPILING_MODULES];
 static int compiling_module_count = 0;
 
@@ -530,7 +531,8 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
                             bool debug, bool use_c_backend,
                             const char *exe_dir,
                             char **module_asm_files, int *module_count,
-                            int max_modules) {
+                            int max_modules,
+                            char **link_flags, int *link_flag_count) {
     // Circular import check
     if (is_module_compiling(source_path)) {
         fprintf(stderr, "mix: circular import detected: '%s'\n", source_path);
@@ -588,6 +590,25 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
             errors_set_source(source, source_path);
             free(bind_src);
             free(bl.tokens);
+
+            // Propagate `link "lib"` to the root linker line so an importing
+            // file doesn't have to re-declare it. Dedupe — multiple modules
+            // pulling in the same lib should still produce a single -l flag.
+            const char *lib = decl->use_c_decl.lib_name;
+            if (lib && link_flags && link_flag_count) {
+                char dash_l[256];
+                snprintf(dash_l, sizeof(dash_l), "-l%s", lib);
+                bool already = false;
+                for (int li = 0; li < *link_flag_count; li++) {
+                    if (strcmp(link_flags[li], dash_l) == 0) {
+                        already = true;
+                        break;
+                    }
+                }
+                if (!already && *link_flag_count < MAX_LINK_FLAGS) {
+                    link_flags[(*link_flag_count)++] = arena_strdup(arena, dash_l);
+                }
+            }
         } else if (decl->kind == NODE_USE_DECL) {
             char *sub_path = resolve_module_path(arena, base_dir,
                                                   decl->use_decl.module_path, exe_dir);
@@ -600,7 +621,8 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
             char *sub_asm = compile_module(sub_path, arena, sema, base_dir,
                                            verbose, debug, use_c_backend,
                                            exe_dir, module_asm_files,
-                                           module_count, max_modules);
+                                           module_count, max_modules,
+                                           link_flags, link_flag_count);
             if (!sub_asm) {
                 fprintf(stderr, "mix: failed to compile module '%s'\n",
                         decl->use_decl.module_path);
@@ -713,7 +735,6 @@ int main(int argc, char **argv) {
     const char *fmt_paths[MAX_FMT_PATHS];
     int fmt_path_count = 0;
 
-    #define MAX_LINK_FLAGS 64
     char *link_flags[MAX_LINK_FLAGS];
     int link_flag_count = 0;
 
@@ -1029,11 +1050,19 @@ int main(int argc, char **argv) {
             free(bind_src);
             free(bind_lex.tokens);
 
-            // Collect -l flag for linker
+            // Collect -l flag for linker (dedupe so the same lib pulled in
+            // from multiple `use c` declarations only appears once).
             if (lib && link_flag_count < MAX_LINK_FLAGS) {
                 char *lflag = arena_alloc(&arena, strlen(lib) + 3);
                 sprintf(lflag, "-l%s", lib);
-                link_flags[link_flag_count++] = lflag;
+                bool already = false;
+                for (int li = 0; li < link_flag_count; li++) {
+                    if (strcmp(link_flags[li], lflag) == 0) {
+                        already = true;
+                        break;
+                    }
+                }
+                if (!already) link_flags[link_flag_count++] = lflag;
             }
 
             // Collect source file for compilation (e.g. source "glad/glad.c")
@@ -1125,7 +1154,8 @@ int main(int argc, char **argv) {
             char *asm_file = compile_module(mod_path, &arena, &sema, base_dir,
                                             verbose, debug_mode, use_c_backend,
                                             exe_dir, module_asm_files,
-                                            &module_count, MAX_MODULES);
+                                            &module_count, MAX_MODULES,
+                                            link_flags, &link_flag_count);
             if (!asm_file) {
                 fprintf(stderr, "mix: failed to compile module '%s'\n", decl->use_decl.module_path);
                 return 1;

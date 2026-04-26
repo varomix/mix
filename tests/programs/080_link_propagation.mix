@@ -1,0 +1,11 @@
+// Root file does NOT declare `use c "..."` — it just imports `wrap`,
+// which itself does `use c "tests/programs/clib/link_helper.h"`. The
+// helper's compiled .o is added by the test runner via the `.link`
+// companion file. This test verifies that the linker flags from a
+// sub-module's `use c` propagate up to the root link line.
+
+use clib.wrap
+
+main() ~
+    touch()
+    print(7)

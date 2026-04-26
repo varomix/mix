@@ -1,0 +1,7 @@
+// Sub-module that pulls in a C header. The `use c` is NOT repeated by the
+// root program in 080_link_propagation — the compiler must propagate the
+// linker flags up so the helper.c symbols still resolve.
+use c "tests/programs/clib/link_helper.h"
+
+pub touch() ~
+    link_test_noop()

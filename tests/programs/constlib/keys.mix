@@ -1,0 +1,12 @@
+// Module exposes `pub @const` integers. Importer should be able to use
+// them directly in arithmetic and as function arguments without QBE
+// codegen errors.
+pub @const KEY_LEFT = 80
+pub @const KEY_RIGHT = 79
+pub @const MASK = 0xCAFE
+
+pub describe(k: int) -> str
+    match k
+        80 => "left"
+        79 => "right"
+        _  => "?"

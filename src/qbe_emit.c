@@ -265,6 +265,13 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             }
             int t = next_temp(emit);
             const char *ty = qbe_type(expr->resolved_type);
+            Symbol *gsym = symtab_lookup(emit->symtab, expr->ident.name);
+            if (gsym && gsym->is_global) {
+                const char *load_ty = type_to_qbe_load(expr->resolved_type);
+                fprintf(emit->out, "\t%%t%d =%s load%s $g_%s\n",
+                        t, ty, load_ty, expr->ident.name);
+                return t;
+            }
             // Shape variables are pointers — always copy
             if (expr->resolved_type && expr->resolved_type->kind == TYPE_SHAPE) {
                 fprintf(emit->out, "\t%%t%d =l copy %%v.%s\n", t, expr->ident.name);
@@ -788,11 +795,11 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     Symbol *msym = symtab_lookup(emit->symtab, mangled);
                     if (msym) {
                         const char *ret_sig = qbe_sig_type(expr->resolved_type, emit->arena);
-                        const char *shape_ty = qbe_sig_type(ltype, emit->arena);
                         MixType *rtype = expr->binary.right->resolved_type;
                         const char *right_ty = qbe_sig_type(rtype, emit->arena);
-                        fprintf(emit->out, "\t%%t%d =%s call $%s(%s %%t%d, %s %%t%d)\n",
-                                t, ret_sig, mangled, shape_ty, left, right_ty, right);
+                        // Self always passes as a pointer (matches emit_method).
+                        fprintf(emit->out, "\t%%t%d =%s call $%s(l %%t%d, %s %%t%d)\n",
+                                t, ret_sig, mangled, left, right_ty, right);
                         return t;
                     }
                 }
@@ -1218,9 +1225,25 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                         t, arg_temps[0]);
                 return t;
             }
-            if (strcmp(expr->call.name, "peek_u32") == 0 && expr->call.arg_count == 1) {
-                fprintf(emit->out, "\t%%t%d =w call $mix_peek_u32(l %%t%d)\n",
-                        t, arg_temps[0]);
+            if (strcmp(expr->call.name, "peek_u32") == 0 && expr->call.arg_count == 2) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_peek_u32_at(l %%t%d, l %%t%d)\n",
+                        t, arg_temps[0], arg_temps[1]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "peek_byte") == 0 && expr->call.arg_count == 2) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_peek_byte(l %%t%d, l %%t%d)\n",
+                        t, arg_temps[0], arg_temps[1]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "peek_f32") == 0 && expr->call.arg_count == 2) {
+                fprintf(emit->out, "\t%%t%d =d call $mix_peek_f32(l %%t%d, l %%t%d)\n",
+                        t, arg_temps[0], arg_temps[1]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "memcpy") == 0 && expr->call.arg_count == 3) {
+                fprintf(emit->out, "\tcall $mix_memcpy(l %%t%d, l %%t%d, l %%t%d)\n",
+                        arg_temps[0], arg_temps[1], arg_temps[2]);
+                fprintf(emit->out, "\t%%t%d =l copy 0\n", t);
                 return t;
             }
             if (strcmp(expr->call.name, "poke_f32") == 0 && expr->call.arg_count == 3) {
@@ -1610,10 +1633,11 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 fprintf(emit->out, "\tcall $%s(", mangled);
             }
 
-            // First arg: self (the object)
-            const char *self_ty = (mtype && mtype->func.param_count > 0)
-                ? qbe_sig_type(mtype->func.param_types[0], emit->arena) : "l";
-            fprintf(emit->out, "%s %%t%d", self_ty, obj_temp);
+            // First arg: self — always passed as a pointer so methods can
+            // mutate the receiver. (mtype's first param is the shape type
+            // itself, not a pointer to it; we ignore it here.)
+            (void)mtype;
+            fprintf(emit->out, "l %%t%d", obj_temp);
 
             // Remaining args
             for (int i = 0; i < expr->method_call.arg_count; i++) {
@@ -1917,14 +1941,20 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             MixType *var_type = assign_sym ? assign_sym->type : NULL;
             MixType *val_type = stmt->assign.value->resolved_type;
             const char *ty = qbe_type(var_type ? var_type : val_type);
+            const char *mem_ty = type_to_qbe_mem(var_type ? var_type : val_type);
+            const char *load_ty = type_to_qbe_load(var_type ? var_type : val_type);
             val = coerce_to_field_type(emit, val, val_type, var_type);
+            bool is_global = assign_sym && assign_sym->is_global;
+            const char *slot_prefix = is_global ? "$g_" : "%v.";
 
             if (stmt->assign.op == TOK_EQ) {
-                fprintf(emit->out, "\tstore%s %%t%d, %%v.%s\n", ty, val, stmt->assign.name);
+                fprintf(emit->out, "\tstore%s %%t%d, %s%s\n",
+                        mem_ty, val, slot_prefix, stmt->assign.name);
             } else {
                 // Compound assignment: load, op, store
                 int old = next_temp(emit);
-                fprintf(emit->out, "\t%%t%d =%s load%s %%v.%s\n", old, ty, ty, stmt->assign.name);
+                fprintf(emit->out, "\t%%t%d =%s load%s %s%s\n",
+                        old, ty, load_ty, slot_prefix, stmt->assign.name);
                 int result = next_temp(emit);
                 const char *op;
                 switch (stmt->assign.op) {
@@ -1935,7 +1965,8 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                     default: op = "add"; break;
                 }
                 fprintf(emit->out, "\t%%t%d =%s %s %%t%d, %%t%d\n", result, ty, op, old, val);
-                fprintf(emit->out, "\tstore%s %%t%d, %%v.%s\n", ty, result, stmt->assign.name);
+                fprintf(emit->out, "\tstore%s %%t%d, %s%s\n",
+                        mem_ty, result, slot_prefix, stmt->assign.name);
             }
             break;
         }
@@ -2521,8 +2552,15 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\t%%t%d =l call $mix_map_set(l %%t%d, l %%t%d, l %%t%d)\n",
                         t, obj, idx, val);
             } else {
+                MixType *elem = (obj_type && obj_type->kind == TYPE_LIST) ? obj_type->list.elem_type : NULL;
+                int store_val = val;
+                if (elem && type_is_float(elem)) {
+                    int bits = next_temp(emit);
+                    fprintf(emit->out, "\t%%t%d =l cast %%t%d\n", bits, val);
+                    store_val = bits;
+                }
                 fprintf(emit->out, "\t%%t%d =l call $mix_list_set(l %%t%d, l %%t%d, l %%t%d)\n",
-                        t, obj, idx, val);
+                        t, obj, idx, store_val);
             }
             break;
         }
@@ -2816,8 +2854,10 @@ static void emit_method(QbeEmitter *emit, AstNode *method, const char *shape_nam
         fprintf(emit->out, "%sfunction $%s(", export_kw, mangled);
     }
 
-    // First param: self
-    fprintf(emit->out, ":%s %%p.self", shape_name);
+    // First param: self — passed as a pointer (`l`), not by value, so that
+    // mutating methods can store back into the caller's shape.
+    (void)shape_name;
+    fprintf(emit->out, "l %%p.self");
 
     // User params
     for (int i = 0; i < method->fn_decl.param_count; i++) {
@@ -3008,6 +3048,44 @@ void qbe_emit_program(QbeEmitter *emit, AstNode *program) {
                     }
                 }
             }
+        }
+    }
+    fprintf(emit->out, "\n");
+
+    // Emit data sections for module-level mutables (`name! = literal` at
+    // module scope). `pub` ones are exported so importing modules can
+    // resolve `$g_<name>` at link time; private ones are local to the
+    // current translation unit. Reads/writes against $g_<name> are
+    // routed through NODE_IDENT/NODE_ASSIGN special-cases.
+    for (int i = 0; i < program->program.decl_count; i++) {
+        AstNode *decl = program->program.decls[i];
+        if (decl->kind != NODE_VAR_DECL || !decl->var_decl.is_global) continue;
+        AstNode *init = decl->var_decl.init_expr;
+        bool neg = false;
+        if (init && init->kind == NODE_UNARY_EXPR && init->unary.op == TOK_MINUS) {
+            neg = true;
+            init = init->unary.operand;
+        }
+        const char *name = decl->var_decl.name;
+        const char *export_kw = decl->var_decl.is_pub ? "export " : "";
+        if (init && init->kind == NODE_INT_LIT) {
+            int64_t v = init->int_lit.value;
+            if (neg) v = -v;
+            fprintf(emit->out, "%sdata $g_%s = align 8 { l %" PRId64 " }\n",
+                    export_kw, name, v);
+        } else if (init && init->kind == NODE_FLOAT_LIT) {
+            double v = init->float_lit.value;
+            if (neg) v = -v;
+            fprintf(emit->out, "%sdata $g_%s = align 8 { d d_%a }\n",
+                    export_kw, name, v);
+        } else if (init && init->kind == NODE_BOOL_LIT) {
+            fprintf(emit->out, "%sdata $g_%s = align 4 { w %d }\n",
+                    export_kw, name, init->bool_lit.value ? 1 : 0);
+        } else if (init && init->kind == NODE_STRING_LIT) {
+            const char *s = emit_string_data(emit,
+                init->string_lit.value, init->string_lit.length);
+            fprintf(emit->out, "%sdata $g_%s = align 8 { l %s }\n",
+                    export_kw, name, s);
         }
     }
     fprintf(emit->out, "\n");

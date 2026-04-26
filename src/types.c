@@ -122,6 +122,7 @@ int type_alignment(MixType *type) {
         case TYPE_INT8: case TYPE_UINT8: case TYPE_BYTE: case TYPE_BOOL: return 1;
         case TYPE_INT16: case TYPE_UINT16: return 2;
         case TYPE_INT32: case TYPE_UINT32: case TYPE_FLOAT32: return 4;
+        case TYPE_SHAPE: return type->shape.alignment > 0 ? type->shape.alignment : 8;
         default: return 8;
     }
 }

@@ -786,7 +786,14 @@ static void handle_completion_request(LspServer *server, int64_t id, JsonValue *
             {"str_count", "(str, str) -> int"},
             {"alloc", "(int) -> *byte"},
             {"bytes", "(int) -> *byte"},
-            {"peek_u32", "(*byte) -> uint32"},
+            {"peek_u32", "(*byte, int) -> int"},
+            {"peek_byte", "(*byte, int) -> int"},
+            {"peek_f32", "(*byte, int) -> float"},
+            {"peek_ptr", "(*byte, int) -> *byte"},
+            {"poke_u32", "(*byte, int, int)"},
+            {"poke_f32", "(*byte, int, float)"},
+            {"poke_ptr", "(*byte, int, *byte)"},
+            {"memcpy", "(*byte, *byte, int)"},
             {"free_mem", "(*byte)"},
             {NULL, NULL}
         };
@@ -1120,7 +1127,7 @@ static const char *validate_rename(const char *name) {
         "float32","float64",
         // Common builtins (subset — name collision will be reported at edit time too)
         "print","panic","assert","len","sizeof","type_of","ord","chr",
-        "alloc","bytes","free_mem","peek_u32","peek_ptr","poke_u32","poke_ptr",
+        "alloc","bytes","free_mem","peek_u32","peek_byte","peek_f32","peek_ptr","memcpy","poke_u32","poke_f32","poke_ptr",
         NULL
     };
     for (int i = 0; reserved[i]; i++) {

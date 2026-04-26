@@ -1,0 +1,23 @@
+// Local + cross-module module-level mutables.
+use globallib.state
+
+count! = 100
+
+main()
+    print(count)
+    count! += 5
+    print(count)
+
+    print(running)
+    print(tick)
+    bump()
+    bump()
+    bump()
+    print(tick)
+
+    // Direct write to imported global
+    tick! = 999
+    print(tick)
+
+    stop()
+    print(running)

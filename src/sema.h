@@ -39,6 +39,25 @@ typedef struct {
     AstNode **instantiated_decls;
     int instantiated_decl_count;
     int instantiated_decl_cap;
+    // While analyzing a method body: the enclosing shape and whether the
+    // method is declared mutating (postfix `!`). Used to rewrite bare
+    // `field! += val` into `self.field += val`, and to allow field stores
+    // through self in mutating methods.
+    MixType *current_shape;
+    bool current_method_mutates;
+    // Every `@const` decl seen by this sema instance — including ones from
+    // imported sub-modules. Emitters use this list to inline const values at
+    // use sites, which is necessary because the main program AST only sees
+    // its own NODE_CONST_DECLs (sub-module decls live in the sub-module AST,
+    // which is dropped after compile_module returns).
+    AstNode **all_consts;
+    int all_const_count;
+    int all_const_cap;
+    // Module-level mutable variable decls seen across all compiled modules.
+    // Spliced into the main program in pass-(e), parallel to all_consts.
+    AstNode **all_globals;
+    int all_global_count;
+    int all_global_cap;
 } Sema;
 
 Sema sema_create(Arena *arena);

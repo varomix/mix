@@ -1,0 +1,9 @@
+// Module exposes a `pub` mutable global. Importer can read and write it.
+pub running! = true
+pub tick! = 0
+
+pub bump()
+    tick! += 1
+
+pub stop()
+    running! = false

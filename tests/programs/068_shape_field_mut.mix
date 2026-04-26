@@ -1,0 +1,39 @@
+// Mutating shape fields:
+//   1. external `s.x = v`
+//   2. external `s.x! = v` and compound `s.x! += v`
+//   3. internal `field! += v` inside a mutating method
+//   4. internal `self.field = v` inside a mutating method
+shape Point
+    x: float
+    y: float
+
+    move(dx: float, dy: float) !
+        x! += dx
+        y! += dy
+
+    reset() !
+        self.x = 0.0
+        self.y = 0.0
+
+main()
+    p! = Point(x: 1.0, y: 2.0)
+
+    // case 1
+    p.x = 5.0
+    print(p.x)
+
+    // case 2
+    p.y! = 7.0
+    print(p.y)
+    p.x! += 10.0
+    print(p.x)
+
+    // case 3
+    p.move!(100.0, 200.0)
+    print(p.x)
+    print(p.y)
+
+    // case 4
+    p.reset!()
+    print(p.x)
+    print(p.y)

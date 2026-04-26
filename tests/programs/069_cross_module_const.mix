@@ -1,0 +1,10 @@
+use constlib.keys
+
+main()
+    print(KEY_LEFT)
+    print(KEY_RIGHT)
+    print(MASK)
+    print(KEY_LEFT + 1)
+    print(describe(KEY_LEFT))
+    print(describe(KEY_RIGHT))
+    print(describe(0))

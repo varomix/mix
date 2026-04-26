@@ -1,0 +1,28 @@
+main()
+    buf = bytes(32)
+    // poke a few values then peek them back at offsets
+    poke_u32(buf, 0, 0xCAFE)
+    poke_u32(buf, 4, 7)
+    poke_f32(buf, 8, 3.5)
+    poke_f32(buf, 12, -2.25)
+
+    print(peek_u32(buf, 0))
+    print(peek_u32(buf, 4))
+    print(peek_f32(buf, 8))
+    print(peek_f32(buf, 12))
+
+    // peek_byte reads a single byte (little-endian: low byte of 0x1234 at offset 16 is 0x34 = 52)
+    poke_u32(buf, 16, 0x1234)
+    print(peek_byte(buf, 16))
+    print(peek_byte(buf, 17))
+
+    // memcpy: copy 4 bytes from offset 0 to offset 20, then peek at 20
+    src = bytes(8)
+    poke_u32(src, 0, 999)
+    dst = bytes(8)
+    memcpy(dst, src, 4)
+    print(peek_u32(dst, 0))
+
+    free_mem(buf)
+    free_mem(src)
+    free_mem(dst)

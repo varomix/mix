@@ -388,6 +388,7 @@ static MixType *instantiate_generic_shape(Sema *sema, const char *template_name,
     shape_type->shape.fields = arena_alloc(sema->arena,
         sizeof(ShapeFieldInfo) * clone->shape_decl.field_count);
     int offset = 0;
+    int max_align = 1;
     for (int j = 0; j < clone->shape_decl.field_count; j++) {
         ShapeField *sf = &clone->shape_decl.fields[j];
         MixType *ftype = sf->type ? resolve_type_node(sema, sf->type)
@@ -395,6 +396,7 @@ static MixType *instantiate_generic_shape(Sema *sema, const char *template_name,
         if (sf->type) sf->type->resolved_type = ftype;
         int fsize = type_size(ftype);
         int falign = type_alignment(ftype);
+        if (falign > max_align) max_align = falign;
         offset = (offset + falign - 1) & ~(falign - 1);
         shape_type->shape.fields[j].name = sf->name;
         shape_type->shape.fields[j].type = ftype;
@@ -404,8 +406,8 @@ static MixType *instantiate_generic_shape(Sema *sema, const char *template_name,
         sf->size = fsize;
         offset += fsize;
     }
-    shape_type->shape.total_size = (offset + 7) & ~7;
-    shape_type->shape.alignment = 8;
+    shape_type->shape.total_size = (offset + max_align - 1) & ~(max_align - 1);
+    shape_type->shape.alignment = max_align;
     clone->resolved_type = shape_type;
 
     // Register the instantiated shape into the GLOBAL scope, not whatever
@@ -1342,12 +1344,19 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
         case NODE_VAR_DECL: {
             // Parser produces VAR_DECL for any `name = expr`. If `name` is
             // already declared as mutable in an enclosing scope and this
-            // VAR_DECL doesn't add `!` or a type annotation, it is really
-            // an assignment — rewrite it. This makes `s! = 0; ...; s = s + 1`
+            // VAR_DECL doesn't add a type annotation, it is really an
+            // assignment — rewrite it. This makes `s! = 0; ...; s = s + 1`
             // work as expected and avoids spurious shadowing in both backends.
-            if (!stmt->var_decl.is_mutable && !stmt->var_decl.type_ann) {
+            // We also accept `s! = ...` when `s` already exists mutable
+            // (the user's intent is mutation, not shadowing). Skip the
+            // rewrite for shape/union variables — those use pointer-alias
+            // semantics and the emitters allocate no rebindable slot for
+            // them, so re-declaration (shadowing) is the correct behavior.
+            if (!stmt->var_decl.type_ann) {
                 Symbol *existing = symtab_lookup(&sema->symtab, stmt->var_decl.name);
-                if (existing && existing->is_mutable) {
+                bool target_is_shape = existing && existing->type &&
+                    existing->type->kind == TYPE_SHAPE;
+                if (existing && existing->is_mutable && !target_is_shape) {
                     AstNode *init = stmt->var_decl.init_expr;
                     char *name = stmt->var_decl.name;
                     stmt->kind = NODE_ASSIGN;
@@ -1384,6 +1393,40 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
             break;
         }
         case NODE_ASSIGN: {
+            // Inside a method body, a bare-name assignment whose name is a
+            // field of the enclosing shape is sugar for `self.field op= val`.
+            // Rewrite the AST node in place so the emitter sees a proper
+            // field store. (Reads of bare field names are already handled
+            // implicitly by the emitter's NODE_IDENT path.)
+            if (sema->current_shape) {
+                ShapeFieldInfo *fi = type_find_field(sema->current_shape, stmt->assign.name);
+                if (fi) {
+                    if (!sema->current_method_mutates) {
+                        mix_error(stmt->loc,
+                                  "cannot assign to field '%s' from a non-mutating method "
+                                  "(declare the method with a trailing `!`)",
+                                  stmt->assign.name);
+                        break;
+                    }
+                    AstNode *self_ref = ast_new(sema->arena, NODE_IDENT, stmt->loc);
+                    self_ref->ident.name = "self";
+                    self_ref->ident.is_mutable = true;
+                    self_ref->resolved_type = sema->current_shape;
+
+                    char *field_name = stmt->assign.name;
+                    TokenKind op = stmt->assign.op;
+                    AstNode *value = stmt->assign.value;
+
+                    stmt->kind = NODE_FIELD_ASSIGN;
+                    stmt->field_assign.object = self_ref;
+                    stmt->field_assign.field_name = field_name;
+                    stmt->field_assign.value = value;
+                    stmt->field_assign.op = op;
+                    // Re-dispatch through the FIELD_ASSIGN branch below.
+                    analyze_stmt(sema, stmt);
+                    break;
+                }
+            }
             MixType *val_type = resolve_expr(sema, stmt->assign.value);
             Symbol *var_sym = symtab_lookup(&sema->symtab, stmt->assign.name);
             if (var_sym && var_sym->type && val_type) {
@@ -1398,6 +1441,47 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                               stmt->assign.name,
                               type_name(sema->arena, var_sym->type));
                 }
+            }
+            break;
+        }
+        case NODE_FIELD_ASSIGN: {
+            MixType *obj_type = resolve_expr(sema, stmt->field_assign.object);
+            MixType *val_type = resolve_expr(sema, stmt->field_assign.value);
+            if (!obj_type) break;
+            if (obj_type->kind != TYPE_SHAPE) {
+                mix_error(stmt->loc, "cannot assign to field on non-shape type %s",
+                          type_name(sema->arena, obj_type));
+                break;
+            }
+            ShapeFieldInfo *fi = type_find_field(obj_type, stmt->field_assign.field_name);
+            if (!fi) {
+                mix_error(stmt->loc, "shape '%s' has no field '%s'",
+                          obj_type->shape.name, stmt->field_assign.field_name);
+                break;
+            }
+            // The object expression must refer to a mutable binding. A bare
+            // identifier is the common case (`p.x = ...` requires `p! = ...`);
+            // chained accesses (`g.player.x = ...`) walk back to the root.
+            AstNode *root = stmt->field_assign.object;
+            while (root && root->kind == NODE_FIELD_EXPR) root = root->field_expr.object;
+            if (root && root->kind == NODE_IDENT) {
+                Symbol *root_sym = symtab_lookup(&sema->symtab, root->ident.name);
+                if (root_sym && !root_sym->is_mutable) {
+                    mix_error(stmt->loc,
+                              "cannot assign to field '%s' through immutable '%s' "
+                              "(declare it as `%s! = ...`)",
+                              stmt->field_assign.field_name,
+                              root->ident.name, root->ident.name);
+                    break;
+                }
+            }
+            if (val_type && stmt->field_assign.op == TOK_EQ &&
+                !types_compatible(fi->type, val_type)) {
+                mix_error(stmt->loc,
+                          "cannot assign %s to field '%s' of type %s",
+                          type_name(sema->arena, val_type),
+                          stmt->field_assign.field_name,
+                          type_name(sema->arena, fi->type));
             }
             break;
         }
@@ -1689,6 +1773,70 @@ static bool body_contains_fail(AstNode *node) {
         }
     }
     return false;
+}
+
+// Validate that an initializer for a module-level mutable is something the
+// emitters can lower into a static data section / file-scope C global.
+// Accepts numeric/bool/string literals and unary minus on a numeric literal.
+static bool is_global_init_const(AstNode *expr) {
+    if (!expr) return false;
+    switch (expr->kind) {
+        case NODE_INT_LIT:
+        case NODE_FLOAT_LIT:
+        case NODE_BOOL_LIT:
+        case NODE_STRING_LIT:
+            return true;
+        case NODE_UNARY_EXPR:
+            if (expr->unary.op == TOK_MINUS &&
+                expr->unary.operand &&
+                (expr->unary.operand->kind == NODE_INT_LIT ||
+                 expr->unary.operand->kind == NODE_FLOAT_LIT))
+                return true;
+            return false;
+        default:
+            return false;
+    }
+}
+
+// Register a module-level mutable. Adds to the shared symtab (with
+// is_global/is_mutable set) and to `all_globals` so emitters can iterate.
+static void register_global(Sema *sema, AstNode *decl) {
+    if (!is_global_init_const(decl->var_decl.init_expr)) {
+        mix_error(decl->loc,
+                  "module-level mutable '%s' must be initialized with a literal "
+                  "(int, float, bool, or string)", decl->var_decl.name);
+        return;
+    }
+    MixType *type = resolve_expr(sema, decl->var_decl.init_expr);
+    decl->resolved_type = type;
+    symtab_insert(&sema->symtab, decl->var_decl.name, type, true);
+    Symbol *sym = symtab_lookup(&sema->symtab, decl->var_decl.name);
+    if (sym) sym->is_global = true;
+    if (sema->all_global_count >= sema->all_global_cap) {
+        int new_cap = sema->all_global_cap ? sema->all_global_cap * 2 : 16;
+        AstNode **na = arena_alloc(sema->arena, sizeof(AstNode*) * new_cap);
+        if (sema->all_globals)
+            memcpy(na, sema->all_globals, sizeof(AstNode*) * sema->all_global_count);
+        sema->all_globals = na;
+        sema->all_global_cap = new_cap;
+    }
+    sema->all_globals[sema->all_global_count++] = decl;
+}
+
+// Resolve and record a `@const` decl. Adds to the shared symtab and to the
+// cross-module `all_consts` list that emitters consult for inlining.
+static void register_const(Sema *sema, AstNode *decl) {
+    MixType *ctype = resolve_expr(sema, decl->const_decl.value);
+    symtab_insert(&sema->symtab, decl->const_decl.name, ctype, false);
+    if (sema->all_const_count >= sema->all_const_cap) {
+        int new_cap = sema->all_const_cap ? sema->all_const_cap * 2 : 32;
+        AstNode **na = arena_alloc(sema->arena, sizeof(AstNode*) * new_cap);
+        if (sema->all_consts)
+            memcpy(na, sema->all_consts, sizeof(AstNode*) * sema->all_const_count);
+        sema->all_consts = na;
+        sema->all_const_cap = new_cap;
+    }
+    sema->all_consts[sema->all_const_count++] = decl;
 }
 
 static void register_fn(Sema *sema, AstNode *fn) {
@@ -2119,13 +2267,51 @@ void sema_analyze(Sema *sema, AstNode *program) {
     {
         MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
 
-        // peek_u32(ptr: *byte) -> uint32
+        // peek_u32(ptr: *byte, offset: int) -> int
         MixType *ft = make_type(sema->arena, TYPE_FUNC);
-        ft->func.return_type = make_type(sema->arena, TYPE_UINT32);
-        ft->func.param_count = 1;
-        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*));
+        ft->func.return_type = make_type(sema->arena, TYPE_INT);
+        ft->func.param_count = 2;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*) * 2);
         ft->func.param_types[0] = ptr_byte;
+        ft->func.param_types[1] = make_type(sema->arena, TYPE_INT);
         symtab_insert(&sema->symtab, "peek_u32", ft, false);
+    }
+    {
+        MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
+
+        // peek_byte(ptr: *byte, offset: int) -> int
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_INT);
+        ft->func.param_count = 2;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*) * 2);
+        ft->func.param_types[0] = ptr_byte;
+        ft->func.param_types[1] = make_type(sema->arena, TYPE_INT);
+        symtab_insert(&sema->symtab, "peek_byte", ft, false);
+    }
+    {
+        MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
+
+        // peek_f32(ptr: *byte, offset: int) -> float
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_FLOAT);
+        ft->func.param_count = 2;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*) * 2);
+        ft->func.param_types[0] = ptr_byte;
+        ft->func.param_types[1] = make_type(sema->arena, TYPE_INT);
+        symtab_insert(&sema->symtab, "peek_f32", ft, false);
+    }
+    {
+        MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
+
+        // memcpy(dst: *byte, src: *byte, n: int) ~
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_VOID);
+        ft->func.param_count = 3;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*) * 3);
+        ft->func.param_types[0] = ptr_byte;
+        ft->func.param_types[1] = ptr_byte;
+        ft->func.param_types[2] = make_type(sema->arena, TYPE_INT);
+        symtab_insert(&sema->symtab, "memcpy", ft, false);
     }
     {
         MixType *ptr_byte = make_ptr_type(sema->arena, make_type(sema->arena, TYPE_BYTE));
@@ -2337,6 +2523,7 @@ void sema_analyze(Sema *sema, AstNode *program) {
             int offset = 0;
             bool is_union = decl->shape_decl.is_union;
             int max_field_size = 0;
+            int max_align = 1;
             for (int j = 0; j < decl->shape_decl.field_count; j++) {
                 ShapeField *sf = &decl->shape_decl.fields[j];
                 MixType *ftype = sf->type ? resolve_type_node(sema, sf->type)
@@ -2345,6 +2532,7 @@ void sema_analyze(Sema *sema, AstNode *program) {
                 if (sf->type) sf->type->resolved_type = ftype;
                 int fsize = type_size(ftype);
                 int falign = type_alignment(ftype);
+                if (falign > max_align) max_align = falign;
 
                 if (is_union) {
                     // Union: all fields at offset 0
@@ -2371,14 +2559,15 @@ void sema_analyze(Sema *sema, AstNode *program) {
                     offset += fsize;
                 }
             }
-            // Final alignment
+            // Final alignment: pad to the struct's natural alignment so
+            // arrays of this shape and embedded fields lay out like C structs.
             if (is_union) {
-                shape_type->shape.total_size = (max_field_size + 7) & ~7;
+                shape_type->shape.total_size = (max_field_size + max_align - 1) & ~(max_align - 1);
                 shape_type->shape.is_union = true;
             } else {
-                shape_type->shape.total_size = (offset + 7) & ~7;
+                shape_type->shape.total_size = (offset + max_align - 1) & ~(max_align - 1);
             }
-            shape_type->shape.alignment = 8;
+            shape_type->shape.alignment = max_align;
             // Annotate the AST node so downstream tools (e.g. the LSP outline)
             // can read the shape's MixType without re-doing the symbol lookup.
             decl->resolved_type = shape_type;
@@ -2513,8 +2702,9 @@ void sema_analyze(Sema *sema, AstNode *program) {
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
         if (decl->kind == NODE_CONST_DECL) {
-            MixType *ctype = resolve_expr(sema, decl->const_decl.value);
-            symtab_insert(&sema->symtab, decl->const_decl.name, ctype, false);
+            register_const(sema, decl);
+        } else if (decl->kind == NODE_VAR_DECL && decl->var_decl.is_global) {
+            register_global(sema, decl);
         } else if (decl->kind == NODE_FN_DECL) {
             register_fn(sema, decl);
         } else if (decl->kind == NODE_EXTERN_BLOCK) {
@@ -2527,8 +2717,7 @@ void sema_analyze(Sema *sema, AstNode *program) {
                 if (cd->kind == NODE_FN_DECL) {
                     register_fn(sema, cd);
                 } else if (cd->kind == NODE_CONST_DECL) {
-                    MixType *ctype = resolve_expr(sema, cd->const_decl.value);
-                    symtab_insert(&sema->symtab, cd->const_decl.name, ctype, false);
+                    register_const(sema, cd);
                 } else if (cd->kind == NODE_EXTERN_BLOCK) {
                     for (int k = 0; k < cd->extern_block.decl_count; k++) {
                         register_extern_fn(sema, cd->extern_block.decls[k]);
@@ -2593,13 +2782,25 @@ void sema_analyze(Sema *sema, AstNode *program) {
                 AstNode *method = decl->shape_decl.methods[j];
                 symtab_push_scope(&sema->symtab);
 
-                // Insert 'self' as an implicit parameter
+                MixType *saved_shape = sema->current_shape;
+                bool saved_mutates = sema->current_method_mutates;
+                sema->current_shape = shape_type;
+                sema->current_method_mutates = method->fn_decl.has_mutation;
+
+                // Insert 'self' as an implicit parameter. When the method is
+                // marked mutating (postfix `!`), self is mutable so that
+                // `self.field = val` and `self.field! += val` type-check.
                 if (shape_type) {
-                    symtab_insert(&sema->symtab, "self", shape_type, false);
-                    // Insert shape fields as variables accessible by name
+                    symtab_insert(&sema->symtab, "self", shape_type,
+                                  method->fn_decl.has_mutation);
+                    // Insert shape fields as variables accessible by name.
+                    // Mark them mutable inside mutating methods so that
+                    // `radius! += amount` (rewritten to `self.radius += amount`)
+                    // passes the assignment check.
                     for (int k = 0; k < shape_type->shape.field_count; k++) {
                         symtab_insert(&sema->symtab, shape_type->shape.fields[k].name,
-                                      shape_type->shape.fields[k].type, false);
+                                      shape_type->shape.fields[k].type,
+                                      method->fn_decl.has_mutation);
                     }
                 }
 
@@ -2619,6 +2820,8 @@ void sema_analyze(Sema *sema, AstNode *program) {
                     }
                 }
 
+                sema->current_shape = saved_shape;
+                sema->current_method_mutates = saved_mutates;
                 symtab_pop_scope(&sema->symtab);
             }
 
@@ -2663,11 +2866,17 @@ void sema_analyze(Sema *sema, AstNode *program) {
             for (int j = 0; j < decl->shape_decl.method_count; j++) {
                 AstNode *method = decl->shape_decl.methods[j];
                 symtab_push_scope(&sema->symtab);
+                MixType *saved_shape = sema->current_shape;
+                bool saved_mutates = sema->current_method_mutates;
+                sema->current_shape = shape_type;
+                sema->current_method_mutates = method->fn_decl.has_mutation;
                 if (shape_type) {
-                    symtab_insert(&sema->symtab, "self", shape_type, false);
+                    symtab_insert(&sema->symtab, "self", shape_type,
+                                  method->fn_decl.has_mutation);
                     for (int k = 0; k < shape_type->shape.field_count; k++) {
                         symtab_insert(&sema->symtab, shape_type->shape.fields[k].name,
-                                      shape_type->shape.fields[k].type, false);
+                                      shape_type->shape.fields[k].type,
+                                      method->fn_decl.has_mutation);
                     }
                 }
                 for (int k = 0; k < method->fn_decl.param_count; k++) {
@@ -2682,6 +2891,8 @@ void sema_analyze(Sema *sema, AstNode *program) {
                     for (int k = 0; k < body->block.stmt_count; k++)
                         analyze_stmt(sema, body->block.stmts[k]);
                 }
+                sema->current_shape = saved_shape;
+                sema->current_method_mutates = saved_mutates;
                 symtab_pop_scope(&sema->symtab);
             }
         }
@@ -2702,5 +2913,47 @@ void sema_analyze(Sema *sema, AstNode *program) {
                program->program.decls, sizeof(AstNode*) * old_n);
         program->program.decls = merged;
         program->program.decl_count = new_n;
+    }
+
+    // Module-level mutable globals are NOT spliced. Each owning module
+    // emits its storage exactly once; consumers reference the symbol via
+    // extern (C backend) or by-name link (QBE). See c_emit/qbe_emit.
+
+    // Pass (e): splice cross-module `@const` decls into this program.
+    // The emitter inlines const values at use sites; without this, an
+    // importer's emitter would never see consts defined in sub-modules.
+    // Skip ones already present (by AST pointer) — that's the case for
+    // the current program's own consts, which are already in decls.
+    if (sema->all_const_count > 0) {
+        int old_n = program->program.decl_count;
+        int extra = 0;
+        for (int i = 0; i < sema->all_const_count; i++) {
+            bool present = false;
+            for (int j = 0; j < old_n; j++) {
+                if (program->program.decls[j] == sema->all_consts[i]) {
+                    present = true;
+                    break;
+                }
+            }
+            if (!present) extra++;
+        }
+        if (extra > 0) {
+            int new_n = old_n + extra;
+            AstNode **merged = arena_alloc(sema->arena, sizeof(AstNode*) * new_n);
+            int k = 0;
+            for (int i = 0; i < sema->all_const_count; i++) {
+                bool present = false;
+                for (int j = 0; j < old_n; j++) {
+                    if (program->program.decls[j] == sema->all_consts[i]) {
+                        present = true;
+                        break;
+                    }
+                }
+                if (!present) merged[k++] = sema->all_consts[i];
+            }
+            memcpy(merged + extra, program->program.decls, sizeof(AstNode*) * old_n);
+            program->program.decls = merged;
+            program->program.decl_count = new_n;
+        }
     }
 }

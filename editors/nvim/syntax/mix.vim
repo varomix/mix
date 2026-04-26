@@ -99,7 +99,7 @@ syn keyword mixBuiltin  file_open file_read file_write file_close
 syn keyword mixBuiltin  file_read_all file_write_all file_exists list_dir
 syn keyword mixBuiltin  shell shell_output env exit getcwd mkdir args
 syn keyword mixBuiltin  str_reverse str_count ord chr
-syn keyword mixBuiltin  alloc bytes peek_u32 free_mem
+syn keyword mixBuiltin  alloc bytes peek_u32 peek_byte peek_f32 peek_ptr poke_u32 poke_f32 poke_ptr memcpy free_mem
 syn keyword mixBuiltin  len panic assert sizeof type_of
 
 " ── Comments (must be defined AFTER keywords so the match takes priority) ──

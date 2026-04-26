@@ -1161,6 +1161,22 @@ static AstNode *parse_stmt(Parser *p) {
         return node;
     }
 
+    // Check for field assignment: expr.field {=, +=, -=, *=, /=} val.
+    // The same path covers `s.x = v`, `s.x! = v`, `self.radius! += amount`,
+    // etc. The trailing `!` on the field name is already absorbed by the
+    // postfix-dot loop (it accepts TOK_IDENT_MUT and strips the `!`).
+    if (expr->kind == NODE_FIELD_EXPR &&
+        (check(p, TOK_EQ) || check(p, TOK_PLUS_EQ) || check(p, TOK_MINUS_EQ) ||
+         check(p, TOK_STAR_EQ) || check(p, TOK_SLASH_EQ))) {
+        Token *op_tok = advance_tok(p);
+        AstNode *node = ast_new(p->arena, NODE_FIELD_ASSIGN, loc);
+        node->field_assign.object = expr->field_expr.object;
+        node->field_assign.field_name = expr->field_expr.field_name;
+        node->field_assign.value = parse_expr(p);
+        node->field_assign.op = op_tok->kind;
+        return node;
+    }
+
     AstNode *node = ast_new(p->arena, NODE_EXPR_STMT, loc);
     node->expr_stmt.expr = expr;
     return node;
@@ -1630,6 +1646,23 @@ static AstNode *parse_top_level(Parser *p) {
     if (check(p, TOK_PUB)) {
         advance_tok(p);
         is_pub = true;
+    }
+
+    // Module-level mutable: `name! = expr` or `pub name! = expr`. Constant
+    // initializer only (validated in sema). The parser produces a regular
+    // NODE_VAR_DECL with is_global set so sema/emitters can treat it as a
+    // module-scope variable rather than a stack local.
+    if (check(p, TOK_IDENT_MUT) && peek_at(p, 1)->kind == TOK_EQ) {
+        SrcLoc loc = tok_loc(p);
+        Token *name_tok = advance_tok(p);
+        advance_tok(p); // skip =
+        AstNode *node = ast_new(p->arena, NODE_VAR_DECL, loc);
+        node->var_decl.name = tok_str(p, name_tok);
+        node->var_decl.is_mutable = true;
+        node->var_decl.is_pub = is_pub;
+        node->var_decl.is_global = true;
+        node->var_decl.init_expr = parse_expr(p);
+        return node;
     }
 
     // extern "lib"

@@ -9,6 +9,7 @@ typedef struct Symbol {
     char *c_name;       // optional C symbol name for aliased extern functions
     MixType *type;
     bool is_mutable;
+    bool is_global;     // module-level mutable; emit/read as global storage
     struct Symbol *next;
 } Symbol;
 

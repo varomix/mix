@@ -258,6 +258,10 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void mix_free(void *);\n"
         "extern void *mix_bytes(int64_t);\n"
         "extern uint32_t mix_peek_u32(const void *);\n"
+        "extern int64_t mix_peek_u32_at(const void *, int64_t);\n"
+        "extern int64_t mix_peek_byte(const void *, int64_t);\n"
+        "extern double mix_peek_f32(const void *, int64_t);\n"
+        "extern void mix_memcpy(void *, const void *, int64_t);\n"
         "extern void mix_poke_f32(void *, int64_t, double);\n"
         "extern void mix_poke_u32(void *, int64_t, int64_t);\n"
         "extern void mix_poke_ptr(void *, int64_t, int64_t);\n"
@@ -478,7 +482,7 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 if (fi) {
                     int t = next_temp(emit);
                     const char *fty = c_type(fi->type);
-                    ind(emit); fprintf(emit->out, "%s t%d = self->%s;\n", fty, t, fi->name);
+                    ind(emit); fprintf(emit->out, "%s t%d = v_self->%s;\n", fty, t, fi->name);
                     return t;
                 }
             }
@@ -1215,8 +1219,25 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 ind(emit); fprintf(emit->out, "void *t%d = mix_bytes((int64_t)t%d);\n", t, arg_temps[0]);
                 return t;
             }
-            if (strcmp(expr->call.name, "peek_u32") == 0 && expr->call.arg_count == 1) {
-                ind(emit); fprintf(emit->out, "uint32_t t%d = mix_peek_u32(t%d);\n", t, arg_temps[0]);
+            if (strcmp(expr->call.name, "peek_u32") == 0 && expr->call.arg_count == 2) {
+                ind(emit); fprintf(emit->out, "int64_t t%d = mix_peek_u32_at(t%d, (int64_t)t%d);\n",
+                        t, arg_temps[0], arg_temps[1]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "peek_byte") == 0 && expr->call.arg_count == 2) {
+                ind(emit); fprintf(emit->out, "int64_t t%d = mix_peek_byte(t%d, (int64_t)t%d);\n",
+                        t, arg_temps[0], arg_temps[1]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "peek_f32") == 0 && expr->call.arg_count == 2) {
+                ind(emit); fprintf(emit->out, "double t%d = mix_peek_f32(t%d, (int64_t)t%d);\n",
+                        t, arg_temps[0], arg_temps[1]);
+                return t;
+            }
+            if (strcmp(expr->call.name, "memcpy") == 0 && expr->call.arg_count == 3) {
+                ind(emit); fprintf(emit->out, "mix_memcpy(t%d, t%d, (int64_t)t%d);\n",
+                        arg_temps[0], arg_temps[1], arg_temps[2]);
+                ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 return t;
             }
             if (strcmp(expr->call.name, "poke_f32") == 0 && expr->call.arg_count == 3) {
@@ -2457,7 +2478,7 @@ static void emit_method(CEmitter *emit, AstNode *method, const char *shape_name,
         ret_str = "void *";
 
     const char *static_kw = is_pub ? "" : "static ";
-    fprintf(emit->out, "%s%s %s(%s *self", static_kw, ret_str, mangled, shape_name);
+    fprintf(emit->out, "%s%s %s(%s *p_self", static_kw, ret_str, mangled, shape_name);
 
     for (int i = 0; i < method->fn_decl.param_count; i++) {
         fprintf(emit->out, ", ");
@@ -2474,6 +2495,9 @@ static void emit_method(CEmitter *emit, AstNode *method, const char *shape_name,
     }
     fprintf(emit->out, ") {\n");
     emit->indent = 1;
+
+    /* Alias self to v_self so NODE_IDENT lookups (which generate v_*) resolve. */
+    ind(emit); fprintf(emit->out, "%s *v_self = p_self;\n", shape_name);
 
     /* Copy user params */
     for (int i = 0; i < method->fn_decl.param_count; i++) {
@@ -2675,7 +2699,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                     "to_float","to_set","str_reverse","str_count","file_open","file_read",
                     "file_write","file_close","file_read_all","file_write_all","file_exists",
                     "list_dir","shell","shell_output","env","exit","getcwd","mkdir","args",
-                    "ord","chr","alloc","bytes","peek_u32","peek_ptr","poke_f32","poke_u32","poke_ptr","pack2","pack3","list_to_f32","free_mem",
+                    "ord","chr","alloc","bytes","peek_u32","peek_byte","peek_f32","peek_ptr","memcpy","poke_f32","poke_u32","poke_ptr","pack2","pack3","list_to_f32","free_mem",
                     "panic","assert","len","type_of","sizeof",
                     "random_seed","random_int","random_float","time_now_ms","int_to_hex","int_to_bin",NULL};
                 for (int b = 0; builtins[b]; b++) {
@@ -2729,6 +2753,81 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                 if (sym->type->func.param_count == 0) fprintf(emit->out, "void");
                 fprintf(emit->out, ");\n");
             }
+        }
+    }
+
+    /* Imported pub globals from other modules — declare extern so the
+     * linker resolves `v_<name>` to the defining module's storage. We
+     * scan the symtab for is_global symbols not declared in the current
+     * program AST. */
+    {
+        char *local_globals[256];
+        int local_count = 0;
+        for (int i = 0; i < program->program.decl_count && local_count < 256; i++) {
+            AstNode *d = program->program.decls[i];
+            if (d->kind == NODE_VAR_DECL && d->var_decl.is_global)
+                local_globals[local_count++] = d->var_decl.name;
+        }
+        for (Scope *scope = emit->symtab->current; scope; scope = scope->parent) {
+            for (Symbol *sym = scope->symbols; sym; sym = sym->next) {
+                if (!sym->is_global) continue;
+                bool is_local = false;
+                for (int j = 0; j < local_count; j++) {
+                    if (strcmp(local_globals[j], sym->name) == 0) {
+                        is_local = true;
+                        break;
+                    }
+                }
+                if (is_local) continue;
+                MixType *t = sym->type;
+                const char *ty;
+                if (t && type_is_float(t)) ty = "double";
+                else if (t && t->kind == TYPE_STR) ty = "const char *";
+                else ty = "int64_t";
+                fprintf(emit->out, "extern %s v_%s;\n", ty, sym->name);
+            }
+        }
+    }
+
+    /* Module-level mutables (`name! = literal` at module scope). Emitted
+     * as file-scope statics so reads/writes through `v_<name>` resolve.
+     * `pub` ones drop the `static` qualifier so other translation units
+     * can link against them. */
+    for (int i = 0; i < program->program.decl_count; i++) {
+        AstNode *decl = program->program.decls[i];
+        if (decl->kind != NODE_VAR_DECL || !decl->var_decl.is_global) continue;
+        AstNode *init = decl->var_decl.init_expr;
+        bool neg = false;
+        if (init && init->kind == NODE_UNARY_EXPR && init->unary.op == TOK_MINUS) {
+            neg = true;
+            init = init->unary.operand;
+        }
+        const char *qualifier = decl->var_decl.is_pub ? "" : "static ";
+        const char *name = decl->var_decl.name;
+        if (init && init->kind == NODE_INT_LIT) {
+            int64_t v = neg ? -init->int_lit.value : init->int_lit.value;
+            fprintf(emit->out, "%sint64_t v_%s = %" PRId64 ";\n", qualifier, name, v);
+        } else if (init && init->kind == NODE_FLOAT_LIT) {
+            double v = neg ? -init->float_lit.value : init->float_lit.value;
+            fprintf(emit->out, "%sdouble v_%s = %.17g;\n", qualifier, name, v);
+        } else if (init && init->kind == NODE_BOOL_LIT) {
+            fprintf(emit->out, "%sint64_t v_%s = %d;\n",
+                    qualifier, name, init->bool_lit.value ? 1 : 0);
+        } else if (init && init->kind == NODE_STRING_LIT) {
+            // Quote with C escapes. The runtime treats strings as
+            // const char *, so emit a string literal directly.
+            fprintf(emit->out, "%sconst char * v_%s = ", qualifier, name);
+            fputc('"', emit->out);
+            for (int k = 0; k < init->string_lit.length; k++) {
+                char c = init->string_lit.value[k];
+                if (c == '\\' || c == '"') fprintf(emit->out, "\\%c", c);
+                else if (c == '\n') fprintf(emit->out, "\\n");
+                else if (c == '\t') fprintf(emit->out, "\\t");
+                else if (c == '\r') fprintf(emit->out, "\\r");
+                else if ((unsigned char)c < 32) fprintf(emit->out, "\\x%02x", c & 0xff);
+                else fputc(c, emit->out);
+            }
+            fputs("\";\n", emit->out);
         }
     }
 

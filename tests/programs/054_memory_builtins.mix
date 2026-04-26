@@ -8,8 +8,8 @@ main()
     buf = bytes(128)
     print("bytes ok")
 
-    // peek_u32 reads a uint32 from a pointer
-    val = peek_u32(buf)
+    // peek_u32 reads a uint32 from a pointer at a byte offset, widened to int
+    val = peek_u32(buf, 0)
     print(val)
 
     // free_mem releases memory

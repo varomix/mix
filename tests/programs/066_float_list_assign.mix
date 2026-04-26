@@ -1,0 +1,18 @@
+// Element assignment on a [float] list. Earlier the QBE backend
+// passed a `d` (double) temp where mix_list_set expects an `l`,
+// causing an ICE. Both backends should now bit-cast the double
+// before storing.
+main()
+    xs! = [1.0, 2.0, 3.0]
+    xs![0] = 0.5
+    xs![1] = 9.5
+    xs![2] = 100.25
+    print(xs[0])
+    print(xs[1])
+    print(xs[2])
+
+    ns! = [10, 20, 30]
+    ns![1] = 999
+    print(ns[0])
+    print(ns[1])
+    print(ns[2])

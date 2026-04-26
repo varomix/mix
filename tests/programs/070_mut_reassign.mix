@@ -1,0 +1,19 @@
+// `x! = expr` re-uses an existing mutable in scope. Both backends should
+// agree (previously the C backend shadowed the inner declaration to a
+// new var that went out of scope, leaving the outer `x` unchanged).
+main()
+    x! = 100
+    if true
+        x! = x - 10
+    print(x)
+
+    // Compound forms also work
+    y! = 5
+    y! += 3
+    print(y)
+
+    // Float case
+    z! = 1.5
+    if true
+        z! = z * 2.0
+    print(z)

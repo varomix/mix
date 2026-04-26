@@ -349,6 +349,8 @@ static void build_vendor_iflags(char *buf, size_t buf_size) {
     closedir(vdir);
 }
 
+static char *filter_user_decls(char *raw);
+
 static char *preprocess_header(const char *path, bool verbose) {
     // Derive parent include dir (e.g., /opt/homebrew/include from
     // /opt/homebrew/include/SDL3/SDL.h)
@@ -374,13 +376,81 @@ static char *preprocess_header(const char *path, bool verbose) {
     // -DGL_GLEXT_PROTOTYPES exposes GL 2.0+ function prototypes in glext.h
     const char *gl_ext = (strstr(path, "opengl") || strstr(path, "OpenGL") ||
                           strstr(path, "glext")) ? "-DGL_GLEXT_PROTOTYPES " : "";
+    // No -P: keep `# linenum "file"` markers so we can drop declarations
+    // that came from system headers (libc, libc++, SDK).
     if (include_dir[0])
-        snprintf(cmd, sizeof(cmd), "cc -E -P %s%s%s -I\"%s\" -x c \"%s\" 2>/dev/null",
+        snprintf(cmd, sizeof(cmd), "cc -E %s%s%s -I\"%s\" -x c \"%s\" 2>/dev/null",
                  gl_ext, cppflags, vendor_flags, include_dir, path);
     else
-        snprintf(cmd, sizeof(cmd), "cc -E -P %s%s%s -x c \"%s\" 2>/dev/null",
+        snprintf(cmd, sizeof(cmd), "cc -E %s%s%s -x c \"%s\" 2>/dev/null",
                  gl_ext, cppflags, vendor_flags, path);
-    return run_command(cmd, verbose);
+    char *raw = run_command(cmd, verbose);
+    if (!raw) return NULL;
+    return filter_user_decls(raw);
+}
+
+// Predicate for "this path is a system header we should drop". The
+// preprocessor inlines headers transitively from <stdio.h>, <string.h>,
+// etc.; redeclaring those in the generated C output collides with the real
+// libc declarations.
+static bool is_system_header_path(const char *path) {
+    if (!path || !path[0]) return true;
+    // cc's synthetic locations
+    if (path[0] == '<') return true;
+    static const char *sys_prefixes[] = {
+        "/usr/include/", "/usr/lib/", "/usr/local/include/",
+        "/Library/Developer/", "/Applications/Xcode.app/",
+        "/opt/homebrew/include/c++/", "/opt/homebrew/Cellar/",
+        "/opt/homebrew/Library/", "/System/Library/",
+        NULL
+    };
+    for (int i = 0; sys_prefixes[i]; i++) {
+        size_t plen = strlen(sys_prefixes[i]);
+        if (strncmp(path, sys_prefixes[i], plen) == 0) return true;
+    }
+    return false;
+}
+
+// Walk the preprocessor output, drop everything that came from a system
+// header (per `# linenum "file" ...` markers). Returns a freshly malloc'd
+// string the caller must free; the original is freed here.
+static char *filter_user_decls(char *raw) {
+    if (!raw) return NULL;
+    size_t cap = strlen(raw) + 1;
+    char *out = malloc(cap);
+    if (!out) return raw;
+    size_t out_len = 0;
+    bool keep = true;  // start in "keep" state until first marker says otherwise
+    char *line = raw;
+    while (*line) {
+        char *eol = strchr(line, '\n');
+        size_t len = eol ? (size_t)(eol - line) : strlen(line);
+        // `# N "file" ...` — preprocessor line marker
+        if (len > 3 && line[0] == '#' && line[1] == ' ' &&
+            (line[2] >= '0' && line[2] <= '9')) {
+            const char *q1 = memchr(line, '"', len);
+            if (q1) {
+                const char *q2 = memchr(q1 + 1, '"', len - (q1 + 1 - line));
+                if (q2) {
+                    char path[1024];
+                    size_t plen = (size_t)(q2 - q1 - 1);
+                    if (plen >= sizeof(path)) plen = sizeof(path) - 1;
+                    memcpy(path, q1 + 1, plen);
+                    path[plen] = '\0';
+                    keep = !is_system_header_path(path);
+                }
+            }
+        } else if (keep) {
+            memcpy(out + out_len, line, len);
+            out_len += len;
+            out[out_len++] = '\n';
+        }
+        if (!eol) break;
+        line = eol + 1;
+    }
+    out[out_len] = '\0';
+    free(raw);
+    return out;
 }
 
 // ---- Extract #define constants ----
@@ -1605,6 +1675,130 @@ static void parse_func_ptr_globals(const char *text) {
     }
 }
 
+// Names provided by the C standard headers we already #include in the
+// generated C output (string.h, stdio.h, stdlib.h, math.h, ctype.h). Skip
+// them so cbind doesn't redeclare them with conflicting prototypes when a
+// user header transitively pulls in the system headers.
+static bool is_libc_name(const char *name) {
+    static const char *libc_names[] = {
+        // <string.h>
+        "memcpy","memmove","memset","memchr","memcmp",
+        "strlen","strcpy","strncpy","strcat","strncat","strcmp","strncmp",
+        "strchr","strrchr","strstr","strdup","strndup","strerror","strtok","strtok_r",
+        "strspn","strcspn","strpbrk","strcoll","strxfrm","strsignal","strnlen",
+        "bcopy","bzero","bcmp","ffs","ffsl","ffsll","fls","flsl","flsll",
+        "index","rindex","memccpy","stpcpy","stpncpy","memmem",
+        "memset_pattern4","memset_pattern8","memset_pattern16",
+        "strcasestr","strchrnul","strnstr","strlcat","strlcpy","strmode","strsep",
+        "swab","timingsafe_bcmp","strcasecmp","strncasecmp",
+        // <stdio.h>
+        "printf","fprintf","sprintf","snprintf","vprintf","vfprintf","vsprintf","vsnprintf",
+        "scanf","fscanf","sscanf","vscanf","vfscanf","vsscanf",
+        "fopen","freopen","fclose","fread","fwrite","fseek","ftell","fseeko","ftello",
+        "fflush","fputs","fgets","fgetc","fputc","getc","putc","ungetc",
+        "getchar","putchar","puts","gets","rewind","feof","ferror","clearerr",
+        "fileno","setbuf","setvbuf","perror","remove","rename","tmpfile","tmpnam",
+        "fdopen","popen","pclose","getline","getdelim",
+        "ctermid","flockfile","ftrylockfile","funlockfile","getc_unlocked",
+        "putc_unlocked","getchar_unlocked","putchar_unlocked",
+        "fgetpos","fsetpos","renameat",
+        // <stdlib.h>
+        "malloc","calloc","realloc","free","aligned_alloc","posix_memalign",
+        "atoi","atol","atoll","atof","strtol","strtoll","strtoul","strtoull",
+        "strtod","strtof","strtold",
+        "qsort","bsearch","abs","labs","llabs","div","ldiv","lldiv",
+        "rand","srand","rand_r","random","srandom",
+        "exit","_Exit","abort","atexit","at_quick_exit","quick_exit",
+        "system","getenv","setenv","unsetenv","putenv","clearenv",
+        "mblen","mbtowc","wctomb","mbstowcs","wcstombs",
+        // <math.h>
+        "sqrt","sqrtf","sqrtl","cbrt","cbrtf",
+        "sin","sinf","cos","cosf","tan","tanf",
+        "asin","asinf","acos","acosf","atan","atanf","atan2","atan2f",
+        "sinh","coshf","tanh","asinh","acosh","atanh",
+        "exp","expf","exp2","expm1","log","logf","log1p","log2","log10",
+        "pow","powf","ceil","ceilf","floor","floorf","round","roundf","trunc","truncf",
+        "fmod","fmodf","fabs","fabsf","hypot","hypotf",
+        "isnan","isinf","isfinite","signbit","copysign","copysignf",
+        "nextafter","nextafterf","fma","fmax","fmin",
+        "lround","lroundf","llround","llroundf","scalbln","scalbn",
+        "frexp","ldexp","modf","nan","nanf",
+        // <ctype.h>
+        "isalpha","isdigit","isalnum","isspace","isupper","islower","isxdigit",
+        "iscntrl","isprint","ispunct","isgraph","isblank","isascii",
+        "tolower","toupper","toascii",
+        // <time.h>
+        "time","clock","difftime","mktime","localtime","gmtime","asctime","ctime",
+        "strftime","strptime","gettimeofday","clock_gettime","nanosleep",
+        // <unistd.h> (sometimes pulled via SDL)
+        "read","write","close","lseek","unlink","access","getpid","getppid",
+        "fork","execve","sleep","usleep","alarm","pipe","dup","dup2",
+        // varargs builtins
+        "__builtin_va_start","__builtin_va_end","__builtin_va_copy","__builtin_va_arg",
+        "__builtin_expect","__builtin_unreachable","__builtin_offsetof",
+        NULL
+    };
+    for (int i = 0; libc_names[i]; i++)
+        if (strcmp(name, libc_names[i]) == 0) return true;
+    // Skip any name that starts with __ (compiler builtins / reserved).
+    if (name[0] == '_' && name[1] == '_') return true;
+    // Heuristic suffixes for POSIX/BSD/Apple libc variants. Keeps the
+    // explicit list short; almost no user-defined function ends with these.
+    int len = (int)strlen(name);
+    if (len > 2 && name[len-2] == '_') {
+        char s = name[len-1];
+        // _r (re-entrant), _s (secure C11), _l (locale-aware)
+        if (s == 'r' || s == 's' || s == 'l') {
+            // Only skip if the name starts with a known libc prefix to avoid
+            // catching legitimate user functions like `transform_l`.
+            const char *libc_prefixes[] = {
+                "str","mem","print","scan","read","write","ftell","fseek",
+                "fgets","fputs","localtime","gmtime","ctime","asctime",
+                "strerror","strsignal","strtok","getpw","getgr","gethostby",
+                "rand","drand","erand","jrand","lrand","mrand","nrand",
+                "qsort","bsearch","strftime","wcs", NULL };
+            for (int i = 0; libc_prefixes[i]; i++) {
+                int plen = (int)strlen(libc_prefixes[i]);
+                if (plen <= len - 2 && memcmp(name, libc_prefixes[i], plen) == 0)
+                    return true;
+            }
+        }
+    }
+    // _np (non-portable, Apple/BSD extension): always skip.
+    if (len > 3 && name[len-3] == '_' && name[len-2] == 'n' && name[len-1] == 'p')
+        return true;
+    // _chk (FORTIFY_SOURCE wrappers): always skip.
+    if (len > 4 && memcmp(name + len - 4, "_chk", 4) == 0) return true;
+    return false;
+}
+
+// Same idea for typedefs and structs. The system headers already define
+// these — emitting our own MIX shape would create a `typedef struct ... {}`
+// in the C output that conflicts with the libc one.
+static bool is_libc_typedef(const char *name) {
+    static const char *libc_typedefs[] = {
+        "FILE","fpos_t","DIR",
+        "size_t","ssize_t","ptrdiff_t","off_t","off64_t","time_t","clock_t",
+        "wchar_t","wint_t","wctype_t","mbstate_t","sig_atomic_t","jmp_buf",
+        "div_t","ldiv_t","lldiv_t","va_list","__builtin_va_list",
+        "intmax_t","uintmax_t","intptr_t","uintptr_t",
+        "pid_t","uid_t","gid_t","mode_t","dev_t","ino_t","nlink_t","blksize_t","blkcnt_t",
+        "useconds_t","suseconds_t","fsblkcnt_t","fsfilcnt_t","id_t","key_t",
+        "tm","timespec","timeval","timezone","stat","stat64","statvfs","statfs","tms",
+        "lconv","fenv_t","fexcept_t","femode_t","sigset_t","sigaction","siginfo_t",
+        "sched_param","pthread_t","pthread_attr_t","pthread_mutex_t",
+        "pthread_mutexattr_t","pthread_cond_t","pthread_condattr_t",
+        "pthread_rwlock_t","pthread_key_t","pthread_once_t",
+        // libc internal/Apple variants
+        "__sFILE","__sbuf","__sFILEX",
+        NULL
+    };
+    for (int i = 0; libc_typedefs[i]; i++)
+        if (strcmp(name, libc_typedefs[i]) == 0) return true;
+    if (name[0] == '_' && name[1] == '_') return true;
+    return false;
+}
+
 // ---- Output writer ----
 
 static void write_mix_output(FILE *out, const char *lib_name, const char *source_path) {
@@ -1612,46 +1806,40 @@ static void write_mix_output(FILE *out, const char *lib_name, const char *source
     fprintf(out, "// Source: %s\n", source_path);
     fprintf(out, "// Generated by: mix --bind\n\n");
 
-    // Emit shape declarations for parsed structs
-    if (shape_count > 0) {
-        fprintf(out, "// ---- Shapes ----\n\n");
-        for (int i = 0; i < shape_count; i++) {
-            const char *kw = shapes[i].is_union ? "union" : "shape";
-            fprintf(out, "%s %s\n%s\n\n", kw, shapes[i].name, shapes[i].fields);
-        }
+    // Emit shape declarations for parsed structs (skip libc-provided ones).
+    int emitted_shapes = 0;
+    for (int i = 0; i < shape_count; i++) {
+        if (is_libc_typedef(shapes[i].name)) continue;
+        if (emitted_shapes++ == 0) fprintf(out, "// ---- Shapes ----\n\n");
+        const char *kw = shapes[i].is_union ? "union" : "shape";
+        fprintf(out, "%s %s\n%s\n\n", kw, shapes[i].name, shapes[i].fields);
     }
 
-    if (func_count > 0) {
-        fprintf(out, "extern \"%s\"\n", lib_name);
-        for (int i = 0; i < func_count; i++) {
-            if (funcs[i].is_variadic) {
-                fprintf(out, "    // variadic\n");
-            }
-            fprintf(out, "    %s", funcs[i].name);
-            if (funcs[i].c_name[0]) {
-                fprintf(out, " \"%s\"", funcs[i].c_name);
-            }
-            fprintf(out, "(%s)", funcs[i].params_mix);
-            if (strlen(funcs[i].ret_mix) > 0) {
-                fprintf(out, " -> %s", funcs[i].ret_mix);
-            }
-            fprintf(out, " ~\n");
-        }
-        fprintf(out, "\n");
+    int emitted_funcs = 0;
+    for (int i = 0; i < func_count; i++) {
+        if (is_libc_name(funcs[i].name)) continue;
+        if (funcs[i].c_name[0] && is_libc_name(funcs[i].c_name)) continue;
+        if (emitted_funcs++ == 0) fprintf(out, "extern \"%s\"\n", lib_name);
+        if (funcs[i].is_variadic) fprintf(out, "    // variadic\n");
+        fprintf(out, "    %s", funcs[i].name);
+        if (funcs[i].c_name[0]) fprintf(out, " \"%s\"", funcs[i].c_name);
+        fprintf(out, "(%s)", funcs[i].params_mix);
+        if (strlen(funcs[i].ret_mix) > 0) fprintf(out, " -> %s", funcs[i].ret_mix);
+        fprintf(out, " ~\n");
     }
+    if (emitted_funcs > 0) fprintf(out, "\n");
 
-    if (const_count > 0) {
-        for (int i = 0; i < const_count; i++) {
-            if (consts[i].is_shape_lit) {
-                fprintf(out, "@const %s = %s(%s)\n",
-                        consts[i].name, consts[i].shape_name, consts[i].shape_values);
-            } else if (consts[i].is_float) {
-                fprintf(out, "@const %s = %g\n", consts[i].name, consts[i].float_value);
-            } else if (consts[i].is_hex) {
-                fprintf(out, "@const %s = 0x%llx\n", consts[i].name, consts[i].int_value);
-            } else {
-                fprintf(out, "@const %s = %lld\n", consts[i].name, consts[i].int_value);
-            }
+    for (int i = 0; i < const_count; i++) {
+        if (is_libc_name(consts[i].name)) continue;
+        if (consts[i].is_shape_lit) {
+            fprintf(out, "@const %s = %s(%s)\n",
+                    consts[i].name, consts[i].shape_name, consts[i].shape_values);
+        } else if (consts[i].is_float) {
+            fprintf(out, "@const %s = %g\n", consts[i].name, consts[i].float_value);
+        } else if (consts[i].is_hex) {
+            fprintf(out, "@const %s = 0x%llx\n", consts[i].name, consts[i].int_value);
+        } else {
+            fprintf(out, "@const %s = %lld\n", consts[i].name, consts[i].int_value);
         }
     }
 }

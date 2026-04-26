@@ -153,6 +153,8 @@ struct AstNode {
             AstNode *type_ann;
             AstNode *init_expr;
             bool is_mutable;
+            bool is_pub;        // module-level export marker
+            bool is_global;     // set by parser when at top level
         } var_decl;
 
         // NODE_ASSIGN

@@ -90,6 +90,32 @@ uint32_t mix_peek_u32(const void *ptr) {
     return *(const uint32_t *)ptr;
 }
 
+// Read a uint32 at byte offset, widened to int64. Backs the `peek_u32`
+// builtin — returning int64 lets it participate in normal int arithmetic
+// without QBE w/l-mismatch errors.
+int64_t mix_peek_u32_at(const void *ptr, int64_t offset) {
+    uint32_t v;
+    memcpy(&v, (const char *)ptr + offset, sizeof(uint32_t));
+    return (int64_t)v;
+}
+
+// Read a single byte at offset, widened to int64.
+int64_t mix_peek_byte(const void *ptr, int64_t offset) {
+    return (int64_t)((const uint8_t *)ptr)[offset];
+}
+
+// Read a 32-bit float at byte offset, widened to double.
+double mix_peek_f32(const void *ptr, int64_t offset) {
+    float v;
+    memcpy(&v, (const char *)ptr + offset, sizeof(float));
+    return (double)v;
+}
+
+// memcpy exposed to MIX as a builtin.
+void mix_memcpy(void *dst, const void *src, int64_t n) {
+    memcpy(dst, src, (size_t)n);
+}
+
 // Pack 2 structs contiguously. Returns malloc'd buffer with both copied.
 void *mix_pack2(void *a, void *b, int64_t elem_size) {
     void *buf = calloc(2, elem_size);

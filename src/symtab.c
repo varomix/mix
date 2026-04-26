@@ -29,6 +29,7 @@ void symtab_insert(SymTab *st, const char *name, MixType *type, bool is_mutable)
     sym->c_name = NULL;
     sym->type = type;
     sym->is_mutable = is_mutable;
+    sym->is_global = false;
     sym->next = st->current->symbols;
     st->current->symbols = sym;
 }

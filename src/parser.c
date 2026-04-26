@@ -1215,6 +1215,12 @@ static Param *parse_params(Parser *p, int *count) {
                 param.type = parse_type(p);
             }
 
+            // Optional default value: `name: T = expr`. Sema fills in
+            // missing trailing args at the call site with these.
+            if (match_tok(p, TOK_EQ)) {
+                param.default_value = parse_expr(p);
+            }
+
             if (param_count >= param_cap) {
                 param_cap = param_cap ? param_cap * 2 : 8;
                 Param *new_params = arena_alloc(p->arena, sizeof(Param) * param_cap);

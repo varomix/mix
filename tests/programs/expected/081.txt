@@ -1,0 +1,10 @@
+hello, Alice
+hi, Bob
+yo, Carol
+yo, Carol
+yo, Carol
+5
+14
+21
+ready!
+quiet

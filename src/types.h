@@ -54,6 +54,11 @@ struct MixType {
             // enforce `@T has +, ==, area` without re-walking the program.
             char **constraints;
             int constraint_count;
+            // Default-value AST expressions, parallel to param_types.
+            // NULL slots = no default (required arg). Sema injects these
+            // into call sites that supply fewer args than param_count.
+            // void ** because AstNode is forward-declared elsewhere.
+            void **param_defaults;
         } func;
         struct {
             char *name;

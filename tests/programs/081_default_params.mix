@@ -1,0 +1,36 @@
+// Default parameter values: trailing run of `name: T = expr` params.
+// Sema fills in any missing trailing args at the call site.
+
+greet(name: str, greeting: str = "hello", times: int = 1)
+    i! = 0
+    while i < times
+        print(greeting + ", " + name)
+        i! = i + 1
+
+// All required.
+add(a: int, b: int) -> int
+    a + b
+
+// One default — float.
+scale(v: float, by: float = 2.0) -> float
+    v * by
+
+// Bool default.
+shout(msg: str, loud: bool = true)
+    if loud
+        print(msg + "!")
+    else
+        print(msg)
+
+main()
+    greet("Alice")              // both defaults
+    greet("Bob", "hi")          // override greeting; default times
+    greet("Carol", "yo", 3)     // both supplied
+
+    print(add(2, 3))            // no defaults — required args still work
+
+    print(to_int(scale(7.0)))   // default by=2.0 → 14
+    print(to_int(scale(7.0, 3.0)))  // explicit by=3.0 → 21
+
+    shout("ready")              // default loud=true
+    shout("quiet", false)

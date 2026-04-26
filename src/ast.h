@@ -90,6 +90,7 @@ typedef struct Param {
     char *name;
     AstNode *type;
     bool is_mutable;
+    AstNode *default_value;  // NULL when no default; sema fills missing args at call sites.
 } Param;
 
 typedef struct ShapeVariantDecl {

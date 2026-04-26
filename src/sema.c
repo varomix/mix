@@ -846,6 +846,39 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
             // Type-check arguments against parameter types
             if (sym->type && sym->type->kind == TYPE_FUNC) {
                 MixType *ftype = sym->type;
+                // Inject default values for any missing trailing args.
+                // The earlier walk already verified defaults form a
+                // trailing run, so we only need to fill from arg_count
+                // up to the first param without a default.
+                if (!ftype->func.is_variadic
+                    && expr->call.arg_count < ftype->func.param_count
+                    && ftype->func.param_defaults) {
+                    int needed = ftype->func.param_count;
+                    int have = expr->call.arg_count;
+                    bool can_fill = true;
+                    for (int i = have; i < needed; i++) {
+                        if (!ftype->func.param_defaults[i]) {
+                            can_fill = false;
+                            break;
+                        }
+                    }
+                    if (can_fill) {
+                        AstNode **filled = arena_alloc(sema->arena,
+                            sizeof(AstNode *) * needed);
+                        for (int i = 0; i < have; i++)
+                            filled[i] = expr->call.args[i];
+                        for (int i = have; i < needed; i++) {
+                            AstNode *def = (AstNode *)ftype->func.param_defaults[i];
+                            // Default exprs are stored once on the
+                            // function decl; re-resolve at the call
+                            // site so per-call type info is fresh.
+                            resolve_expr(sema, def);
+                            filled[i] = def;
+                        }
+                        expr->call.args = filled;
+                        expr->call.arg_count = needed;
+                    }
+                }
                 // Check argument count (skip variadic and builtins with overloads)
                 if (!ftype->func.is_variadic && ftype->func.param_count > 0 &&
                     expr->call.arg_count != ftype->func.param_count) {
@@ -1950,11 +1983,24 @@ static void register_fn(Sema *sema, AstNode *fn) {
     func_type->func.param_count = fn->fn_decl.param_count;
     if (fn->fn_decl.param_count > 0) {
         func_type->func.param_types = arena_alloc(sema->arena, sizeof(MixType*) * fn->fn_decl.param_count);
+        func_type->func.param_defaults = arena_alloc(sema->arena, sizeof(void*) * fn->fn_decl.param_count);
+        bool seen_default = false;
         for (int i = 0; i < fn->fn_decl.param_count; i++) {
             MixType *ptype = fn->fn_decl.params[i].type
                 ? resolve_type_node(sema, fn->fn_decl.params[i].type)
                 : make_type(sema->arena, TYPE_INFER);
             func_type->func.param_types[i] = ptype;
+            func_type->func.param_defaults[i] = fn->fn_decl.params[i].default_value;
+            // Defaults must form a trailing run — once a param has a
+            // default, no later param may be required.
+            if (fn->fn_decl.params[i].default_value) {
+                seen_default = true;
+            } else if (seen_default) {
+                mix_error(fn->loc,
+                    "parameter '%s' of '%s' must have a default — "
+                    "non-default param after a defaulted one",
+                    fn->fn_decl.params[i].name, fn->fn_decl.name);
+            }
             // Annotate param type AST node
             if (fn->fn_decl.params[i].type) {
                 fn->fn_decl.params[i].type->resolved_type = ptype;

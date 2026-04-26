@@ -1,0 +1,21 @@
+// Passing a named top-level function as a value (vs a lambda) — both
+// backends must emit the function symbol address, not a `v_<name>` local.
+// Also covers the shadowing case where a parameter named after a builtin
+// function (e.g. `max`) must still load the parameter, not the builtin.
+
+dbl(x: int) -> int
+    x * 2
+
+apply(f: int, x: int) -> int
+    f(x)
+
+clamp(value: int, max: int) -> int
+    if value > max
+        done max
+    value
+
+main()
+    print(apply(dbl, 21))
+    print(apply(x => x + 100, 5))
+    print(clamp(50, 30))
+    print(clamp(10, 30))

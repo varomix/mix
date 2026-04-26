@@ -497,6 +497,16 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             int t = next_temp(emit);
             MixType *itype = expr->resolved_type;
             const char *cn = cname_ref(emit, expr->ident.name);
+            // Top-level function used as a value (callback): emit the function
+            // symbol address. Mirrors the QBE backend; gate on resolved_type to
+            // respect local/param shadowing of builtin function names.
+            if (itype && itype->kind == TYPE_FUNC) {
+                Symbol *fsym = symtab_lookup(emit->symtab, expr->ident.name);
+                if (fsym && fsym->type && fsym->type->kind == TYPE_FUNC) {
+                    ind(emit); fprintf(emit->out, "void *t%d = (void *)%s;\n", t, cn);
+                    return t;
+                }
+            }
             if (itype && itype->kind == TYPE_SHAPE) {
                 ind(emit); fprintf(emit->out, "%s *t%d = (%s *)v_%s;\n",
                         itype->shape.name, t, itype->shape.name, cn);

@@ -285,6 +285,17 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                         t, ty, load_ty, expr->ident.name);
                 return t;
             }
+            // Top-level function used as a value (e.g. passed as a callback):
+            // emit the function symbol address. Lambdas already do this in
+            // NODE_LAMBDA; this branch handles named functions. Gate on the
+            // sema-resolved type (which respects shadowing) so a local/param
+            // that happens to share a name with a builtin function isn't
+            // mistakenly emitted as the function symbol.
+            if (expr->resolved_type && expr->resolved_type->kind == TYPE_FUNC
+                && gsym && gsym->type && gsym->type->kind == TYPE_FUNC) {
+                fprintf(emit->out, "\t%%t%d =l copy $%s\n", t, expr->ident.name);
+                return t;
+            }
             // Shape variables are pointers — usually `%v.x` IS the pointer
             // (NODE_VAR_DECL emits `=l copy` aliasing). For-each loop vars
             // over a shape list, in contrast, get an alloca slot holding the

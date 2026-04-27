@@ -58,6 +58,33 @@ static char *read_file(const char *path) {
     return buf;
 }
 
+#ifdef __APPLE__
+static char *detect_macos_sdk_libdir(Arena *arena) {
+    FILE *fp = popen("xcrun --show-sdk-path 2>/dev/null", "r");
+    if (!fp) return NULL;
+
+    char sdk_path[1024];
+    if (!fgets(sdk_path, sizeof(sdk_path), fp)) {
+        pclose(fp);
+        return NULL;
+    }
+    pclose(fp);
+
+    size_t len = strlen(sdk_path);
+    while (len > 0 && (sdk_path[len - 1] == '\n' || sdk_path[len - 1] == '\r')) {
+        sdk_path[--len] = '\0';
+    }
+    if (len == 0) return NULL;
+
+    char libdir[1200];
+    snprintf(libdir, sizeof(libdir), "%s/usr/lib", sdk_path);
+    struct stat st;
+    if (stat(libdir, &st) != 0) return NULL;
+
+    return arena_strdup(arena, libdir);
+}
+#endif
+
 // Run a subprocess without shell interpretation (prevents command injection).
 // argv must be NULL-terminated. Returns the process exit code, or -1 on failure.
 // If captured_stderr is non-NULL, child stderr is captured into a malloc'd buffer
@@ -1345,6 +1372,16 @@ int main(int argc, char **argv) {
     link_argv[ai++] = "-o";
     link_argv[ai++] = output_file;
     link_argv[ai++] = "-lm";
+#ifdef __APPLE__
+    {
+        char *sdk_libdir = detect_macos_sdk_libdir(&arena);
+        if (sdk_libdir && ai < MAX_LINK_ARGV - 2) {
+            char *lflag = arena_alloc(&arena, strlen(sdk_libdir) + 3);
+            sprintf(lflag, "-L%s", sdk_libdir);
+            link_argv[ai++] = lflag;
+        }
+    }
+#endif
     for (int i = 0; i < link_flag_count && ai < MAX_LINK_ARGV - 2; i++)
         link_argv[ai++] = link_flags[i];
     // Add vendor -I directories

@@ -1,8 +1,10 @@
 # MIX — Value Shapes + Zones + Explicit Promotion
 
-> Status: 2026-04-26. Exploratory design sketch. This is the recommended
-> direction if MIX is optimizing for games/graphics with C-like
-> performance and a predictable cost model.
+> Status: 2026-04-26, updated 2026-04-27. Exploratory design sketch for the
+> value-first memory model. The core direction described here is now the
+> implemented compiler/runtime behavior: value-default shapes, explicit
+> `ref` / `ref!`, `Box[T]`, explicit `Zone` handles, and allocator-backed
+> `List[T]` / `Map[K, V]` / `Set[T]` constructors.
 
 ## TL;DR
 
@@ -160,7 +162,7 @@ borrowing it mutably:
 
 - `x = items[i]` reads a value.
 - `x = items.at(i)` yields a shared borrow (`ref T`) without copying.
-- `x! = items.at_mut!(i)` yields a mutable borrow (`ref! T`) into storage.
+- `x = items.at_mut!(i)` yields a mutable borrow (`ref! T`) into storage.
 
 The exact indexing API can change, but the semantic split should remain.
 
@@ -296,7 +298,7 @@ main()
 
     current = sprites[0]           // reads a value copy
     view = sprites.at(0)           // ref Sprite (no copy)
-    slot! = sprites.at_mut!(0)     // ref! Sprite
+    slot = sprites.at_mut!(0)      // ref! Sprite
     if view.pos.x < 0.0
         slot.pos.x = 32.0
     slot.vel.y = -slot.vel.y
@@ -516,10 +518,10 @@ memory model:
 
 ## Diagnostics And Test Metrics
 
-The current `_mix_rc_*` counters are tied to the transitional refcount
-model and should not survive as the primary test hooks.
+The old `_mix_rc_*` counters were tied to the transitional refcount model
+and are no longer the right test hooks.
 
-The zone-based model should expose per-zone diagnostics such as:
+The implemented zone-based runtime exposes per-zone diagnostics such as:
 
 - `_mix_zone_alloc_bytes(z)`
 - `_mix_zone_high_water(z)`
@@ -536,29 +538,24 @@ than object-level retain/release counters.
 
 ## Migration And Refcount Retirement
 
-This design is an end state, but it needs an explicit path from current
-MIX.
+This migration is now the implemented compiler/runtime direction.
 
-Recommended migration shape:
+What landed:
 
-- Add the new semantic vocabulary first: `ref T`, `Box[T]`, `for x! in
-  items`, and mutable element access such as `at_mut!`.
-- Move list/map storage for value types to inline layout.
-- Port `mixel` and the demos to explicit mutable iteration and explicit
-  boxed indirection where stable identity is truly needed.
-- Keep tests and demos green at each stage rather than attempting a
-  flag-day rewrite.
+- `shape` is value-default
+- `ref T` / `ref! T` are explicit borrows
+- `for x! in items` and `at_mut!()` provide explicit write-through mutation
+- `Box[T]`, `Zone`, and allocator-backed `List[T].new(zone)` /
+  `Map[K, V].new(zone)` / `Set[T].new(zone)` are the explicit dynamic
+  storage path
 
-What happens to the current refcount work should be stated plainly:
+What happened to the refcount work:
 
-- Per-shape refcounting is transitional scaffolding, not the target
+- Per-shape refcounting was transitional scaffolding, not the target
   semantics of `shape`.
-- Once value-first shapes and allocator-backed dynamic storage are in
-  place, refcount-based shape lowering should be removed from the default
-  path.
-- Refcount-oriented diagnostics and tests should be replaced by allocator
-  and zone diagnostics, such as zone usage / reset checks and borrow /
-  promotion regressions.
+- Refcount-based shape lowering has been removed from the default path.
+- Allocator and zone diagnostics replaced retain/release counters as the
+  primary verification hooks.
 
 ## Comparison With Alternatives
 

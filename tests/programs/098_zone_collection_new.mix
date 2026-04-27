@@ -1,0 +1,27 @@
+shape Point
+    x: int
+    y: int
+
+main()
+    z: Zone = zone_create("frame", 4096)
+
+    pts! = List[Point].new(z)
+    pts.push!(Point(x: 1, y: 2))
+    pts.push!(Point(x: 3, y: 4))
+    pts.at_mut!(1).x = 9
+
+    lookup! = Map[str, int].new(z)
+    lookup["hp"] = 7
+
+    tags! = Set[str].new(z)
+    tags.add!("mix")
+
+    print(pts[0].y)
+    print(pts[1].x)
+    print(lookup["hp"])
+    print(tags.has("mix"))
+    print(_mix_zone_alloc_bytes(z) > 0)
+
+    zone_reset(z)
+    print(_mix_zone_alloc_bytes(z))
+    zone_destroy(z)

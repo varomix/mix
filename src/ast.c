@@ -163,7 +163,22 @@ void ast_print(AstNode *node, int indent) {
         case NODE_NONE_LIT:
             printf("NoneLit\n"); break;
         case NODE_IDENT:
-            printf("Ident: %s%s\n", node->ident.name, node->ident.is_mutable ? "!" : ""); break;
+            printf("Ident: %s", node->ident.name);
+            if (node->ident.type_arg_count > 0) {
+                printf("[");
+                for (int i = 0; i < node->ident.type_arg_count; i++) {
+                    if (i > 0) printf(", ");
+                    if (node->ident.type_args[i] &&
+                        node->ident.type_args[i]->kind == NODE_TYPE_NAME) {
+                        printf("%s", node->ident.type_args[i]->type_name.name);
+                    } else {
+                        printf("type");
+                    }
+                }
+                printf("]");
+            }
+            printf("%s\n", node->ident.is_mutable ? "!" : "");
+            break;
         case NODE_BINARY_EXPR:
             printf("BinaryExpr: %s\n", token_kind_name(node->binary.op));
             ast_print(node->binary.left, indent + 1);
@@ -471,6 +486,15 @@ static AstNode *do_clone(AstNode *node, Arena *arena,
         }
         case NODE_IDENT:
             out->ident.name = clone_str(arena, node->ident.name);
+            out->ident.type_arg_count = node->ident.type_arg_count;
+            if (node->ident.type_arg_count > 0) {
+                out->ident.type_args = arena_alloc(arena,
+                    sizeof(AstNode*) * node->ident.type_arg_count);
+                for (int i = 0; i < node->ident.type_arg_count; i++) {
+                    out->ident.type_args[i] = do_clone(node->ident.type_args[i],
+                        arena, bindings, binding_count);
+                }
+            }
             break;
         case NODE_BINARY_EXPR:
             out->binary.left = do_clone(node->binary.left, arena, bindings, binding_count);

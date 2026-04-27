@@ -50,22 +50,11 @@ typedef struct {
     int local_binding_count;
     int local_scope_marks[256];
     int local_scope_depth;
-    // Refcount Phase 1: shape-typed locals to release at function exit.
-    // Entries store the emitted `%v.<name>` slot names, not source names.
-    // Reset at function entry, walked before each `ret` to emit mix_release.
-    char *rc_locals[256];
-    int   rc_local_count;
     // Mutable params are passed by address, copied into local storage at
     // function entry, then written back on every return path.
     char *mutable_param_names[256];
     MixType *mutable_param_types[256];
     int mutable_param_count;
-    // Names of shape types declared in THIS translation unit. SHAPE_LIT
-    // codegen passes `$release_<Name>` only if the shape is in here;
-    // otherwise it passes 0 and lets mix_release fall back to a plain
-    // mix_shape_free (correct for C-imported shapes from `use c`).
-    char *local_shape_names[1024];
-    int   local_shape_name_count;
 } QbeEmitter;
 
 QbeEmitter qbe_emitter_create(FILE *out, Arena *arena, SymTab *symtab, bool debug);

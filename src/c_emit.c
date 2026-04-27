@@ -231,14 +231,10 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void mix_panic(const char *);\n"
         "extern void mix_assert(int32_t, const char *);\n"
         "extern void *mix_alloc(int64_t);\n"
-        "extern void *mix_shape_alloc(int64_t, void (*)(void *));\n"
-        "extern void mix_retain(void *);\n"
-        "extern void mix_release(void *);\n"
-        "extern void mix_shape_free(void *);\n"
-        "extern int64_t mix_rc_get_alloc_count(void);\n"
-        "extern int64_t mix_rc_get_free_count(void);\n"
         "extern void *mix_list_new(void);\n"
+        "extern void *mix_list_new_in(void *);\n"
         "extern void *mix_list_new_shape(int64_t);\n"
+        "extern void *mix_list_new_shape_in(void *, int64_t);\n"
         "extern int64_t mix_list_len(const void *);\n"
         "extern void mix_list_push(void *, int64_t);\n"
         "extern void mix_list_push_bytes(void *, const void *);\n"
@@ -259,6 +255,7 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern int32_t mix_list_contains(const void *, int64_t);\n"
         "extern int64_t mix_list_index_of(const void *, int64_t);\n"
         "extern void *mix_map_new(void);\n"
+        "extern void *mix_map_new_in(void *);\n"
         "extern int64_t mix_map_len(const void *);\n"
         "extern void mix_map_set(void *, const char *, int64_t);\n"
         "extern int64_t mix_map_get(const void *, const char *);\n"
@@ -267,6 +264,7 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void *mix_map_keys(const void *);\n"
         "extern void *mix_map_values(const void *);\n"
         "extern void *mix_set_new(void);\n"
+        "extern void *mix_set_new_in(void *);\n"
         "extern int64_t mix_set_len(const void *);\n"
         "extern void mix_set_add(void *, const char *);\n"
         "extern void mix_set_add_int(void *, int64_t);\n"
@@ -369,6 +367,7 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void zone_reset(void *);\n"
         "extern void *zone_alloc(void *, int64_t);\n"
         "extern void *mix_box_clone(void *, const void *, int64_t);\n"
+        "extern void *mix_box_check(void *);\n"
         "extern int64_t _mix_zone_alloc_bytes(void *);\n"
         "extern int64_t _mix_zone_high_water(void *);\n"
         "extern int64_t _mix_zone_reset_count(void *);\n"
@@ -504,6 +503,30 @@ static bool ref_uses_direct_value(MixType *base) {
         default:
             return false;
     }
+}
+
+static bool type_is_box_handle(MixType *type) {
+    while (type && type->kind == TYPE_REF) {
+        type = type->ref.base;
+    }
+    return type && type->kind == TYPE_BOX;
+}
+
+static MixType *deref_target_type(MixType *type) {
+    if (!type) return NULL;
+    if (type->kind == TYPE_REF) type = type->ref.base;
+    if (type && type->kind == TYPE_BOX) return type->box.inner;
+    return type;
+}
+
+static int emit_box_checked_temp(CEmitter *emit, int val_temp) {
+    int t = next_temp(emit);
+    ind(emit); fprintf(emit->out, "void *t%d = mix_box_check(t%d);\n", t, val_temp);
+    return t;
+}
+
+static int maybe_emit_box_checked_temp(CEmitter *emit, MixType *type, int val_temp) {
+    return type_is_box_handle(type) ? emit_box_checked_temp(emit, val_temp) : val_temp;
 }
 
 static int spill_ref_value_temp(CEmitter *emit, int val, MixType *type) {
@@ -1301,9 +1324,10 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                        expr->unary.operand->resolved_type &&
                        (expr->unary.operand->resolved_type->kind == TYPE_REF ||
                         expr->unary.operand->resolved_type->kind == TYPE_BOX)) {
-                MixType *base = expr->unary.operand->resolved_type->kind == TYPE_REF
-                    ? expr->unary.operand->resolved_type->ref.base
-                    : expr->unary.operand->resolved_type->box.inner;
+                MixType *base = deref_target_type(expr->unary.operand->resolved_type);
+                if (type_is_box_handle(expr->unary.operand->resolved_type)) {
+                    operand = emit_box_checked_temp(emit, operand);
+                }
                 if (ref_uses_direct_value(base)) {
                     return operand;
                 }
@@ -1701,11 +1725,21 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 MixType *src_type = expr->call.args[1]->resolved_type;
                 MixType *boxed_type = src_type;
                 int src_ptr = arg_temps[1];
-                if (boxed_type && boxed_type->kind == TYPE_REF) {
-                    boxed_type = boxed_type->ref.base;
-                } else if (boxed_type && boxed_type->kind == TYPE_BOX) {
-                    boxed_type = boxed_type->box.inner;
-                } else if (!(boxed_type && boxed_type->kind == TYPE_SHAPE)) {
+                bool src_is_ptr = false;
+                if (type_is_box_handle(boxed_type)) {
+                    src_ptr = emit_box_checked_temp(emit, src_ptr);
+                    while (boxed_type && boxed_type->kind == TYPE_REF) {
+                        boxed_type = boxed_type->ref.base;
+                    }
+                    boxed_type = boxed_type ? boxed_type->box.inner : boxed_type;
+                    src_is_ptr = true;
+                } else {
+                    while (boxed_type && boxed_type->kind == TYPE_REF) {
+                        boxed_type = boxed_type->ref.base;
+                    }
+                    src_is_ptr = boxed_type && boxed_type->kind == TYPE_SHAPE;
+                }
+                if (!src_is_ptr) {
                     const char *src_ty = c_value_type(boxed_type);
                     ind(emit); fprintf(emit->out, "%s _box_src_%d = (%s)t%d;\n",
                             src_ty, t, src_ty, arg_temps[1]);
@@ -1724,14 +1758,6 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             }
             if (strcmp(expr->call.name, "random_int") == 0 && expr->call.arg_count == 0) {
                 ind(emit); fprintf(emit->out, "int64_t t%d = mix_random_int();\n", t);
-                return t;
-            }
-            if (strcmp(expr->call.name, "_mix_rc_alloc_count") == 0 && expr->call.arg_count == 0) {
-                ind(emit); fprintf(emit->out, "int64_t t%d = mix_rc_get_alloc_count();\n", t);
-                return t;
-            }
-            if (strcmp(expr->call.name, "_mix_rc_free_count") == 0 && expr->call.arg_count == 0) {
-                ind(emit); fprintf(emit->out, "int64_t t%d = mix_rc_get_free_count();\n", t);
                 return t;
             }
             if (strcmp(expr->call.name, "random_float") == 0 && expr->call.arg_count == 0) {
@@ -1850,7 +1876,39 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             return t;
         }
         case NODE_METHOD_CALL: {
+            if (expr->method_call.object &&
+                expr->method_call.object->kind == NODE_IDENT &&
+                expr->method_call.object->ident.type_arg_count > 0 &&
+                strcmp(expr->method_call.method_name, "new") == 0) {
+                MixType *ctor_type = expr->resolved_type
+                    ? expr->resolved_type
+                    : expr->method_call.object->resolved_type;
+                int zone_temp = emit_expr(emit, expr->method_call.args[0]);
+                int t = next_temp(emit);
+                if (ctor_type && ctor_type->kind == TYPE_LIST) {
+                    MixType *elem = ctor_type->list.elem_type;
+                    if (elem && elem->kind == TYPE_SHAPE) {
+                        ind(emit); fprintf(emit->out,
+                                "void *t%d = mix_list_new_shape_in(t%d, (int64_t)sizeof(%s));\n",
+                                t, zone_temp, elem->shape.name);
+                    } else {
+                        ind(emit); fprintf(emit->out, "void *t%d = mix_list_new_in(t%d);\n",
+                                t, zone_temp);
+                    }
+                } else if (ctor_type && ctor_type->kind == TYPE_MAP) {
+                    ind(emit); fprintf(emit->out, "void *t%d = mix_map_new_in(t%d);\n",
+                            t, zone_temp);
+                } else if (ctor_type && ctor_type->kind == TYPE_SET) {
+                    ind(emit); fprintf(emit->out, "void *t%d = mix_set_new_in(t%d);\n",
+                            t, zone_temp);
+                } else {
+                    ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
+                }
+                return t;
+            }
             int obj_temp = emit_expr(emit, expr->method_call.object);
+            obj_temp = maybe_emit_box_checked_temp(
+                emit, expr->method_call.object->resolved_type, obj_temp);
             MixType *obj_type = ref_base_type(expr->method_call.object->resolved_type);
             const char *shape_name = (obj_type && obj_type->kind == TYPE_SHAPE)
                 ? obj_type->shape.name : "Unknown";
@@ -2264,6 +2322,8 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
         }
         case NODE_FIELD_EXPR: {
             int obj = emit_expr(emit, expr->field_expr.object);
+            obj = maybe_emit_box_checked_temp(
+                emit, expr->field_expr.object->resolved_type, obj);
             MixType *obj_type = ref_base_type(expr->field_expr.object->resolved_type);
 
             /* List .len */
@@ -2949,6 +3009,8 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
         }
         case NODE_FIELD_ASSIGN: {
             int obj = emit_expr(emit, stmt->field_assign.object);
+            obj = maybe_emit_box_checked_temp(
+                emit, stmt->field_assign.object->resolved_type, obj);
             int val = emit_expr(emit, stmt->field_assign.value);
             MixType *obj_type = ref_base_type(stmt->field_assign.object->resolved_type);
             if (obj_type && obj_type->kind == TYPE_SHAPE) {
@@ -3418,33 +3480,6 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                 }
             }
         }
-    }
-    fprintf(emit->out, "\n");
-
-    /* ---------------------------------------------------------------
-     * Refcount Phase 1: emit one release_<ShapeName>(void *) per
-     * locally-declared shape and populate local_shape_names so
-     * SHAPE_LIT codegen knows when to reference the local fn vs pass
-     * NULL (for C-imported / external shapes).
-     *
-     * Each release fn currently just calls mix_shape_free; Phase 2
-     * adds recursive release of shape-typed and list-typed fields.
-     * --------------------------------------------------------------- */
-    emit->local_shape_name_count = 0;
-    for (int i = 0; i < program->program.decl_count; i++) {
-        AstNode *decl = program->program.decls[i];
-        if (decl->kind != NODE_SHAPE_DECL) continue;
-        if (decl->shape_decl.type_param_count > 0) continue;
-        const char *name = decl->shape_decl.name;
-        if (emit->local_shape_name_count < 1024) {
-            emit->local_shape_names[emit->local_shape_name_count++] =
-                arena_strdup(emit->arena, name);
-        }
-        fprintf(emit->out,
-            "static void release_%s(void *p) {\n"
-            "    mix_shape_free(p);\n"
-            "}\n",
-            name);
     }
     fprintf(emit->out, "\n");
 

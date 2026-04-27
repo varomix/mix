@@ -1,0 +1,9 @@
+shape Point
+    x: int
+
+main() ~
+    z: Zone = zone_create("frame", 1024)
+    pts! = List[Point].new(z)
+    pts.push!(Point(x: 7))
+    zone_reset(z)
+    print(pts.len)

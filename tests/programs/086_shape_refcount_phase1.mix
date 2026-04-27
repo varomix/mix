@@ -1,20 +1,11 @@
-// Refcount Phase 1 — verifies that the shape-allocation infrastructure
-// works end-to-end with the new 16-byte header in place.
+// Value-shape basics — verifies that plain shapes still behave like
+// ordinary values after the refcounted-shape scaffolding is removed.
 //
-// Background: every SHAPE_LIT now goes through mix_shape_alloc which
-// prepends [refcount: i64][release_fn: ptr]. The compiler emits one
-// release_<ShapeName>() per locally-declared shape (currently a stub
-// that just calls mix_shape_free; Phase 2 adds recursive field
-// release). SHAPE_LIT codegen passes the local release fn for shapes
-// declared in this module, or 0 for C-imported shapes.
-//
-// This test does NOT check that memory is freed — Phase 1 only adds
-// infrastructure; the auto-release-on-scope-exit lives in Phase 1.5
-// or later. Here we just confirm:
+// Here we just confirm:
 //   1. Shape construction with fields still works.
 //   2. Field reads return the values written.
 //   3. Multiple shapes can coexist.
-//   4. Shape returned from a function works (header survives).
+//   4. Shapes returned from functions still carry the right values.
 
 shape Vec2
     x: float

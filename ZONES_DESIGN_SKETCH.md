@@ -1,5 +1,11 @@
 # MIX — Zone-based Memory Design Sketch
 
+> Historical note: this document captures the first zone-only pivot idea.
+> It is superseded by the value-first design in
+> `ZONES_VALUE_FIRST_DESIGN_SKETCH.md` and by the implemented compiler
+> behavior. MIX does not use the "everything allocates in the current
+> zone" model described here.
+
 > Status: 2026-04-26. Exploratory design — not committed to. Written to
 > evaluate whether moving from refcount to zones is the right call for
 > MIX, given its game/graphics positioning.

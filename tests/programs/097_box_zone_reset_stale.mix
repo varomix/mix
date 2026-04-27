@@ -1,0 +1,8 @@
+shape Sprite
+    x: int
+
+main() ~
+    frame = zone_create("frame", 1024)
+    s = box(frame, Sprite(x: 7))
+    zone_reset(frame)
+    print(s.x)

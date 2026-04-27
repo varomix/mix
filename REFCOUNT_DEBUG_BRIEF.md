@@ -1,5 +1,12 @@
 # MIX Refcount — Debug Brief for Second Opinion
 
+> Historical note: this document describes the abandoned refcount-based
+> shape experiment from 2026-04-26. The current compiler no longer uses
+> per-shape refcounting. MIX now ships value-default shapes, explicit
+> `ref` / `ref!`, `Box[T]`, explicit `Zone` handles, and allocator-backed
+> collections. See `docs/DOCS.md` and `ZONES_VALUE_FIRST_DESIGN_SKETCH.md`
+> for the current model.
+
 > Status: 2026-04-26. Phases 1–3.5 of refcount landed; mixel still leaks
 > ~30 MB/min and now exhibits a new use-after-free symptom. Looking for
 > a fresh review of the design and codegen.

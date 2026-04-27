@@ -17,24 +17,25 @@ make
 
 ### Language
 - **Type inference** — types deduced from context, explicit annotations optional
-- **Shapes** — struct-like types with methods, computed fields, and operator overloading
+- **Shapes** — value types with methods, computed fields, and operator overloading
+- **Borrows & boxes** — `ref T`, `ref! T`, and `Box[T]` for explicit aliasing and stable-address zone allocation
 - **Tagged unions** — sum types with exhaustive `match` (warns on unhandled variants)
 - **Unions** — C-style untagged unions for transparent C interop
 - **Generics** — `@T` type parameters with `has` constraints (operators + shape methods enforced at call sites)
-- **Generic shapes** — `shape Box[T]`, `Stack[T]`, etc., monomorphized per concrete `T` (`Stack[int]`, `Stack[float]` are distinct)
+- **Generic shapes** — `shape Pair[T]`, `Stack[T]`, etc., monomorphized per concrete `T` (`Stack[int]`, `Stack[float]` are distinct)
 - **Optionals** — `T?` types with `else` fallback, `?` propagation, and `match opt; some(v) =>; none =>` arms
 - **Error handling** — `fail expr`, `else` fallback, `?` propagation, `match res; ok(v) =>; err(e) =>` arms
 - **Match exhaustiveness** — warns on missing variants/arms for tagged unions, optionals, and results
 - **String interpolation** — `"Hello {name}!"`
 - **String operations** — `+`, comparison, `.sort()`, `.char_at()`, `.code()`, `ord()`, `chr()`
-- **Lists** — `push`, `pop`, `sort` (int/float/string), `reverse`, `insert`, `remove`, `contains`, `index_of`, `join`
+- **Lists** — `push!`, `pop!`, `sort!` (int/float/string), `reverse!`, `insert!`, `remove!`, `contains`, `index_of`, `join`, `at`, `at_mut!`, `for item! in list`
 - **Maps** — `{"key": val}`, `.has()`, `.remove!()`, `.keys`, `.values`
 - **Sets** — `set{"a", "b"}`, `.add!()`, `.remove!()`, `.has()`, `.union()`, `.intersect()`, `.diff()`
 - **Slices & comprehensions** — `list[1..3]`, `[x*x for x in list]`
 - **Closures / lambdas** — `x => x * 2`
 - **Concurrency** — `go`/`wait` with `shared` for thread-safe values
 - **C interop** — `extern "lib"` blocks, auto-binding from C headers (`--bind`), `use c "header.h"` for transparent FFI
-- **Zones** — deterministic region-based memory
+- **Zones** — anonymous scoped zones, explicit `Zone` handles, and allocator-backed `List[T].new(zone)` / `Map[K, V].new(zone)` / `Set[T].new(zone)`
 - **Modules** — `use path.to.module`, selective imports `use std.math: PI, hypot`, `pub` exports
 - **Conditional compilation** — `@os == "macos"`, `@debug`, `@release`
 
@@ -128,6 +129,37 @@ double_parsed(x: int) -> int ~
     done val * 2
 ```
 
+## Memory Model
+
+MIX is value-first:
+
+- `shape` values copy/pass/return like structs
+- `ref T` / `ref! T` are explicit non-owning borrows
+- `Box[T]` is explicit stable-address storage allocated in a `Zone`
+- `zone` blocks and explicit `Zone` handles group dynamic allocations by lifetime
+- `List[T]`, `Map[K, V]`, and `Set[T]` can be allocated explicitly with `*.new(zone)`
+- `items[i]` reads a value; `items.at(i)` / `items.at_mut!(i)` borrow without copying
+- `for item in items` is read-only; `for item! in items` writes through to the element
+
+Typical examples:
+
+```mix
+shape Vec2
+    x, y: float
+
+main() ~
+    frame = zone_create("frame", 1024 * 1024)
+
+    p = Vec2(x: 1.0, y: 2.0)          // plain value
+    pts! = List[Vec2].new(frame)      // zone-backed dynamic storage
+    pts.push!(p)
+
+    slot = pts.at_mut!(0)             // mutable borrow
+    slot.x = 9.0
+
+    boxed = box(frame, p)             // stable-address zone allocation
+```
+
 ## Effect Markers
 
 MIX uses markers on function declarations to signal intent:
@@ -155,7 +187,7 @@ make test-all    # runtime + error + error-message suites (run for current count
 
 ## Documentation
 
-See `docs/DOCS.md` for the full language reference and `MIX-spec_v01.md` for the language specification.
+See `docs/DOCS.md` for the full language reference, `MIX-spec_v01.md` for the language specification, and `ZONES_VALUE_FIRST_DESIGN_SKETCH.md` for the memory-model rationale.
 
 ## Building the LSP
 

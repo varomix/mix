@@ -1,0 +1,3 @@
+// ERROR: argument 1 of 'new': expected Zone, got int
+main()
+    xs = List[int].new(1)

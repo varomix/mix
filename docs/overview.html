@@ -380,7 +380,7 @@ count<span class="op">!</span> <span class="op">/=</span> <span class="num">3</s
 <p>Functions that mutate their arguments use the <code class="op">!</code> marker.</p>
 <pre><code><span class="fn">double_all</span><span class="op">!</span>(nums<span class="op">:</span> [<span class="ty">int</span>])
     <span class="kw">for</span> i <span class="kw">in</span> <span class="num">0</span><span class="op">..</span>nums.<span class="fn">len</span>
-        nums[i]<span class="op">!</span> <span class="op">=</span> nums[i] <span class="op">*</span> <span class="num">2</span></code><span class="label">mix</span></pre>
+        nums<span class="op">!</span>[i] <span class="op">=</span> nums[i] <span class="op">*</span> <span class="num">2</span></code><span class="label">mix</span></pre>
 
 <h3>Recursion</h3>
 <pre><code><span class="fn">factorial</span>(n<span class="op">:</span> <span class="ty">int</span>) <span class="op">-></span> <span class="ty">int</span>
@@ -479,9 +479,12 @@ pos <span class="op">=</span> <span class="ty">Vec2</span>(x<span class="op">:</
 
 <span class="cm">// positional</span>
 pos <span class="op">=</span> <span class="ty">Vec2</span>(<span class="num">3.0</span>, <span class="num">4.0</span>)</code><span class="label">mix</span></pre>
+<p>Shapes are values by default. Copying a shape copies its data. Use <code>ref</code> /
+<code>ref!</code> for explicit borrows and <code>Box[T]</code> when you need stable address or shared identity.</p>
 
 <h3>Methods</h3>
-<p>Methods have implicit <code>self</code>. Fields are accessed directly by name.</p>
+<p>Methods have implicit <code>self</code>. Fields are accessed directly by name. Mutating methods are
+marked with <code>!</code> and require mutable storage at the call site.</p>
 <pre><code><span class="kw">shape</span> <span class="ty">Vec2</span>
     x<span class="op">:</span> <span class="ty">float</span>
     y<span class="op">:</span> <span class="ty">float</span>
@@ -556,7 +559,7 @@ v <span class="op">=</span> <span class="ty">Value</span>(i<span class="op">:</s
 <h2><span class="num">06</span>Collections</h2>
 
 <h3>Lists</h3>
-<pre><code>nums <span class="op">=</span> [<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>, <span class="num">5</span>]
+<pre><code>nums<span class="op">!</span> <span class="op">=</span> [<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>, <span class="num">5</span>]
 empty<span class="op">:</span> [<span class="ty">int</span>] <span class="op">=</span> []
 
 <span class="cm">// access and length</span>
@@ -576,17 +579,21 @@ has_three <span class="op">=</span> nums.<span class="fn">contains</span>(<span 
 idx <span class="op">=</span> nums.<span class="fn">index_of</span>(<span class="num">3</span>)
 
 <span class="cm">// transform</span>
-joined <span class="op">=</span> names.<span class="fn">join</span>(<span class="str">", "</span>)
+words <span class="op">=</span> [<span class="str">"a"</span>, <span class="str">"b"</span>, <span class="str">"c"</span>]
+joined <span class="op">=</span> words.<span class="fn">join</span>(<span class="str">", "</span>)
 
 <span class="cm">// slicing</span>
 sub <span class="op">=</span> nums[<span class="num">1</span><span class="op">..</span><span class="num">3</span>]   <span class="cm">// elements at index 1, 2</span></code><span class="label">mix</span></pre>
+<p><code>items[i]</code> reads a value. Use <code>items.at(i)</code> / <code>items.at_mut!(i)</code> for borrowed
+element access, and <code>for item! in items</code> when mutations should write through to the
+underlying element.</p>
 
 <h4>List Comprehensions</h4>
 <pre><code>squares <span class="op">=</span> [x <span class="op">*</span> x <span class="kw">for</span> x <span class="kw">in</span> nums]
 evens <span class="op">=</span> [x <span class="kw">for</span> x <span class="kw">in</span> nums <span class="kw">if</span> x <span class="op">%</span> <span class="num">2</span> <span class="op">==</span> <span class="num">0</span>]</code><span class="label">mix</span></pre>
 
 <h3>Maps</h3>
-<pre><code>ages <span class="op">=</span> {<span class="str">"alice"</span><span class="op">:</span> <span class="num">30</span>, <span class="str">"bob"</span><span class="op">:</span> <span class="num">25</span>}
+<pre><code>ages<span class="op">!</span> <span class="op">=</span> {<span class="str">"alice"</span><span class="op">:</span> <span class="num">30</span>, <span class="str">"bob"</span><span class="op">:</span> <span class="num">25</span>}
 empty<span class="op">:</span> {<span class="ty">str</span><span class="op">:</span> <span class="ty">int</span>} <span class="op">=</span> {}
 
 <span class="cm">// access</span>
@@ -607,7 +614,7 @@ all_vals <span class="op">=</span> ages.<span class="fn">values</span>
     <span class="fn">print</span>(<span class="str">"{k} is {v}"</span>)</code><span class="label">mix</span></pre>
 
 <h3>Sets</h3>
-<pre><code>tags <span class="op">=</span> <span class="kw">set</span>{<span class="str">"rust"</span>, <span class="str">"go"</span>, <span class="str">"mix"</span>}
+<pre><code>tags<span class="op">!</span> <span class="op">=</span> <span class="kw">set</span>{<span class="str">"rust"</span>, <span class="str">"go"</span>, <span class="str">"mix"</span>}
 empty<span class="op">:</span> <span class="kw">set</span>[<span class="ty">str</span>] <span class="op">=</span> <span class="kw">set</span>{}
 
 <span class="cm">// mutation</span>
@@ -869,17 +876,21 @@ comments <span class="op">=</span> <span class="kw">wait</span> t3</code><span c
     ptr <span class="op">=</span> ptr <span class="op">+</span> <span class="num">1</span>   <span class="cm">// pointer arithmetic</span></code><span class="label">mix</span></pre>
 
 <h3>Zones</h3>
-<p>Zone-based memory management for grouping allocations.</p>
-<pre><code><span class="kw">zone</span>
-    <span class="cm">// all allocations in this block are grouped</span>
-    data <span class="op">=</span> <span class="fn">process</span>(input)
-    result <span class="op">=</span> <span class="fn">transform</span>(data)
-<span class="cm">// memory freed here</span>
+<p>Zones group dynamic allocations by lifetime. Plain shapes stay as values; containers and boxed
+values can be allocated explicitly from a <code>Zone</code>.</p>
+<pre><code><span class="cm">// scoped anonymous zone</span>
+<span class="kw">zone</span>
+    scratch <span class="op">=</span> <span class="fn">mix_zone_alloc</span>(<span class="num">256</span>)
+    names <span class="op">=</span> [<span class="str">"a"</span>, <span class="str">"b"</span>, <span class="str">"c"</span>]
+<span class="cm">// zone-managed allocations from the block are gone here</span>
 
-<span class="cm">// named zones</span>
-<span class="kw">zone</span><span class="op">:</span>render
-    frame <span class="op">=</span> <span class="fn">build_frame</span>()
-    <span class="fn">draw</span>(frame)</code><span class="label">mix</span></pre>
+<span class="cm">// explicit handle for longer-lived dynamic storage</span>
+frame <span class="op">=</span> <span class="fn">zone_create</span>(<span class="str">"frame"</span>, <span class="num">1024</span> * <span class="num">1024</span>)
+pts<span class="op">!</span> <span class="op">=</span> <span class="ty">List</span>[<span class="ty">Vec2</span>].<span class="fn">new</span>(frame)
+pts.<span class="fn">push!</span>(<span class="ty">Vec2</span>(x<span class="op">:</span> <span class="num">1.0</span>, y<span class="op">:</span> <span class="num">2.0</span>))
+<span class="fn">zone_reset</span>(frame)</code><span class="label">mix</span></pre>
+<p><code>Box[T]</code>, <code>List[T]</code>, <code>Map[K, V]</code>, and <code>Set[T]</code> values allocated from a zone become
+stale after <code>zone_reset</code> / <code>zone_destroy</code> and panic on use.</p>
 
 <h3>Defer</h3>
 <p>Deferred statements run in LIFO order when the enclosing scope exits.</p>

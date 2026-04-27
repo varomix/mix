@@ -78,75 +78,6 @@ void mix_free(void *ptr) {
     free(ptr);
 }
 
-// ---------------------------------------------------------------
-// Shape refcounting
-// ---------------------------------------------------------------
-// Every MIX shape allocation is prefixed by a 16-byte header:
-//   [ refcount : i64 ][ release_fn : void(*)(void*) ]
-// The pointer returned to MIX code points AFTER the header (at the
-// user-visible field area), so legacy field-offset codegen needs no
-// changes. mix_release reads the header at p - 16.
-//
-// release_fn is a per-shape function emitted by the compiler. It
-// recursively releases any shape-typed fields (Phase 2+) and then
-// calls mix_shape_free which actually frees the underlying allocation.
-//
-// Refcounts are NOT atomic — MIX is single-threaded for now.
-// Cycles are unreclaimed (documented limitation).
-
-typedef struct {
-    int64_t refcount;
-    void  (*release_fn)(void *);
-} MixHeader;
-
-#define MIX_HEADER_SIZE ((int64_t)sizeof(MixHeader))
-#define MIX_HEADER(p)   ((MixHeader *)((char *)(p) - MIX_HEADER_SIZE))
-
-void mix_shape_free(void *p);  // forward decl — defined below
-
-// Test-only counters: every refcount op bumps these so regression
-// tests can assert exact alloc/free balance without resorting to
-// getrusage / malloc-introspection. Exposed to MIX as builtins
-// `_mix_rc_alloc_count()` and `_mix_rc_free_count()`.
-static int64_t mix_rc_alloc_count = 0;
-static int64_t mix_rc_free_count  = 0;
-
-int64_t mix_rc_get_alloc_count(void) { return mix_rc_alloc_count; }
-int64_t mix_rc_get_free_count(void)  { return mix_rc_free_count; }
-
-void *mix_shape_alloc(int64_t size, void (*release_fn)(void *)) {
-    char *raw = malloc((size_t)(MIX_HEADER_SIZE + size));
-    if (!raw) mix_panic("out of memory");
-    MixHeader *h = (MixHeader *)raw;
-    h->refcount = 1;
-    h->release_fn = release_fn;
-    void *user = raw + MIX_HEADER_SIZE;
-    memset(user, 0, (size_t)size);
-    mix_rc_alloc_count++;
-    return user;
-}
-
-void mix_retain(void *p) {
-    if (!p) return;
-    MIX_HEADER(p)->refcount++;
-}
-
-void mix_release(void *p) {
-    if (!p) return;
-    MixHeader *h = MIX_HEADER(p);
-    if (--h->refcount > 0) return;
-    if (h->release_fn) h->release_fn(p);
-    else mix_shape_free(p);  // shouldn't normally happen — every shape has a release_fn
-}
-
-// Free the underlying allocation. Called by per-shape release_fn after
-// recursively releasing fields. User code never calls this directly.
-void mix_shape_free(void *p) {
-    if (!p) return;
-    mix_rc_free_count++;
-    free((char *)p - MIX_HEADER_SIZE);
-}
-
 // Allocate zeroed bytes (for SDL_Event buffers, etc.)
 void *mix_bytes(int64_t n) {
     void *ptr = calloc(1, (size_t)n);
@@ -225,6 +156,69 @@ int64_t mix_peek_ptr(const void *ptr, int64_t offset) {
     return *(const int64_t *)((char *)ptr + offset);
 }
 
+typedef struct MixZoneHandle MixZoneHandle;
+
+static MixZoneHandle *mix_current_zone(void);
+void *zone_alloc(void *zone_ptr, int64_t size);
+void *mix_list_new_in(void *zone_ptr);
+void *mix_list_new_shape_in(void *zone_ptr, int64_t elem_size);
+void *mix_map_new_in(void *zone_ptr);
+void *mix_set_new_in(void *zone_ptr);
+static MixZoneHandle *zone_handle_require_alive(void *zone_ptr);
+static int64_t zone_handle_generation(void *zone_ptr);
+static void zone_handle_check_generation(const MixZoneHandle *zone,
+                                         int64_t generation,
+                                         const char *kind);
+static void *mix_realloc_copy_for_zone(MixZoneHandle *zone, void *old_ptr,
+                                       size_t old_size, size_t new_size);
+
+static void *mix_alloc_zero_for_zone(MixZoneHandle *zone, size_t size) {
+    if (zone) return zone_alloc(zone, (int64_t)size);
+    size_t alloc_size = size > 0 ? size : 1u;
+    void *ptr = calloc(1, alloc_size);
+    if (!ptr) mix_panic("out of memory");
+    return ptr;
+}
+
+static void *mix_alloc_zero_current(size_t size) {
+    return mix_alloc_zero_for_zone(mix_current_zone(), size);
+}
+
+static void *mix_realloc_copy_current(void *old_ptr, size_t old_size,
+                                      size_t new_size) {
+    return mix_realloc_copy_for_zone(mix_current_zone(), old_ptr, old_size,
+                                     new_size);
+}
+
+static void *mix_realloc_copy_for_zone(MixZoneHandle *zone, void *old_ptr,
+                                       size_t old_size, size_t new_size) {
+    void *new_ptr = mix_alloc_zero_for_zone(zone, new_size);
+    if (old_ptr && old_size > 0) {
+        size_t copy_size = old_size < new_size ? old_size : new_size;
+        memcpy(new_ptr, old_ptr, copy_size);
+        if (!zone) free(old_ptr);
+    }
+    return new_ptr;
+}
+
+static char *mix_strdup_for_zone(MixZoneHandle *zone, const char *src) {
+    size_t len = strlen(src) + 1;
+    char *dst = mix_alloc_zero_for_zone(zone, len);
+    memcpy(dst, src, len);
+    return dst;
+}
+
+static char *mix_strdup_current(const char *src) {
+    return mix_strdup_for_zone(mix_current_zone(), src ? src : "");
+}
+
+static char *mix_adopt_c_string(char *src) {
+    if (!src) return mix_strdup_current("");
+    char *dst = mix_strdup_current(src);
+    free(src);
+    return dst;
+}
+
 // ---- Lists ----
 // Primitive lists store 8-byte values. Shape lists store inline element bytes,
 // so `List[Sprite]` is compact and supports true element borrows.
@@ -235,6 +229,8 @@ typedef struct {
     int64_t elem_size;
     uint8_t *data;
     int is_inline;
+    MixZoneHandle *zone;
+    int64_t generation;
 } MixList;
 
 static void mix_list_oob(const MixList *list, int64_t index) {
@@ -243,60 +239,85 @@ static void mix_list_oob(const MixList *list, int64_t index) {
     exit(1);
 }
 
+static void mix_list_require_alive(const MixList *list) {
+    if (!list) mix_panic("list is null");
+    zone_handle_check_generation(list->zone, list->generation, "list");
+}
+
 static void mix_list_require_scalar(const MixList *list, const char *op) {
+    mix_list_require_alive(list);
     if (list && list->is_inline) {
         fprintf(stderr, "panic: %s requires a scalar list\n", op);
         exit(1);
     }
 }
 
-static void mix_list_init(MixList *list, int64_t elem_size, int is_inline) {
+static void mix_list_init(MixList *list, int64_t elem_size, int is_inline,
+                          MixZoneHandle *zone) {
     if (!list) mix_panic("list is null");
     if (elem_size <= 0) mix_panic("list elem_size must be positive");
+    if (zone) zone = zone_handle_require_alive(zone);
     list->len = 0;
     list->cap = 8;
     list->elem_size = elem_size;
     list->is_inline = is_inline;
-    list->data = malloc((size_t)(elem_size * list->cap));
-    if (!list->data) mix_panic("out of memory");
+    list->zone = zone;
+    list->generation = zone ? zone_handle_generation(zone) : 0;
+    list->data = mix_alloc_zero_for_zone(zone, (size_t)(elem_size * list->cap));
 }
 
 static void mix_list_ensure_cap(MixList *list, int64_t extra) {
-    if (!list) mix_panic("list is null");
+    mix_list_require_alive(list);
     if (list->len + extra <= list->cap) return;
+    int64_t old_cap = list->cap;
     while (list->len + extra > list->cap) {
         list->cap *= 2;
     }
-    list->data = realloc(list->data, (size_t)(list->elem_size * list->cap));
-    if (!list->data) mix_panic("out of memory");
+    list->data = mix_realloc_copy_for_zone(
+        list->zone, list->data,
+        (size_t)(list->elem_size * old_cap),
+        (size_t)(list->elem_size * list->cap));
 }
 
 static uint8_t *mix_list_elem_ptr_mut(MixList *list, int64_t index) {
+    mix_list_require_alive(list);
     if (index < 0 || index >= list->len) mix_list_oob(list, index);
     return list->data + (index * list->elem_size);
 }
 
 static const uint8_t *mix_list_elem_ptr_const(const MixList *list, int64_t index) {
+    mix_list_require_alive(list);
     if (index < 0 || index >= list->len) mix_list_oob(list, index);
     return list->data + (index * list->elem_size);
 }
 
 void *mix_list_new(void) {
-    MixList *list = malloc(sizeof(MixList));
-    if (!list) mix_panic("out of memory");
-    mix_list_init(list, 8, 0);
-    return list;
+    return mix_list_new_in(mix_current_zone());
 }
 
 void *mix_list_new_shape(int64_t elem_size) {
-    MixList *list = malloc(sizeof(MixList));
+    return mix_list_new_shape_in(mix_current_zone(), elem_size);
+}
+
+void *mix_list_new_in(void *zone_ptr) {
+    MixZoneHandle *zone = zone_ptr;
+    MixList *list = calloc(1, sizeof(MixList));
     if (!list) mix_panic("out of memory");
-    mix_list_init(list, elem_size, 1);
+    mix_list_init(list, 8, 0, zone);
+    return list;
+}
+
+void *mix_list_new_shape_in(void *zone_ptr, int64_t elem_size) {
+    MixZoneHandle *zone = zone_ptr;
+    MixList *list = calloc(1, sizeof(MixList));
+    if (!list) mix_panic("out of memory");
+    mix_list_init(list, elem_size, 1, zone);
     return list;
 }
 
 int64_t mix_list_len(const void *list_ptr) {
     const MixList *list = list_ptr;
+    mix_list_require_alive(list);
     return list->len;
 }
 
@@ -310,6 +331,7 @@ void mix_list_push(void *list_ptr, int64_t val) {
 
 void mix_list_push_bytes(void *list_ptr, const void *src) {
     MixList *list = list_ptr;
+    mix_list_require_alive(list);
     if (!list || !list->is_inline) mix_panic("mix_list_push_bytes requires an inline list");
     mix_list_ensure_cap(list, 1);
     memcpy(list->data + (list->len * list->elem_size), src, (size_t)list->elem_size);
@@ -337,12 +359,14 @@ void mix_list_set(void *list_ptr, int64_t index, int64_t val) {
 
 void mix_list_set_bytes(void *list_ptr, int64_t index, const void *src) {
     MixList *list = list_ptr;
+    mix_list_require_alive(list);
     if (!list || !list->is_inline) mix_panic("mix_list_set_bytes requires an inline list");
     memcpy(mix_list_elem_ptr_mut(list, index), src, (size_t)list->elem_size);
 }
 
 void mix_list_pop_bytes(void *list_ptr, void *out) {
     MixList *list = list_ptr;
+    mix_list_require_alive(list);
     if (!list || !list->is_inline) mix_panic("mix_list_pop_bytes requires an inline list");
     if (list->len <= 0) mix_panic("pop from empty list");
     list->len--;
@@ -351,6 +375,7 @@ void mix_list_pop_bytes(void *list_ptr, void *out) {
 
 void mix_list_insert_bytes(void *list_ptr, int64_t idx, const void *src) {
     MixList *list = list_ptr;
+    mix_list_require_alive(list);
     if (!list || !list->is_inline) mix_panic("mix_list_insert_bytes requires an inline list");
     if (idx < 0 || idx > list->len) {
         fprintf(stderr, "panic: list insert index %" PRId64 " out of bounds (len %" PRId64 ")\n",
@@ -368,6 +393,7 @@ void mix_list_insert_bytes(void *list_ptr, int64_t idx, const void *src) {
 
 void *mix_list_slice(const void *list_ptr, int64_t start, int64_t end, int32_t inclusive) {
     const MixList *list = list_ptr;
+    mix_list_require_alive(list);
     if (start < 0) start = list->len + start;
     if (end < 0) end = list->len + end;
     if (start < 0) start = 0;
@@ -375,8 +401,8 @@ void *mix_list_slice(const void *list_ptr, int64_t start, int64_t end, int32_t i
     if (inclusive && end < list->len) end++;
 
     MixList *result = list->is_inline
-        ? mix_list_new_shape(list->elem_size)
-        : mix_list_new();
+        ? mix_list_new_shape_in(list->zone, list->elem_size)
+        : mix_list_new_in(list->zone);
     for (int64_t i = start; i < end; i++) {
         if (list->is_inline) {
             mix_list_push_bytes(result, list->data + (i * list->elem_size));
@@ -446,6 +472,7 @@ int64_t mix_list_pop(void *list_ptr) {
 
 void mix_list_remove(void *list_ptr, int64_t idx) {
     MixList *list = list_ptr;
+    mix_list_require_alive(list);
     if (idx < 0 || idx >= list->len) {
         fprintf(stderr, "panic: list index %" PRId64 " out of bounds (len %" PRId64 ")\n", idx, list->len);
         exit(1);
@@ -518,8 +545,7 @@ void *mix_list_to_f32(void *list_ptr) {
     MixList *list = (MixList *)list_ptr;
     mix_list_require_scalar(list, "mix_list_to_f32");
     if (!list || list->len == 0) return NULL;
-    float *buf = malloc((size_t)list->len * sizeof(float));
-    if (!buf) mix_panic("out of memory");
+    float *buf = mix_alloc_zero_for_zone(list->zone, (size_t)list->len * sizeof(float));
     for (int64_t i = 0; i < list->len; i++) {
         double d;
         int64_t bits = mix_list_get(list, i);
@@ -532,6 +558,7 @@ void *mix_list_to_f32(void *list_ptr) {
 void mix_list_reverse(void *list_ptr) {
     MixList *list = list_ptr;
     if (!list) return;
+    mix_list_require_alive(list);
     uint8_t *tmp = malloc((size_t)list->elem_size);
     if (!tmp) mix_panic("out of memory");
     for (int64_t i = 0, j = list->len - 1; i < j; i++, j--) {
@@ -564,7 +591,15 @@ int64_t mix_list_index_of(const void *list_ptr, int64_t val) {
 
 // ---- Explicit Zone Handles ----
 
+typedef struct MixZoneHandle MixZoneHandle;
+
 typedef struct {
+    MixZoneHandle *zone;
+    int64_t generation;
+    void *payload;
+} MixBoxHandle;
+
+struct MixZoneHandle {
     char *name;
     void **allocs;
     int64_t alloc_count;
@@ -572,12 +607,46 @@ typedef struct {
     int64_t alloc_bytes;
     int64_t high_water;
     int64_t reset_count;
-} MixZoneHandle;
+    int64_t generation;
+    int destroyed;
+};
+
+static const char *zone_handle_name(const MixZoneHandle *zone) {
+    return (zone && zone->name) ? zone->name : "<unnamed>";
+}
 
 static MixZoneHandle *zone_handle_require(void *zone_ptr) {
     MixZoneHandle *zone = zone_ptr;
     if (!zone) mix_panic("zone is null");
     return zone;
+}
+
+static MixZoneHandle *zone_handle_require_alive(void *zone_ptr) {
+    MixZoneHandle *zone = zone_handle_require(zone_ptr);
+    if (zone->destroyed) {
+        mix_panic("zone was destroyed");
+    }
+    return zone;
+}
+
+static int64_t zone_handle_generation(void *zone_ptr) {
+    return zone_handle_require_alive(zone_ptr)->generation;
+}
+
+static void zone_handle_check_generation(const MixZoneHandle *zone,
+                                         int64_t generation,
+                                         const char *kind) {
+    if (!zone) return;
+    if (zone->destroyed) {
+        fprintf(stderr, "panic: %s points into destroyed zone '%s'\n",
+                kind, zone_handle_name(zone));
+        exit(1);
+    }
+    if (generation != zone->generation) {
+        fprintf(stderr, "panic: %s points into reset zone '%s'\n",
+                kind, zone_handle_name(zone));
+        exit(1);
+    }
 }
 
 static void zone_handle_track_alloc(MixZoneHandle *zone, void *ptr) {
@@ -597,7 +666,10 @@ static void zone_handle_clear(MixZoneHandle *zone, int count_reset) {
     }
     zone->alloc_count = 0;
     zone->alloc_bytes = 0;
-    if (count_reset) zone->reset_count++;
+    if (count_reset) {
+        zone->reset_count++;
+        zone->generation++;
+    }
 }
 
 void *zone_create(const char *name, int64_t capacity_hint) {
@@ -613,25 +685,28 @@ void *zone_create(const char *name, int64_t capacity_hint) {
         if (!zone->name) mix_panic("out of memory");
         memcpy(zone->name, name, name_len);
     }
+    zone->generation = 1;
     return zone;
 }
 
 void zone_destroy(void *zone_ptr) {
     if (!zone_ptr) return;
-    MixZoneHandle *zone = zone_handle_require(zone_ptr);
+    MixZoneHandle *zone = zone_handle_require_alive(zone_ptr);
     zone_handle_clear(zone, 0);
+    zone->generation++;
+    zone->destroyed = 1;
     free(zone->allocs);
-    free(zone->name);
-    free(zone);
+    zone->allocs = NULL;
+    zone->alloc_cap = 0;
 }
 
 void zone_reset(void *zone_ptr) {
-    MixZoneHandle *zone = zone_handle_require(zone_ptr);
+    MixZoneHandle *zone = zone_handle_require_alive(zone_ptr);
     zone_handle_clear(zone, 1);
 }
 
 void *zone_alloc(void *zone_ptr, int64_t size) {
-    MixZoneHandle *zone = zone_handle_require(zone_ptr);
+    MixZoneHandle *zone = zone_handle_require_alive(zone_ptr);
     if (size < 0) mix_panic("zone_alloc size must be non-negative");
     size_t alloc_size = size > 0 ? (size_t)size : 1u;
     void *ptr = calloc(1, alloc_size);
@@ -645,61 +720,85 @@ void *zone_alloc(void *zone_ptr, int64_t size) {
 }
 
 void *mix_box_clone(void *zone_ptr, const void *src, int64_t size) {
-    void *dst = zone_alloc(zone_ptr, size);
-    size_t copy_size = size > 0 ? (size_t)size : 1u;
-    memcpy(dst, src, copy_size);
-    return dst;
+    MixZoneHandle *zone = zone_handle_require_alive(zone_ptr);
+    void *dst = zone_alloc(zone, size);
+    size_t copy_size = size > 0 ? (size_t)size : 0u;
+    if (copy_size > 0) {
+        memcpy(dst, src, copy_size);
+    }
+
+    MixBoxHandle *box = malloc(sizeof(MixBoxHandle));
+    if (!box) mix_panic("out of memory");
+    box->zone = zone;
+    box->generation = zone->generation;
+    box->payload = dst;
+    return box;
+}
+
+void *mix_box_check(void *box_ptr) {
+    if (!box_ptr) return NULL;
+
+    MixBoxHandle *box = box_ptr;
+    MixZoneHandle *zone = zone_handle_require(box->zone);
+    zone_handle_check_generation(zone, box->generation, "box");
+    if (!box->payload) {
+        mix_panic("invalid Box payload");
+    }
+    return box->payload;
 }
 
 int64_t _mix_zone_alloc_bytes(void *zone_ptr) {
-    return zone_handle_require(zone_ptr)->alloc_bytes;
+    return zone_handle_require_alive(zone_ptr)->alloc_bytes;
 }
 
 int64_t _mix_zone_high_water(void *zone_ptr) {
-    return zone_handle_require(zone_ptr)->high_water;
+    return zone_handle_require_alive(zone_ptr)->high_water;
 }
 
 int64_t _mix_zone_reset_count(void *zone_ptr) {
-    return zone_handle_require(zone_ptr)->reset_count;
+    return zone_handle_require_alive(zone_ptr)->reset_count;
 }
 
 // ---- Zones ----
 // Anonymous scoped zone stack used by `zone ...` statements.
 
 #define MAX_ZONE_DEPTH 32
-#define MAX_ZONE_ALLOCS 1024
 
-// Thread-local zone state so 'go' tasks don't race with the main thread
-static _Thread_local void *zone_allocs[MAX_ZONE_ALLOCS];
-static _Thread_local int64_t zone_alloc_count = 0;
-static _Thread_local int64_t zone_watermarks[MAX_ZONE_DEPTH];
+// Thread-local zone state so `go` tasks don't race with the main thread.
+// Each depth slot is stable storage, so stale Box/List/Map handles can still
+// diagnose reset/escape bugs after a zone scope exits.
+static _Thread_local MixZoneHandle zone_stack[MAX_ZONE_DEPTH];
 static _Thread_local int zone_depth = 0;
+
+static MixZoneHandle *mix_current_zone(void) {
+    if (zone_depth <= 0) return NULL;
+    return &zone_stack[zone_depth - 1];
+}
 
 void mix_zone_enter(void) {
     if (zone_depth >= MAX_ZONE_DEPTH) mix_panic("zone nesting too deep");
-    zone_watermarks[zone_depth++] = zone_alloc_count;
+    MixZoneHandle *zone = &zone_stack[zone_depth++];
+    zone->destroyed = 0;
+    if (zone->generation == 0) zone->generation = 1;
+    zone->alloc_count = 0;
+    zone->alloc_bytes = 0;
+    zone->high_water = 0;
+    zone->reset_count = 0;
+    zone->name = "<zone>";
 }
 
 void mix_zone_exit(void) {
     if (zone_depth <= 0) mix_panic("zone exit without enter");
-    int64_t watermark = zone_watermarks[--zone_depth];
-    // Free all allocations since watermark
-    while (zone_alloc_count > watermark) {
-        free(zone_allocs[--zone_alloc_count]);
-    }
+    MixZoneHandle *zone = &zone_stack[--zone_depth];
+    zone_handle_clear(zone, 0);
+    zone->generation++;
+    zone->destroyed = 1;
 }
 
 // Zone-aware allocation: if inside a zone, track for cleanup
 void *mix_zone_alloc(int64_t size) {
-    void *ptr = calloc(1, (size_t)size);
-    if (!ptr) mix_panic("out of memory");
-    if (zone_depth > 0) {
-        if (zone_alloc_count >= MAX_ZONE_ALLOCS) {
-            mix_panic("too many zone allocations (max 1024)");
-        }
-        zone_allocs[zone_alloc_count++] = ptr;
-    }
-    return ptr;
+    if (size < 0) mix_panic("mix_zone_alloc size must be non-negative");
+    return mix_alloc_zero_current((size_t)size);
 }
 
 // ---- Optionals ----
@@ -711,7 +810,7 @@ void *mix_zone_alloc(int64_t size) {
 // is_ok: 1 = ok (value is the success value), 0 = error (value is error string ptr)
 
 void *mix_result_ok(int64_t value) {
-    int64_t *res = calloc(2, sizeof(int64_t));
+    int64_t *res = mix_alloc_zero_current(2 * sizeof(int64_t));
     if (!res) mix_panic("out of memory");
     res[0] = 1; // is_ok
     res[1] = value;
@@ -719,7 +818,7 @@ void *mix_result_ok(int64_t value) {
 }
 
 void *mix_result_err(int64_t err_value) {
-    int64_t *res = calloc(2, sizeof(int64_t));
+    int64_t *res = mix_alloc_zero_current(2 * sizeof(int64_t));
     if (!res) mix_panic("out of memory");
     res[0] = 0; // is_err
     res[1] = err_value;
@@ -755,7 +854,7 @@ int64_t mix_result_unwrap_err(const void *res_ptr) {
 }
 
 void *mix_optional_some(int64_t value) {
-    int64_t *opt = calloc(2, sizeof(int64_t));
+    int64_t *opt = mix_alloc_zero_current(2 * sizeof(int64_t));
     if (!opt) mix_panic("out of memory");
     opt[0] = 1; // has_value
     opt[1] = value;
@@ -763,7 +862,7 @@ void *mix_optional_some(int64_t value) {
 }
 
 void *mix_optional_none(void) {
-    int64_t *opt = calloc(2, sizeof(int64_t));
+    int64_t *opt = mix_alloc_zero_current(2 * sizeof(int64_t));
     if (!opt) mix_panic("out of memory");
     opt[0] = 0; // no value
     opt[1] = 0;
@@ -791,7 +890,7 @@ int64_t mix_str_len(const char *s) {
 char *mix_str_upper(const char *s) {
     if (!s) s = "";
     int64_t len = strlen(s);
-    char *result = malloc(len + 1);
+    char *result = mix_alloc_zero_current((size_t)len + 1);
     if (!result) mix_panic("out of memory");
     for (int64_t i = 0; i < len; i++) result[i] = toupper((unsigned char)s[i]);
     result[len] = '\0';
@@ -801,7 +900,7 @@ char *mix_str_upper(const char *s) {
 char *mix_str_lower(const char *s) {
     if (!s) s = "";
     int64_t len = strlen(s);
-    char *result = malloc(len + 1);
+    char *result = mix_alloc_zero_current((size_t)len + 1);
     if (!result) mix_panic("out of memory");
     for (int64_t i = 0; i < len; i++) result[i] = tolower((unsigned char)s[i]);
     result[len] = '\0';
@@ -813,14 +912,14 @@ char *mix_str_trim(const char *s) {
     const char *start = s;
     while (*start && isspace((unsigned char)*start)) start++;
     if (*start == '\0') {
-        char *result = malloc(1);
+        char *result = mix_alloc_zero_current(1);
         result[0] = '\0';
         return result;
     }
     const char *end = s + strlen(s) - 1;
     while (end > start && isspace((unsigned char)*end)) end--;
     int64_t len = end - start + 1;
-    char *result = malloc(len + 1);
+    char *result = mix_alloc_zero_current((size_t)len + 1);
     if (!result) mix_panic("out of memory");
     memcpy(result, start, len);
     result[len] = '\0';
@@ -836,7 +935,7 @@ void *mix_str_split(const char *s, const char *delim) {
         // Split into individual characters
         const char *p = s;
         while (*p) {
-            char *ch = malloc(2);
+            char *ch = mix_alloc_zero_current(2);
             ch[0] = *p;
             ch[1] = '\0';
             mix_list_push(list, (int64_t)ch);
@@ -848,13 +947,13 @@ void *mix_str_split(const char *s, const char *delim) {
     while (*p) {
         const char *found = strstr(p, delim);
         if (!found) {
-            char *part = malloc(strlen(p) + 1);
+            char *part = mix_strdup_current(p);
             strcpy(part, p);
             mix_list_push(list, (int64_t)part);
             break;
         }
         int64_t len = found - p;
-        char *part = malloc(len + 1);
+        char *part = mix_alloc_zero_current((size_t)len + 1);
         memcpy(part, p, len);
         part[len] = '\0';
         mix_list_push(list, (int64_t)part);
@@ -881,7 +980,7 @@ char *mix_str_replace(const char *s, const char *old_str, const char *new_str) {
     int64_t olen = strlen(old_str);
     int64_t nlen = strlen(new_str);
     if (olen == 0) {
-        char *result = malloc(slen + 1);
+        char *result = mix_alloc_zero_current((size_t)slen + 1);
         strcpy(result, s);
         return result;
     }
@@ -890,7 +989,7 @@ char *mix_str_replace(const char *s, const char *old_str, const char *new_str) {
     const char *p = s;
     while ((p = strstr(p, old_str))) { count++; p += olen; }
     int64_t rlen = slen + count * (nlen - olen);
-    char *result = malloc(rlen + 1);
+    char *result = mix_alloc_zero_current((size_t)rlen + 1);
     if (!result) mix_panic("out of memory");
     char *dst = result;
     p = s;
@@ -912,7 +1011,7 @@ char *mix_str_concat(const char *a, const char *b) {
     if (!b) b = "";
     int64_t alen = strlen(a);
     int64_t blen = strlen(b);
-    char *result = malloc(alen + blen + 1);
+    char *result = mix_alloc_zero_current((size_t)(alen + blen) + 1);
     if (!result) mix_panic("out of memory");
     memcpy(result, a, alen);
     memcpy(result + alen, b, blen);
@@ -934,7 +1033,7 @@ char *mix_str_char_at(const char *s, int64_t idx) {
     if (idx < 0 || idx >= len) {
         mix_panic("string index out of bounds");
     }
-    char *result = malloc(2);
+    char *result = mix_alloc_zero_current(2);
     if (!result) mix_panic("out of memory");
     result[0] = s[idx];
     result[1] = '\0';
@@ -945,7 +1044,7 @@ char *mix_str_join(const void *list_ptr, const char *sep) {
     const MixList *list = list_ptr;
     mix_list_require_scalar(list, "mix_str_join");
     if (list->len == 0) {
-        char *result = malloc(1);
+        char *result = mix_alloc_zero_current(1);
         result[0] = '\0';
         return result;
     }
@@ -956,7 +1055,7 @@ char *mix_str_join(const void *list_ptr, const char *sep) {
         total += strlen((const char *)(intptr_t)mix_list_get(list, i));
         if (i < list->len - 1) total += seplen;
     }
-    char *result = malloc(total + 1);
+    char *result = mix_alloc_zero_current((size_t)total + 1);
     if (!result) mix_panic("out of memory");
     char *dst = result;
     for (int64_t i = 0; i < list->len; i++) {
@@ -976,7 +1075,7 @@ char *mix_str_join(const void *list_ptr, const char *sep) {
 char *mix_str_reverse(const char *s) {
     if (!s) s = "";
     int64_t len = strlen(s);
-    char *result = malloc(len + 1);
+    char *result = mix_alloc_zero_current((size_t)len + 1);
     if (!result) mix_panic("out of memory");
     for (int64_t i = 0; i < len; i++) {
         result[i] = s[len - 1 - i];
@@ -992,7 +1091,7 @@ static int cmp_char(const void *a, const void *b) {
 char *mix_str_sort(const char *s) {
     if (!s) s = "";
     int64_t len = strlen(s);
-    char *result = malloc(len + 1);
+    char *result = mix_alloc_zero_current((size_t)len + 1);
     if (!result) mix_panic("out of memory");
     memcpy(result, s, len + 1);
     qsort(result, len, 1, cmp_char);
@@ -1018,12 +1117,12 @@ char *mix_str_slice(const char *s, int64_t start, int64_t end) {
     if (start < 0) start = 0;
     if (end > len) end = len;
     if (start >= end) {
-        char *r = malloc(1);
+        char *r = mix_alloc_zero_current(1);
         r[0] = '\0';
         return r;
     }
     int64_t slen = end - start;
-    char *r = malloc(slen + 1);
+    char *r = mix_alloc_zero_current((size_t)slen + 1);
     if (!r) mix_panic("out of memory");
     memcpy(r, s + start, slen);
     r[slen] = '\0';
@@ -1033,7 +1132,7 @@ char *mix_str_slice(const char *s, int64_t start, int64_t end) {
 char *mix_str_repeat(const char *s, int64_t n) {
     if (!s) s = "";
     if (n <= 0) {
-        char *r = malloc(1);
+        char *r = mix_alloc_zero_current(1);
         r[0] = '\0';
         return r;
     }
@@ -1042,7 +1141,7 @@ char *mix_str_repeat(const char *s, int64_t n) {
         mix_panic("string repeat: size overflow");
     }
     int64_t total = slen * n;
-    char *r = malloc(total + 1);
+    char *r = mix_alloc_zero_current((size_t)total + 1);
     if (!r) mix_panic("out of memory");
     for (int64_t i = 0; i < n; i++) {
         memcpy(r + i * slen, s, slen);
@@ -1061,26 +1160,20 @@ int64_t mix_str_index_of(const char *s, const char *sub) {
 char *mix_to_string_int(int64_t val) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%" PRId64, val);
-    char *result = malloc(strlen(buf) + 1);
-    if (!result) mix_panic("out of memory");
-    strcpy(result, buf);
-    return result;
+    return mix_strdup_current(buf);
 }
 
 char *mix_to_string_float(double val) {
     char buf[64];
     snprintf(buf, sizeof(buf), "%g", val);
-    char *result = malloc(strlen(buf) + 1);
-    if (!result) mix_panic("out of memory");
-    strcpy(result, buf);
-    return result;
+    return mix_strdup_current(buf);
 }
 
 // String-building variants of the write_* functions, used when a value
 // appears inside a string-interpolation expression so we need to splice
 // it into the resulting string instead of writing to stdout.
 char *mix_to_string_bool(int val) {
-    return strdup(val ? "true" : "false");
+    return mix_strdup_current(val ? "true" : "false");
 }
 
 char *mix_to_string_list_int(const void *list_ptr) {
@@ -1095,7 +1188,7 @@ char *mix_to_string_list_int(const void *list_ptr) {
     }
     fprintf(f, "]");
     fclose(f);
-    return buf;
+    return mix_adopt_c_string(buf);
 }
 
 char *mix_to_string_list_str(const void *list_ptr) {
@@ -1110,7 +1203,7 @@ char *mix_to_string_list_str(const void *list_ptr) {
     }
     fprintf(f, "]");
     fclose(f);
-    return buf;
+    return mix_adopt_c_string(buf);
 }
 
 char *mix_to_string_list_float(const void *list_ptr) {
@@ -1129,7 +1222,7 @@ char *mix_to_string_list_float(const void *list_ptr) {
     }
     fprintf(f, "]");
     fclose(f);
-    return buf;
+    return mix_adopt_c_string(buf);
 }
 
 char *mix_to_string_list_bool(const void *list_ptr) {
@@ -1144,7 +1237,7 @@ char *mix_to_string_list_bool(const void *list_ptr) {
     }
     fprintf(f, "]");
     fclose(f);
-    return buf;
+    return mix_adopt_c_string(buf);
 }
 
 int64_t mix_to_int(double val) {
@@ -1174,14 +1267,14 @@ char *mix_file_read(int64_t handle) {
     FILE *f = (FILE *)handle;
     if (!f) return "";
     size_t cap = 4096, len = 0;
-    char *buf = malloc(cap);
+    char *buf = mix_alloc_zero_current(cap);
     if (!buf) mix_panic("out of memory");
     size_t n;
     while ((n = fread(buf + len, 1, cap - len - 1, f)) > 0) {
         len += n;
         if (len + 1 >= cap) {
             cap *= 2;
-            buf = realloc(buf, cap);
+            buf = mix_realloc_copy_current(buf, cap / 2, cap);
             if (!buf) mix_panic("out of memory");
         }
     }
@@ -1206,7 +1299,7 @@ char *mix_file_read_all(const char *path) {
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char *buf = malloc(size + 1);
+    char *buf = mix_alloc_zero_current((size_t)size + 1);
     if (!buf) { fclose(f); mix_panic("out of memory"); }
     size_t rd = fread(buf, 1, size, f);
     buf[rd] = '\0';
@@ -1250,6 +1343,8 @@ typedef struct {
     MixMapEntry *entries;
     int64_t len;
     int64_t cap;
+    MixZoneHandle *zone;
+    int64_t generation;
 } MixMap;
 
 static uint64_t hash_str(const char *s) {
@@ -1258,42 +1353,73 @@ static uint64_t hash_str(const char *s) {
     return h;
 }
 
-void *mix_map_new(void) {
-    MixMap *map = malloc(sizeof(MixMap));
-    if (!map) mix_panic("out of memory");
+static void mix_map_require_alive(const MixMap *map) {
+    if (!map) mix_panic("map is null");
+    zone_handle_check_generation(map->zone, map->generation, "map");
+}
+
+static void mix_map_init(MixMap *map, MixZoneHandle *zone) {
+    if (!map) mix_panic("map is null");
+    if (zone) zone = zone_handle_require_alive(zone);
     map->len = 0;
     map->cap = 16;
-    map->entries = calloc(16, sizeof(MixMapEntry));
+    map->zone = zone;
+    map->generation = zone ? zone_handle_generation(zone) : 0;
+    map->entries = mix_alloc_zero_for_zone(zone, (size_t)map->cap * sizeof(MixMapEntry));
     if (!map->entries) mix_panic("out of memory");
+}
+
+static void mix_map_place_entry(MixMap *map, char *key, int64_t value) {
+    uint64_t h = hash_str(key) % (uint64_t)map->cap;
+    while (map->entries[h].occupied) {
+        h = (h + 1) % (uint64_t)map->cap;
+    }
+    map->entries[h].key = key;
+    map->entries[h].value = value;
+    map->entries[h].occupied = 1;
+    map->len++;
+}
+
+void *mix_map_new(void) {
+    return mix_map_new_in(mix_current_zone());
+}
+
+void *mix_map_new_in(void *zone_ptr) {
+    MixZoneHandle *zone = zone_ptr;
+    MixMap *map = calloc(1, sizeof(MixMap));
+    if (!map) mix_panic("out of memory");
+    mix_map_init(map, zone);
     return map;
 }
 
 int64_t mix_map_len(const void *map_ptr) {
     const MixMap *map = map_ptr;
+    mix_map_require_alive(map);
     return map->len;
 }
 
 static void map_grow(MixMap *map) {
+    mix_map_require_alive(map);
     int64_t new_cap = map->cap * 2;
-    MixMapEntry *new_entries = calloc(new_cap, sizeof(MixMapEntry));
+    MixMapEntry *old_entries = map->entries;
+    int64_t old_cap = map->cap;
+    MixMapEntry *new_entries = mix_alloc_zero_for_zone(
+        map->zone, (size_t)new_cap * sizeof(MixMapEntry));
     if (!new_entries) mix_panic("out of memory");
-    // Rehash all existing entries
-    for (int64_t i = 0; i < map->cap; i++) {
-        if (map->entries[i].occupied) {
-            uint64_t h = hash_str(map->entries[i].key) % new_cap;
-            while (new_entries[h].occupied) {
-                h = (h + 1) % new_cap;
-            }
-            new_entries[h] = map->entries[i];
-        }
-    }
-    free(map->entries);
     map->entries = new_entries;
     map->cap = new_cap;
+    map->len = 0;
+    for (int64_t i = 0; i < old_cap; i++) {
+        if (old_entries[i].occupied) {
+            mix_map_place_entry(map, old_entries[i].key, old_entries[i].value);
+        }
+    }
+    if (!map->zone) free(old_entries);
 }
 
 void mix_map_set(void *map_ptr, const char *key, int64_t val) {
     MixMap *map = map_ptr;
+    mix_map_require_alive(map);
     // Check load factor
     if (map->len * 4 >= map->cap * 3) {
         map_grow(map);
@@ -1308,14 +1434,12 @@ void mix_map_set(void *map_ptr, const char *key, int64_t val) {
         h = (h + 1) % map->cap;
     }
     // Insert new
-    map->entries[h].key = strdup(key);
-    map->entries[h].value = val;
-    map->entries[h].occupied = 1;
-    map->len++;
+    mix_map_place_entry(map, mix_strdup_for_zone(map->zone, key), val);
 }
 
 int64_t mix_map_get(const void *map_ptr, const char *key) {
     const MixMap *map = map_ptr;
+    mix_map_require_alive(map);
     uint64_t h = hash_str(key) % map->cap;
     for (int64_t i = 0; i < map->cap; i++) {
         int64_t idx = (h + i) % map->cap;
@@ -1333,6 +1457,7 @@ int64_t mix_map_get(const void *map_ptr, const char *key) {
 
 int32_t mix_map_has(const void *map_ptr, const char *key) {
     const MixMap *map = map_ptr;
+    mix_map_require_alive(map);
     uint64_t h = hash_str(key) % map->cap;
     for (int64_t i = 0; i < map->cap; i++) {
         int64_t idx = (h + i) % map->cap;
@@ -1344,12 +1469,13 @@ int32_t mix_map_has(const void *map_ptr, const char *key) {
 
 void mix_map_remove(void *map_ptr, const char *key) {
     MixMap *map = map_ptr;
+    mix_map_require_alive(map);
     uint64_t h = hash_str(key) % map->cap;
     for (int64_t i = 0; i < map->cap; i++) {
         int64_t idx = (h + i) % map->cap;
         if (!map->entries[idx].occupied) return;
         if (strcmp(map->entries[idx].key, key) == 0) {
-            free(map->entries[idx].key);
+            if (!map->zone) free(map->entries[idx].key);
             map->entries[idx].key = NULL;
             map->entries[idx].occupied = 0;
             map->len--;
@@ -1360,8 +1486,7 @@ void mix_map_remove(void *map_ptr, const char *key) {
                 map->entries[j].occupied = 0;
                 map->entries[j].key = NULL;
                 map->len--;
-                mix_map_set(map, e.key, e.value);
-                free(e.key);
+                mix_map_place_entry(map, e.key, e.value);
                 j = (j + 1) % map->cap;
             }
             return;
@@ -1371,7 +1496,8 @@ void mix_map_remove(void *map_ptr, const char *key) {
 
 void *mix_map_keys(const void *map_ptr) {
     const MixMap *map = map_ptr;
-    MixList *list = mix_list_new();
+    mix_map_require_alive(map);
+    MixList *list = mix_list_new_in(map->zone);
     for (int64_t i = 0; i < map->cap; i++) {
         if (map->entries[i].occupied) {
             mix_list_push(list, (int64_t)map->entries[i].key);
@@ -1382,7 +1508,8 @@ void *mix_map_keys(const void *map_ptr) {
 
 void *mix_map_values(const void *map_ptr) {
     const MixMap *map = map_ptr;
-    MixList *list = mix_list_new();
+    mix_map_require_alive(map);
+    MixList *list = mix_list_new_in(map->zone);
     for (int64_t i = 0; i < map->cap; i++) {
         if (map->entries[i].occupied) {
             mix_list_push(list, map->entries[i].value);
@@ -1393,6 +1520,7 @@ void *mix_map_values(const void *map_ptr) {
 
 void mix_print_map(const void *map_ptr) {
     const MixMap *map = map_ptr;
+    mix_map_require_alive(map);
     printf("{");
     int first = 1;
     for (int64_t i = 0; i < map->cap; i++) {
@@ -1407,6 +1535,7 @@ void mix_print_map(const void *map_ptr) {
 
 char *mix_to_string_map(const void *map_ptr) {
     const MixMap *map = map_ptr;
+    mix_map_require_alive(map);
     char *buf = NULL; size_t sz = 0;
     FILE *f = open_memstream(&buf, &sz);
     fprintf(f, "{");
@@ -1420,11 +1549,12 @@ char *mix_to_string_map(const void *map_ptr) {
     }
     fprintf(f, "}");
     fclose(f);
-    return buf;
+    return mix_adopt_c_string(buf);
 }
 
 char *mix_to_string_map_str(const void *map_ptr) {
     const MixMap *map = map_ptr;
+    mix_map_require_alive(map);
     char *buf = NULL; size_t sz = 0;
     FILE *f = open_memstream(&buf, &sz);
     fprintf(f, "{");
@@ -1438,11 +1568,12 @@ char *mix_to_string_map_str(const void *map_ptr) {
     }
     fprintf(f, "}");
     fclose(f);
-    return buf;
+    return mix_adopt_c_string(buf);
 }
 
 char *mix_to_string_set(const void *set_ptr) {
     const MixMap *map = set_ptr;
+    mix_map_require_alive(map);
     char *buf = NULL; size_t sz = 0;
     FILE *f = open_memstream(&buf, &sz);
     fprintf(f, "set{");
@@ -1456,11 +1587,12 @@ char *mix_to_string_set(const void *set_ptr) {
     }
     fprintf(f, "}");
     fclose(f);
-    return buf;
+    return mix_adopt_c_string(buf);
 }
 
 char *mix_to_string_set_int(const void *set_ptr) {
     const MixMap *map = set_ptr;
+    mix_map_require_alive(map);
     char *buf = NULL; size_t sz = 0;
     FILE *f = open_memstream(&buf, &sz);
     fprintf(f, "set{");
@@ -1474,11 +1606,12 @@ char *mix_to_string_set_int(const void *set_ptr) {
     }
     fprintf(f, "}");
     fclose(f);
-    return buf;
+    return mix_adopt_c_string(buf);
 }
 
 void mix_print_map_str(const void *map_ptr) {
     const MixMap *map = map_ptr;
+    mix_map_require_alive(map);
     printf("{");
     int first = 1;
     for (int64_t i = 0; i < map->cap; i++) {
@@ -1494,7 +1627,11 @@ void mix_print_map_str(const void *map_ptr) {
 // ---- Sets (backed by MixMap: keys = elements, values = ignored) ----
 
 void *mix_set_new(void) {
-    return mix_map_new();
+    return mix_set_new_in(mix_current_zone());
+}
+
+void *mix_set_new_in(void *zone_ptr) {
+    return mix_map_new_in(zone_ptr);
 }
 
 int64_t mix_set_len(const void *set_ptr) {
@@ -1520,7 +1657,9 @@ void *mix_set_values(const void *set_ptr) {
 void *mix_set_union(const void *a_ptr, const void *b_ptr) {
     const MixMap *a = a_ptr;
     const MixMap *b = b_ptr;
-    void *result = mix_set_new();
+    mix_map_require_alive(a);
+    mix_map_require_alive(b);
+    void *result = mix_set_new_in(a->zone);
     for (int64_t i = 0; i < a->cap; i++) {
         if (a->entries[i].occupied) {
             mix_map_set(result, a->entries[i].key, 1);
@@ -1536,7 +1675,8 @@ void *mix_set_union(const void *a_ptr, const void *b_ptr) {
 
 void *mix_set_intersect(const void *a_ptr, const void *b_ptr) {
     const MixMap *a = a_ptr;
-    void *result = mix_set_new();
+    mix_map_require_alive(a);
+    void *result = mix_set_new_in(a->zone);
     for (int64_t i = 0; i < a->cap; i++) {
         if (a->entries[i].occupied && mix_map_has(b_ptr, a->entries[i].key)) {
             mix_map_set(result, a->entries[i].key, 1);
@@ -1547,7 +1687,8 @@ void *mix_set_intersect(const void *a_ptr, const void *b_ptr) {
 
 void *mix_set_diff(const void *a_ptr, const void *b_ptr) {
     const MixMap *a = a_ptr;
-    void *result = mix_set_new();
+    mix_map_require_alive(a);
+    void *result = mix_set_new_in(a->zone);
     for (int64_t i = 0; i < a->cap; i++) {
         if (a->entries[i].occupied && !mix_map_has(b_ptr, a->entries[i].key)) {
             mix_map_set(result, a->entries[i].key, 1);
@@ -1558,6 +1699,7 @@ void *mix_set_diff(const void *a_ptr, const void *b_ptr) {
 
 void mix_print_set(const void *set_ptr) {
     const MixMap *map = set_ptr;
+    mix_map_require_alive(map);
     printf("set{");
     int first = 1;
     for (int64_t i = 0; i < map->cap; i++) {
@@ -1573,7 +1715,7 @@ void mix_print_set(const void *set_ptr) {
 void *mix_set_from_list(const void *list_ptr) {
     const MixList *list = list_ptr;
     mix_list_require_scalar(list, "mix_set_from_list");
-    void *set = mix_set_new();
+    void *set = mix_set_new_in(list->zone);
     for (int64_t i = 0; i < list->len; i++) {
         mix_set_add(set, (const char *)(intptr_t)mix_list_get(list, i));
     }
@@ -1582,27 +1724,27 @@ void *mix_set_from_list(const void *list_ptr) {
 
 // Int-element set operations (convert int <-> string internally)
 void mix_set_add_int(void *set_ptr, int64_t val) {
-    char *s = mix_to_string_int(val);
-    mix_map_set(set_ptr, s, val);
-    free(s);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%" PRId64, val);
+    mix_map_set(set_ptr, buf, val);
 }
 
 void mix_set_remove_int(void *set_ptr, int64_t val) {
-    char *s = mix_to_string_int(val);
-    mix_map_remove(set_ptr, s);
-    free(s);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%" PRId64, val);
+    mix_map_remove(set_ptr, buf);
 }
 
 int32_t mix_set_has_int(const void *set_ptr, int64_t val) {
-    char *s = mix_to_string_int(val);
-    int32_t result = mix_map_has(set_ptr, s);
-    free(s);
-    return result;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%" PRId64, val);
+    return mix_map_has(set_ptr, buf);
 }
 
 void *mix_set_values_int(const void *set_ptr) {
     const MixMap *map = set_ptr;
-    MixList *list = mix_list_new();
+    mix_map_require_alive(map);
+    MixList *list = mix_list_new_in(map->zone);
     for (int64_t i = 0; i < map->cap; i++) {
         if (map->entries[i].occupied) {
             mix_list_push(list, map->entries[i].value);
@@ -1613,6 +1755,7 @@ void *mix_set_values_int(const void *set_ptr) {
 
 void mix_print_set_int(const void *set_ptr) {
     const MixMap *map = set_ptr;
+    mix_map_require_alive(map);
     printf("set{");
     int first = 1;
     for (int64_t i = 0; i < map->cap; i++) {
@@ -1675,6 +1818,7 @@ void mix_write_list_bool(const void *list_ptr) {
 
 void mix_write_map(const void *map_ptr) {
     const MixMap *map = map_ptr;
+    mix_map_require_alive(map);
     printf("{");
     int first = 1;
     for (int64_t i = 0; i < map->cap; i++) {
@@ -1689,6 +1833,7 @@ void mix_write_map(const void *map_ptr) {
 
 void mix_write_map_str(const void *map_ptr) {
     const MixMap *map = map_ptr;
+    mix_map_require_alive(map);
     printf("{");
     int first = 1;
     for (int64_t i = 0; i < map->cap; i++) {
@@ -1703,6 +1848,7 @@ void mix_write_map_str(const void *map_ptr) {
 
 void mix_write_set(const void *set_ptr) {
     const MixMap *map = set_ptr;
+    mix_map_require_alive(map);
     printf("set{");
     int first = 1;
     for (int64_t i = 0; i < map->cap; i++) {
@@ -1717,6 +1863,7 @@ void mix_write_set(const void *set_ptr) {
 
 void mix_write_set_int(const void *set_ptr) {
     const MixMap *map = set_ptr;
+    mix_map_require_alive(map);
     printf("set{");
     int first = 1;
     for (int64_t i = 0; i < map->cap; i++) {
@@ -1732,7 +1879,7 @@ void mix_write_set_int(const void *set_ptr) {
 void *mix_set_from_list_int(const void *list_ptr) {
     const MixList *list = list_ptr;
     mix_list_require_scalar(list, "mix_set_from_list_int");
-    void *set = mix_set_new();
+    void *set = mix_set_new_in(list->zone);
     for (int64_t i = 0; i < list->len; i++) {
         mix_set_add_int(set, mix_list_get(list, i));
     }
@@ -1859,21 +2006,22 @@ int64_t mix_shell(const char *cmd) {
 char *mix_shell_output(const char *cmd) {
     FILE *fp = popen(cmd, "r");
     if (!fp) {
-        char *empty = malloc(1);
+        char *empty = mix_alloc_zero_current(1);
         empty[0] = '\0';
         return empty;
     }
     size_t cap = 1024;
     size_t len = 0;
-    char *buf = malloc(cap);
+    char *buf = mix_alloc_zero_current(cap);
     if (!buf) mix_panic("out of memory");
     while (1) {
         size_t n = fread(buf + len, 1, cap - len - 1, fp);
         if (n == 0) break;
         len += n;
         if (len + 1 >= cap) {
+            size_t old_cap = cap;
             cap *= 2;
-            buf = realloc(buf, cap);
+            buf = mix_realloc_copy_current(buf, old_cap, cap);
             if (!buf) mix_panic("out of memory");
         }
     }
@@ -1894,7 +2042,7 @@ void *mix_list_dir(const char *path) {
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
             continue;
-        char *name = malloc(strlen(entry->d_name) + 1);
+        char *name = mix_strdup_current(entry->d_name);
         strcpy(name, entry->d_name);
         mix_list_push(list, (int64_t)name);
     }
@@ -1905,11 +2053,9 @@ void *mix_list_dir(const char *path) {
 char *mix_env(const char *name) {
     char *val = getenv(name);
     if (val) {
-        char *copy = malloc(strlen(val) + 1);
-        strcpy(copy, val);
-        return copy;
+        return mix_strdup_current(val);
     }
-    char *empty = malloc(1);
+    char *empty = mix_alloc_zero_current(1);
     empty[0] = '\0';
     return empty;
 }
@@ -1921,11 +2067,9 @@ void mix_exit(int64_t code) {
 char *mix_getcwd(void) {
     char buf[4096];
     if (getcwd(buf, sizeof(buf))) {
-        char *result = malloc(strlen(buf) + 1);
-        strcpy(result, buf);
-        return result;
+        return mix_strdup_current(buf);
     }
-    char *dot = malloc(2);
+    char *dot = mix_alloc_zero_current(2);
     dot[0] = '.';
     dot[1] = '\0';
     return dot;
@@ -2069,7 +2213,7 @@ int64_t mix_ord(const char *s) {
 
 // Encode a Unicode code point as a UTF-8 string. Returns a heap-allocated string.
 const char *mix_chr(int64_t cp) {
-    char *buf = mix_alloc(5); // max 4 UTF-8 bytes + null
+    char *buf = mix_alloc_zero_current(5); // max 4 UTF-8 bytes + null
     if (cp < 0x80) {
         buf[0] = (char)cp;
         buf[1] = '\0';
@@ -2119,9 +2263,7 @@ int64_t mix_time_now_ms(void) {
 char *mix_int_to_hex(int64_t n) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%" PRIx64, (uint64_t)n);
-    char *out = malloc(strlen(buf) + 1);
-    strcpy(out, buf);
-    return out;
+    return mix_strdup_current(buf);
 }
 
 /* int -> binary string. Caller frees. */
@@ -2139,7 +2281,5 @@ char *mix_int_to_bin(int64_t n) {
             u >>= 1;
         }
     }
-    char *out = malloc(64 - i);
-    strcpy(out, buf + i + 1);
-    return out;
+    return mix_strdup_current(buf + i + 1);
 }

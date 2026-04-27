@@ -336,7 +336,14 @@ for i in 0..=5
 items = [10, 20, 30]
 for item in items
     print(item)
+
+points! = [Point(x: 1, y: 2), Point(x: 3, y: 4)]
+for p! in points
+    p.x = p.x + 1
 ```
+
+`for item in items` is read-only. Use `for item! in items` when mutations
+should write through to the underlying element.
 
 ### For-Each (Maps)
 
@@ -420,7 +427,10 @@ vec2_add(a: Vec2, b: Vec2) -> Vec2
 v3 = vec2_add(v1, v2)
 ```
 
-Shapes are passed by reference using QBE's aggregate type system.
+Shapes have value semantics. The compiler is free to lower them using
+the backend's aggregate ABI details, but at the language level they
+copy/pass/return like values unless you explicitly opt into `ref`,
+`ref!`, or `Box[T]`.
 
 ---
 
@@ -491,6 +501,58 @@ Methods are compiled as regular functions with a hidden `self` parameter:
 shape Circle { area() }  →  function Circle_area(:Circle %self)
 c.area()                  →  call $Circle_area(:Circle %v.c)
 ```
+
+---
+
+## Borrows and Boxes
+
+MIX keeps plain shapes as values. Aliasing and stable address are explicit.
+
+### Borrow Types
+
+Use `ref T` for a shared borrow and `ref! T` for a mutable borrow:
+
+```mix
+bump(v: ref! int)
+    *v = *v + 1
+
+main()
+    nums! = [10, 20, 30]
+    bump(nums.at_mut!(1))
+    print(nums[1])       // 21
+```
+
+You can also take an explicit borrow of an addressable local:
+
+```mix
+main()
+    x! = 5
+    rx = ref! x
+    rx = rx + 1
+    print(x)            // 6
+```
+
+Borrows do not own storage and cannot escape by being returned, stored, or
+captured into an escaping closure.
+
+### `Box[T]`
+
+Use `Box[T]` when you need stable address or shared identity:
+
+```mix
+shape Sprite
+    x: int
+
+main() ~
+    frame = zone_create("frame", 1024)
+    s = box(frame, Sprite(x: 7))
+    print(s.x)
+```
+
+- `box(zone, value)` allocates a boxed value inside `zone`
+- `promote(zone, value_or_box)` explicitly copies into a longer-lived zone
+- boxes allocated in a resettable zone become stale after `zone_reset` /
+  `zone_destroy` and panic on use
 
 ---
 
@@ -583,10 +645,46 @@ nums = [1, 2, 3, 4, 5]
 empty = []
 ```
 
+### Explicit Zone-backed Construction
+
+```mix
+main() ~
+    frame = zone_create("frame", 1024 * 1024)
+    nums! = List[int].new(frame)
+    nums.push!(10)
+    nums.push!(20)
+```
+
+### Borrowed Element Access
+
+```mix
+shape Point
+    x, y: int
+
+main() ~
+    frame = zone_create("frame", 1024)
+    pts! = List[Point].new(frame)
+    pts.push!(Point(x: 1, y: 2))
+
+    view = pts.at(0)       // ref Point
+    slot = pts.at_mut!(0)  // ref! Point
+    slot.x = 9
+
+    print(pts[0].x)        // 9
+```
+
+Rules:
+
+- `items[i]` reads a value
+- `items.at(i)` returns a shared borrow without copying
+- `items.at_mut!(i)` returns a mutable borrow into the element
+- `for item in items` is read-only
+- `for item! in items` mutates through to the underlying element
+
 ### Operations
 
 ```mix
-nums = [10, 20, 30]
+nums! = [10, 20, 30]
 print(nums.len)          // 3
 print(nums[0])           // 10
 nums.push!(40)           // append
@@ -596,7 +694,7 @@ print(nums.len)          // 4
 ### Mutation Methods
 
 ```mix
-nums = [5, 3, 1, 4, 2]
+nums! = [5, 3, 1, 4, 2]
 nums.sort!()             // [1, 2, 3, 4, 5]
 nums.reverse!()          // [5, 4, 3, 2, 1]
 last = nums.pop!()       // removes and returns last element
@@ -669,7 +767,7 @@ empty = {}
 ### Operations
 
 ```mix
-ages = {"alice": 30, "bob": 25}
+ages! = {"alice": 30, "bob": 25}
 print(ages["alice"])         // 30
 print(ages.len)              // 2
 print(ages.has("bob"))       // true
@@ -1002,12 +1100,14 @@ main()
 
 ## Zones
 
-Zones provide scoped memory management — all allocations within a zone are freed when the zone exits:
+MIX supports both anonymous scoped zones and explicit `Zone` handles.
+Anonymous `zone` blocks free all tracked allocations when the block
+exits:
 
 ```mix
 main()
     zone
-        data = alloc(1024)
+        data = mix_zone_alloc(1024)
         process(data)
         // data freed automatically here
 
@@ -1016,6 +1116,46 @@ main()
         zone
             // inner zone
 ```
+
+While a `zone` block is active, dynamic runtime allocations that do not
+name a zone explicitly use the current scoped zone. That includes
+temporary strings, list/set/map literals, and other language-managed
+dynamic values. Outside a scoped zone, those same allocations fall back
+to ordinary heap lifetime. Raw `alloc(...)` / `mix_bytes(...)` remain
+manual low-level heap allocation APIs; use `mix_zone_alloc(...)` or
+allocator-aware language values when you want zone lifetime.
+
+Explicit handles are useful when the lifetime crosses helper-function or
+frame boundaries:
+
+```mix
+main() ~
+    frame = zone_create("frame", 1024 * 1024)
+    scratch = zone_alloc(frame, 256)
+    zone_reset(frame)
+    zone_destroy(frame)
+```
+
+Allocator-bearing collection constructors make zone ownership explicit at
+the call site:
+
+```mix
+main() ~
+    frame = zone_create("frame", 1024 * 1024)
+
+    pts! = List[Vec2].new(frame)
+    lookup! = Map[str, int].new(frame)
+    tags! = Set[str].new(frame)
+
+    pts.push!(Vec2(x: 1.0, y: 2.0))
+    lookup["hp"] = 7
+    tags.add!("player")
+```
+
+`Box[T]`, `List[T]`, `Map[K, V]`, and `Set[T]` values allocated from a
+zone become stale when that zone is reset or destroyed. Accessing them
+after that point aborts with an explicit runtime panic instead of
+silently using freed storage.
 
 ---
 
@@ -1719,7 +1859,9 @@ Source (.mix)
 - [x] Lists: `[1, 2, 3]`, indexing, `.len`, `.push!()`, for-each
 - [x] Operator overloading: `+ - * / % == != < > <= >=` on shapes
 - [x] Unsafe blocks with pointer deref and pointer arithmetic
-- [x] Zones: `zone { ... }` with automatic cleanup
+- [x] Value-first shapes with explicit `ref` / `ref!` borrows
+- [x] `Box[T]` and explicit promotion across zone lifetimes
+- [x] Zones: scoped `zone { ... }`, explicit `Zone` handles, and allocator-backed `List[T].new(zone)` / `Map[K, V].new(zone)` / `Set[T].new(zone)`
 
 #### Phase 5 — Error Handling & Optionals
 - [x] Optional types: `T?`, `none`, `done value` wrapping, `expr else default`
@@ -1767,7 +1909,8 @@ Source (.mix)
 
 ### Test Suite
 
-45 end-to-end tests covering all implemented features::
+The current verification suite is 100 runtime programs plus 36 error tests.
+The table below is an early milestone snapshot, kept for historical context:
 
 | # | Test | What It Verifies |
 |---|------|------------------|
@@ -1833,6 +1976,8 @@ The full MIX spec describes additional features for future phases:
 Many features the original spec described as "future phases" are now shipping:
 
 - Generic shapes with per-T monomorphization (`Stack[int]`, `Stack[float]` distinct)
+- Value-first memory: shapes as values, explicit `ref` / `ref!`, and `Box[T]`
+- Explicit `Zone` handles plus allocator-backed collection constructors
 - `has` constraint enforcement (operators + shape methods at call sites)
 - `match` exhaustiveness for tagged unions, optionals, and results
 - `some(v) / none` and `ok(v) / err(e)` pattern arms

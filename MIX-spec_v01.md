@@ -13,7 +13,7 @@ MIX is a systems programming language with the footprint of C and the clarity of
 - **Small** — ~30 keywords, the whole language fits in your head
 - **Obvious** — if a beginner can't guess it, it's out
 - **Fast** — compiles to native, no GC, no runtime overhead
-- **Safe** — memory safety through zones, not a borrow checker
+- **Safe** — value-first data with explicit borrows, boxes, and zones; no GC and no Rust-style lifetime checker
 - **No semicolons** — newlines are statement terminators
 - **No header files** — file = module, always
 
@@ -38,7 +38,7 @@ This spec is the language as designed. Some sections describe features that ship
 | 7 | Strings | shipping |
 | 8 | Optionals | shipping — `else`, `?`, `some(v)/none` pattern arms |
 | 9 | Error Handling | partial — `fail`, `?`, `else`, `ok(v)/err(e)` pattern arms work; nested `err(AppError.Variant(p))` patterns planned |
-| 10 | Memory — Zones | partial — `zone`/`defer` work; `->` move operator and `stack/heap` allocators planned |
+| 10 | Memory — Values, Borrows & Zones | shipping — value shapes, `ref`/`ref!`, `Box[T]`, explicit `Zone` handles, allocator-backed collections; move/operator hints planned |
 | 11 | Generics | shipping — generic functions, generic shapes (per-T monomorphization, including float and shape T), `has` constraints enforced for operators and shape methods |
 | 12 | Concurrency | partial — `go`/`wait`/`shared` ship; `run`, `stream`/`yield`, `channel` planned |
 | 13 | Modules | partial — `use path.to.module`, aliases, `pub`, selective imports (`use m: a, b`) ship; external registry planned |
@@ -218,6 +218,10 @@ while running
 for item in list
     process(item)
 
+// mutate through to collection storage
+for item! in list
+    item = next_value(item)
+
 // with index
 for i, item in list
     print("{i}: {item}")
@@ -385,11 +389,13 @@ while SDL_PollEvent(event)
 ### List
 
 ```mix
-nums = [1, 2, 3, 4, 5]
+nums! = [1, 2, 3, 4, 5]
 nums[0]             // 0-indexed
 nums.len            // length
 nums.push!(6)       // append
-nums.sort!()            // sorts: int, float, and string lists
+nums.at(0)          // shared borrow into storage
+nums.at_mut!(0)     // mutable borrow into storage
+nums.sort!()        // sorts: int, float, and string lists
 ```
 
 ### Map
@@ -584,82 +590,155 @@ Errors are just shapes. `fail` raises them. `err(...)` catches them. No special 
 
 ---
 
-## 10. Memory — Zones
+## 10. Memory — Values, Borrows & Zones
 
-A zone is a block of memory with a clear lifetime. Everything born in a zone dies when the zone ends. No GC. No borrow checker.
+MIX is value-first. A plain `shape` behaves like a struct value:
+
+- locals hold values
+- parameters receive values
+- returns produce values
+- fields inline other values by default
+
+There is no implicit per-shape heap object and no per-shape refcounting in
+the current model.
 
 ```mix
-zone
-    buf = bytes(1024)
-    data = load!(buf)
-    process(data)
-// buf and data freed here automatically
+shape Vec2
+    x, y: float
+
+main()
+    a = Vec2(x: 1.0, y: 2.0)
+    b = a
+    b.x = 9.0
+
+    print(a.x)   // 1.0
+    print(b.x)   // 9.0
 ```
 
-### Nested Zones
+### Borrows
+
+Use `ref T` and `ref! T` for explicit aliasing into existing storage:
 
 ```mix
-zone
-    a = bytes(1024)
+bump(v: ref! int)
+    *v = *v + 1
 
+main()
+    nums! = [10, 20, 30]
+    bump(nums.at_mut!(1))
+    print(nums[1])       // 21
+```
+
+- `ref T` is a shared borrow
+- `ref! T` is a mutable borrow
+- borrows do not own storage
+- borrows cannot be returned, stored, or captured into an escaping closure
+
+### Boxes
+
+Use `Box[T]` when you need stable address or shared identity:
+
+```mix
+shape Sprite
+    x: int
+
+main() ~
+    frame = zone_create("frame", 1024)
+    s = box(frame, Sprite(x: 7))
+    print(s.x)
+```
+
+- `Box[T]` is explicit owning storage allocated in a `Zone`
+- `box(zone, value)` allocates and stores a value in that zone
+- `promote(zone, value_or_box)` explicitly copies data into a longer-lived zone
+
+### Zones
+
+MIX supports both anonymous scoped zones and explicit `Zone` handles.
+
+Anonymous `zone` blocks install a current scoped zone for language-managed
+dynamic allocations:
+
+```mix
+main()
     zone
-        b = bytes(512)
-        process(a, b)       // inner can see outer
-    // b freed here
-
-    finish(a)               // b is gone, a still alive
-// a freed here
+        tmp = mix_zone_alloc(1024)
+        names = ["a", "b", "c"]
+        print(names.len)
+    // zone-managed allocations from the block are gone here
 ```
 
-### Escaping a Zone
-
-One value can escape — the last expression:
+Explicit handles are used when the lifetime must cross function or frame
+boundaries:
 
 ```mix
-result = zone
-    raw = fetch!("https://example.com")
-    parsed = parse(raw)
-    parsed          // escapes; raw is freed
+main() ~
+    frame = zone_create("frame", 1024 * 1024)
+    points! = List[Vec2].new(frame)
+
+    points.push!(Vec2(x: 1.0, y: 2.0))
+    zone_reset(frame)
+    zone_destroy(frame)
 ```
 
-### Named Zones
+Core APIs:
+
+- `zone_create(name, capacity_hint) -> Zone`
+- `zone_alloc(zone, size) -> *byte`
+- `zone_reset(zone)`
+- `zone_destroy(zone)`
+
+### Collections and Zones
+
+Dynamic containers can allocate explicitly from a zone:
 
 ```mix
-zone:game
-    world = World(...)
+main() ~
+    long = zone_create("long", 4096)
 
-    while world.running
-        zone:frame
-            events = poll_events!()
-            world.update!(events)
-            render!(world)
-        // events freed every frame
-
-// world freed here
+    sprites! = List[Sprite].new(long)
+    lookup! = Map[str, int].new(long)
+    tags! = Set[str].new(long)
 ```
 
-### Passing Values — Lend vs Move  *(planned)*
+Important rules:
 
-```mix
-zone
-    data = load("file.txt")
+- plain indexing like `items[i]` reads a value
+- `items.at(i)` returns a shared borrow
+- `items.at_mut!(i)` returns a mutable borrow into storage
+- `for item in items` is read-only
+- `for item! in items` mutates through to the underlying element
 
-    process(data)       // lend — data still alive after
-    sort!(data)         // lend mutable — data still alive after
-    archive -> data     // move — data belongs to archive now
-                        // data cannot be used here anymore
-```
+### Reset / Destroy Safety
 
-`->` is the move operator. Visually clear — the value goes with the arrow.
+Values allocated from a zone-backed owner become stale when that zone is
+reset or destroyed:
 
-### Explicit Heap / Stack (rare)  *(planned)*
+- `Box[T]`
+- `List[T]`
+- `Map[K, V]`
+- `Set[T]`
 
-```mix
-x = stack int(42)   // force stack allocation
-x = heap int(42)    // force heap allocation
-```
+Using them after reset/destroy aborts with an explicit runtime panic rather
+than silently dereferencing freed storage.
 
-The compiler picks the right location 99% of the time. These are escape hatches for low-level work.
+### Manual Raw Allocation
+
+Low-level raw memory APIs remain separate:
+
+- `alloc(n)` / `mix_alloc(n)` — manual heap allocation
+- `bytes(n)` / `mix_bytes(n)` — manual zeroed heap allocation
+- `mix_zone_alloc(n)` — current-scope anonymous-zone allocation
+
+Use those for FFI buffers and unsafe code. Use `Zone`, `Box[T]`, and
+allocator-backed containers for normal language-managed dynamic storage.
+
+### Planned Extensions
+
+The current model is shipping. These memory-related ideas are still planned:
+
+- `->` move syntax as an explicit source-level ownership transfer marker
+- optional `stack` / `heap` placement hints for low-level tuning
 
 ---
 
@@ -704,8 +783,8 @@ contains(list: [T], val: T) -> bool
 > Generic *functions* and the `has` syntax ship today; constraints are
 > enforced for operators (`+`, `==`, etc.) and shape methods at call sites.
 >
-> Generic *shapes* — `shape Box[T]` — ship with per-T monomorphization.
-> Each concrete instantiation (`Box[int]`, `Box[float]`, ...) gets its
+> Generic *shapes* — `shape Stack[T]`, `shape Pair[T]`, etc. — ship with per-T monomorphization.
+> Each concrete instantiation (`Stack[int]`, `Stack[float]`, ...) gets its
 > own shape and method set so float values use the right ABI registers
 > and shape-typed `T` dispatches correctly. Type args are inferred from
 > constructor args (`Stack(items: [42])` → `Stack[int]`) or written
@@ -1019,6 +1098,11 @@ pow(x, n) log(x)
 | Raise error      | `fail ErrorShape.Variant(...)`   |
 | Early exit       | `done` or `done value`           |
 | Struct           | `shape Name`                     |
+| Borrow type      | `ref T` / `ref! T`               |
+| Borrow expr      | `ref x` / `ref! x`               |
+| Box type         | `Box[T]`                         |
+| Box allocation   | `box(zone, value)`               |
+| Promotion        | `promote(zone, value_or_box)`    |
 | Tagged union     | `shape Name` with variant fields |
 | Optional type    | `T?`                             |
 | None value       | `none`                           |
@@ -1027,8 +1111,13 @@ pow(x, n) log(x)
 | Error catch      | `f()                             |
 | Generic          | `@T`                             |
 | Constraint       | `@T has method`                  |
-| Zone             | `zone { }`                       |
+| Zone scope       | `zone { }`                       |
 | Named zone       | `zone:name { }`                  |
+| Zone handle      | `z = zone_create("name", n)`     |
+| Zone alloc       | `List[T].new(z)` / `Map[K, V].new(z)` / `Set[T].new(z)` |
+| Borrowed index   | `items.at(i)`                    |
+| Mutable borrow   | `items.at_mut!(i)`               |
+| Mutable foreach  | `for item! in items`             |
 | Move value       | `f -> val`                       |
 | Shared value     | `shared T(val)`                  |
 | Spawn task       | `go fn()`                        |

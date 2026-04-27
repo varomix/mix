@@ -1,5 +1,11 @@
 # MIX — Shape Refcount Memory Management Plan
 
+> Historical note: this plan is superseded. MIX no longer uses per-shape
+> refcounting as its primary model. The implemented direction is
+> value-first shapes plus explicit `ref` / `ref!`, `Box[T]`, `Zone`, and
+> allocator-backed collections. See `docs/DOCS.md` and
+> `ZONES_VALUE_FIRST_DESIGN_SKETCH.md`.
+
 > Created: 2026-04-26. Drives the fix for MIX's pervasive shape-allocation
 > leak that surfaced as crashes in mixel demos after ~30 seconds of play.
 

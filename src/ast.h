@@ -273,6 +273,8 @@ struct AstNode {
         // NODE_IDENT
         struct {
             char *name;
+            AstNode **type_args;
+            int type_arg_count;
             bool is_mutable;
             bool is_pointer_slot;
             bool is_stack_slot;

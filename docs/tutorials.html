@@ -508,8 +508,10 @@ They are typed -- all elements must be the same type. Access elements by index
 (zero-based) and use <code>.len</code> to get the count.</p>
 
 <p>Mutation methods end with <code>!</code> to make it clear they modify the list in place.
-List comprehensions let you build new lists with a concise <code>for</code>/<code>if</code> syntax
-inside brackets.</p>
+Plain indexing reads a value. Use <code>.at()</code> / <code>.at_mut!()</code> for borrowed element
+access, and <code>for item! in items</code> when a foreach loop should write back into the
+list. List comprehensions let you build new lists with a concise
+<code>for</code>/<code>if</code> syntax inside brackets.</p>
 
 <pre><code><span class="fn">main</span>()
     <span class="cm">// Create a list</span>
@@ -547,7 +549,11 @@ inside brackets.</p>
 
     <span class="cm">// Iterate</span>
     <span class="kw">for</span> n <span class="kw">in</span> nums
-        <span class="fn">print</span>(<span class="str">"item: {n}"</span>)</code><span class="label">mix</span></pre>
+        <span class="fn">print</span>(<span class="str">"item: {n}"</span>)
+
+    <span class="cm">// Mutable foreach writes through to the list element</span>
+    <span class="kw">for</span> n<span class="op">!</span> <span class="kw">in</span> nums
+        n = n + <span class="num">1</span></code><span class="label">mix</span></pre>
 
 </section>
 
@@ -636,14 +642,16 @@ testing and <code>.values</code> to get the elements as a list.</p>
 <section id="shapes">
 <h2><span class="num">09</span>Shapes</h2>
 
-<p>Shapes are MIX's structured data types, similar to structs or classes.
+<p>Shapes are MIX's structured data types, similar to structs.
 They have fields, methods, and computed properties. Define a shape with the
 <code>shape</code> keyword, then list fields and methods indented beneath it.</p>
 
 <p>Construct a shape using named arguments <code>Shape(field: value)</code> or positional
 arguments <code>Shape(val1, val2)</code>. Methods have implicit access to <code>self</code> fields --
 just use the field name directly. Computed fields are zero-parameter methods
-that can be called without parentheses.</p>
+that can be called without parentheses. Shapes are values by default; use
+<code>ref</code> / <code>ref!</code> for explicit borrows and <code>Box[T]</code> when you need stable address or
+shared identity.</p>
 
 <pre><code><span class="kw">shape</span> <span class="ty">Player</span>
     name: <span class="ty">str</span>
@@ -677,7 +685,7 @@ that can be called without parentheses.</p>
     <span class="fn">print</span>(p.<span class="fn">is_alive</span>)       <span class="cm">// true</span>
     <span class="fn">print</span>(p.<span class="fn">status</span>)         <span class="cm">// "Hero: 100/100 HP"</span>
 
-    <span class="cm">// Methods return new shapes (immutable by default)</span>
+    <span class="cm">// Plain methods can return new shapes</span>
     p2 = p.<span class="fn">take_damage</span>(<span class="num">35</span>)
     <span class="fn">print</span>(p2.<span class="fn">status</span>)        <span class="cm">// "Hero: 65/100 HP"</span>
 
@@ -1062,7 +1070,7 @@ access explicit.</p>
     <span class="cm">// results: 100, 400, 900</span>
 
     <span class="cm">// Update shared state</span>
-    counter.<span class="fn">update!</span>(r1 + r2 + r3)
+    counter.<span class="fn">update!</span>(v <span class="op">=></span> v + r1 + r2 + r3)
     <span class="fn">print</span>(<span class="str">"total = {counter.read()}"</span>)
     <span class="cm">// total = 1400</span></code><span class="label">mix</span></pre>
 
@@ -1072,14 +1080,16 @@ access explicit.</p>
 <section id="memory">
 <h2><span class="num">19</span>Memory Management</h2>
 
-<p>MIX provides three tools for precise memory control: <code>defer</code> for automatic
-cleanup, <code>unsafe</code> for raw pointer operations, and <code>zone</code> for scoped arena
-allocation.</p>
+<p>MIX provides four tools for precise memory control: <code>defer</code> for automatic
+cleanup, <code>unsafe</code> for raw pointer operations, <code>ref</code> / <code>ref!</code> for explicit borrows,
+and <code>zone</code> / <code>Zone</code> for region-based dynamic allocation.</p>
 
 <p>The <code>defer</code> keyword schedules a function to run when the current scope exits,
 regardless of how it exits. This is ideal for closing files and releasing resources.
 The <code>unsafe</code> block disables safety checks for low-level pointer work.
-The <code>zone</code> block creates a memory arena that is freed all at once when the block ends.</p>
+The <code>zone</code> block installs a scoped current zone for language-managed dynamic
+allocations, while explicit <code>Zone</code> handles are used for frame- or level-lifetime
+containers and boxes.</p>
 
 <pre><code><span class="fn">main</span>()
     <span class="cm">// defer -- cleanup runs at scope exit</span>
@@ -1098,12 +1108,21 @@ The <code>zone</code> block creates a memory arena that is freed all at once whe
         <span class="cm">// ... work with raw memory ...</span>
         <span class="fn">free</span>(ptr)
 
-    <span class="cm">// zone -- scoped arena allocation</span>
+    <span class="cm">// zone -- scoped current-zone allocation</span>
     <span class="kw">zone</span>
-        <span class="cm">// all allocations in this block use arena</span>
+        <span class="cm">// language-managed dynamic values in this block use the zone</span>
         data = [<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>, <span class="num">5</span>]
         <span class="fn">print</span>(<span class="str">"zone data: {data}"</span>)
-    <span class="cm">// arena freed here -- all zone allocations gone</span></code><span class="label">mix</span></pre>
+    <span class="cm">// zone-managed dynamic allocations from the block are gone here</span>
+
+    <span class="cm">// explicit handle for longer-lived dynamic storage</span>
+    frame = <span class="fn">zone_create</span>(<span class="str">"frame"</span>, <span class="num">1024</span> * <span class="num">1024</span>)
+    pts<span class="op">!</span> = <span class="ty">List</span>[<span class="ty">int</span>].<span class="fn">new</span>(frame)
+    pts.<span class="fn">push!</span>(<span class="num">10</span>)
+    pts.<span class="fn">push!</span>(<span class="num">20</span>)
+    <span class="fn">zone_reset</span>(frame)</code><span class="label">mix</span></pre>
+<p><code>Box[T]</code>, <code>List[T]</code>, <code>Map[K, V]</code>, and <code>Set[T]</code> values allocated from a
+<code>Zone</code> become stale after <code>zone_reset</code> / <code>zone_destroy</code> and panic on use.</p>
 
 </section>
 

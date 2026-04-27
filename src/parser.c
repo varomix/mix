@@ -586,6 +586,8 @@ static AstNode *parse_primary(Parser *p) {
 
             AstNode *node = ast_new(p->arena, NODE_IDENT, loc);
             node->ident.name = name;
+            node->ident.type_args = type_args;
+            node->ident.type_arg_count = type_arg_count;
             node->ident.is_mutable = is_mut;
             return node;
         }

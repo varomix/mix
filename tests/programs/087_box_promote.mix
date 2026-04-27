@@ -11,9 +11,10 @@ shape Sprite
         pos!.y += vel.y * dt
 
 main() ~
+    frame = zone_create("frame", 4096)
     long = zone_create("long", 4096)
 
-    a! = box(long, Sprite(
+    a! = box(frame, Sprite(
         pos: Vec2(x: 1.0, y: 2.0),
         vel: Vec2(x: 3.0, y: 4.0)
     ))
@@ -26,4 +27,9 @@ main() ~
     print(b.pos.x)
     print(b.pos.y)
 
+    zone_reset(frame)
+    print(b.pos.x)
+    print(b.pos.y)
+
+    zone_destroy(frame)
     zone_destroy(long)

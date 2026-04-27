@@ -586,6 +586,8 @@ c = <span class="ty">Circle</span>(radius: <span class="num">5.0</span>)
 <span class="fn">print</span>(c.<span class="fn">area</span>)             <span class="cm">// 78.5397 (computed field)</span>
 <span class="fn">print</span>(c.<span class="fn">circumference</span>())  <span class="cm">// 31.4159</span></code><span class="label">mix</span></pre>
 <p class="dim">Methods access fields directly by name. No <code>self.</code> prefix needed. Zero-param methods can be called without <code>()</code>.</p>
+<p class="dim">Shapes are values by default. Use <code>ref</code> / <code>ref!</code> for explicit borrows and
+<code>Box[T]</code> when you need stable address or shared identity.</p>
 
 <h3>Operator Overloading</h3>
 <pre><code><span class="kw">shape</span> <span class="ty">Vec2</span>
@@ -628,7 +630,7 @@ s = <span class="ty">Circle</span>(radius: <span class="num">5.0</span>)
 <h2><span class="num">04</span>Collections &amp; Strings</h2>
 
 <h3>Lists</h3>
-<pre><code>nums = [<span class="num">10</span>, <span class="num">20</span>, <span class="num">30</span>, <span class="num">40</span>, <span class="num">50</span>]
+<pre><code>nums<span class="op">!</span> = [<span class="num">10</span>, <span class="num">20</span>, <span class="num">30</span>, <span class="num">40</span>, <span class="num">50</span>]
 <span class="fn">print</span>(nums.len)          <span class="cm">// 5</span>
 <span class="fn">print</span>(nums[<span class="num">0</span>])           <span class="cm">// 10</span>
 nums.<span class="fn">push!</span>(<span class="num">60</span>)           <span class="cm">// append</span>
@@ -649,9 +651,12 @@ evens = [x <span class="kw">for</span> x <span class="kw">in</span> nums <span c
 <span class="cm">// Join string list</span>
 words = [<span class="str">"a"</span>, <span class="str">"b"</span>, <span class="str">"c"</span>]
 <span class="fn">print</span>(words.<span class="fn">join</span>(<span class="str">", "</span>))  <span class="cm">// a, b, c</span></code><span class="label">mix</span></pre>
+<p class="dim"><code>items[i]</code> reads a value. Use <code>items.at(i)</code> / <code>items.at_mut!(i)</code> for borrowed
+element access, and <code>for item! in items</code> when a foreach loop should write back to
+the collection element.</p>
 
 <h3>Maps</h3>
-<pre><code>ages = {<span class="str">"alice"</span>: <span class="num">30</span>, <span class="str">"bob"</span>: <span class="num">25</span>}
+<pre><code>ages<span class="op">!</span> = {<span class="str">"alice"</span>: <span class="num">30</span>, <span class="str">"bob"</span>: <span class="num">25</span>}
 <span class="fn">print</span>(ages[<span class="str">"alice"</span>])     <span class="cm">// 30</span>
 <span class="fn">print</span>(ages.<span class="fn">has</span>(<span class="str">"bob"</span>))   <span class="cm">// true</span>
 ages<span class="op">!</span>[<span class="str">"charlie"</span>] = <span class="num">35</span>    <span class="cm">// add entry</span>
@@ -857,8 +862,8 @@ combine = (a, b) <span class="op">=></span> a + b</code></pre>
 <h4 style="color:var(--accent3)">Unsafe + Zones</h4>
 <pre style="border:none;margin:0;padding:12px"><code><span class="kw">unsafe</span>
     *ptr = <span class="num">42</span>
-<span class="kw">zone</span>
-    data = <span class="fn">alloc</span>(<span class="num">1024</span>)</code></pre>
+frame = <span class="fn">zone_create</span>(<span class="str">"frame"</span>, <span class="num">1024</span>)
+pts<span class="op">!</span> = <span class="ty">List</span>[<span class="ty">int</span>].<span class="fn">new</span>(frame)</code></pre>
 </div>
 <div class="card">
 <h4 style="color:var(--accent3)">Conditional Compilation</h4>

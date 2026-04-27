@@ -1,10 +1,15 @@
 # MIX Language — Implementation Plan
 
+> Historical note: this file tracks the compiler build-out campaign. For the
+> current user-facing language model, use `README.md`, `MIX-spec_v01.md`, and
+> `docs/DOCS.md`. MIX is now value-first with explicit `ref` / `ref!`,
+> `Box[T]`, and `Zone`, not "zones as the whole memory story."
+>
 > Updated: April 2026 — Phases 1-12 complete; run `make test-all` for current pass count
 
 ## Context
 
-Implement the MIX programming language as defined in `MIX-spec_v01.md`. MIX is a systems language with C performance, Python-like clarity, zone-based memory, and clean C interop — targeting graphics/games.
+Implement the MIX programming language as defined in `MIX-spec_v01.md`. MIX is a systems language with C performance, Python-like clarity, value-first memory with explicit borrows / boxes / zones, and clean C interop — targeting graphics/games.
 
 - **Backend**: QBE (lightweight native code compiler)
 - **Compiler written in**: C (~7,500 lines total)

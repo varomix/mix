@@ -685,6 +685,40 @@ static MixType *unwrap_ref_type(MixType *type) {
     return type;
 }
 
+static MixType *resolve_collection_type_expr(Sema *sema, AstNode *expr) {
+    if (!expr || expr->kind != NODE_IDENT || expr->ident.type_arg_count <= 0) {
+        return NULL;
+    }
+
+    const char *name = expr->ident.name;
+    if (strcmp(name, "List") == 0) {
+        if (expr->ident.type_arg_count != 1) {
+            mix_error(expr->loc, "List expects exactly 1 type argument");
+            return make_type(sema->arena, TYPE_VOID);
+        }
+        return make_list_type(sema->arena,
+            resolve_type_node(sema, expr->ident.type_args[0]));
+    }
+    if (strcmp(name, "Map") == 0) {
+        if (expr->ident.type_arg_count != 2) {
+            mix_error(expr->loc, "Map expects exactly 2 type arguments");
+            return make_type(sema->arena, TYPE_VOID);
+        }
+        return make_map_type(sema->arena,
+            resolve_type_node(sema, expr->ident.type_args[0]),
+            resolve_type_node(sema, expr->ident.type_args[1]));
+    }
+    if (strcmp(name, "Set") == 0) {
+        if (expr->ident.type_arg_count != 1) {
+            mix_error(expr->loc, "Set expects exactly 1 type argument");
+            return make_type(sema->arena, TYPE_VOID);
+        }
+        return make_set_type(sema->arena,
+            resolve_type_node(sema, expr->ident.type_args[0]));
+    }
+    return NULL;
+}
+
 static bool is_list_at_mut_call(AstNode *expr) {
     return expr &&
            expr->kind == NODE_METHOD_CALL &&
@@ -972,6 +1006,14 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
             expr->resolved_type = make_type(sema->arena, TYPE_VOID);
             return expr->resolved_type;
         case NODE_IDENT: {
+            MixType *collection_type = resolve_collection_type_expr(sema, expr);
+            if (collection_type) {
+                mix_error(expr->loc,
+                          "type expression '%s' cannot be used as a value; use `.new(zone)`",
+                          type_name(sema->arena, collection_type));
+                expr->resolved_type = collection_type;
+                return expr->resolved_type;
+            }
             Symbol *sym = symtab_lookup(&sema->symtab, expr->ident.name);
             if (!sym) {
                 mix_error(expr->loc, "undefined variable '%s'", expr->ident.name);
@@ -1677,12 +1719,39 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
             return expr->resolved_type;
         }
         case NODE_METHOD_CALL: {
-            MixType *obj_type = resolve_expr(sema, expr->method_call.object);
-            MixType *obj_base = unwrap_ref_type(obj_type);
             // Resolve argument expressions
             for (int i2 = 0; i2 < expr->method_call.arg_count; i2++) {
                 resolve_expr(sema, expr->method_call.args[i2]);
             }
+            MixType *static_collection = resolve_collection_type_expr(
+                sema, expr->method_call.object);
+            if (static_collection) {
+                expr->method_call.object->resolved_type = static_collection;
+                const char *m = expr->method_call.method_name;
+                if (strcmp(m, "new") != 0) {
+                    mix_error(expr->loc,
+                              "type expression '%s' has no static method '%s'",
+                              type_name(sema->arena, static_collection), m);
+                    expr->resolved_type = make_type(sema->arena, TYPE_VOID);
+                    return expr->resolved_type;
+                }
+                if (expr->method_call.arg_count != 1) {
+                    mix_error(expr->loc,
+                              "method 'new' expects exactly 1 argument: Zone");
+                    expr->resolved_type = static_collection;
+                    return expr->resolved_type;
+                }
+                MixType *zone_type = expr->method_call.args[0]->resolved_type;
+                if (!zone_type || zone_type->kind != TYPE_ZONE) {
+                    mix_error(expr->method_call.args[0]->loc,
+                              "argument 1 of 'new': expected Zone, got %s",
+                              type_name(sema->arena, zone_type));
+                }
+                expr->resolved_type = static_collection;
+                return expr->resolved_type;
+            }
+            MixType *obj_type = resolve_expr(sema, expr->method_call.object);
+            MixType *obj_base = unwrap_ref_type(obj_type);
             // Shared built-in methods: .read(), .update!(fn)
             if (obj_base && obj_base->kind == TYPE_SHARED) {
                 const char *m = expr->method_call.method_name;
@@ -3244,22 +3313,6 @@ void sema_analyze(Sema *sema, AstNode *program) {
         ft->func.return_type = make_type(sema->arena, TYPE_INT);
         ft->func.param_count = 0;
         symtab_insert(&sema->symtab, "random_int", ft, false);
-    }
-    // Refcount instrumentation (test-only): counters of total shape
-    // allocations and frees observed by the runtime since program
-    // start. Used by tests/programs/0XX_shape_refcount_*.mix to assert
-    // that we don't leak. Underscored prefix marks them internal.
-    {
-        MixType *ft = make_type(sema->arena, TYPE_FUNC);
-        ft->func.return_type = make_type(sema->arena, TYPE_INT);
-        ft->func.param_count = 0;
-        symtab_insert(&sema->symtab, "_mix_rc_alloc_count", ft, false);
-    }
-    {
-        MixType *ft = make_type(sema->arena, TYPE_FUNC);
-        ft->func.return_type = make_type(sema->arena, TYPE_INT);
-        ft->func.param_count = 0;
-        symtab_insert(&sema->symtab, "_mix_rc_free_count", ft, false);
     }
     // random_float() -> float (in [0.0, 1.0])
     {

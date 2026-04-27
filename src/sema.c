@@ -569,6 +569,31 @@ static MixType *resolve_type_node(Sema *sema, AstNode *type_node) {
 
 static MixType *resolve_expr(Sema *sema, AstNode *expr);
 
+// If `expr` is an empty collection literal whose default-inferred element
+// type doesn't match the surrounding context, retype it to the hint. Lets
+// `bricks.sprites = []` work even though `[]` would otherwise resolve to
+// [int]. Operates on lists, sets, and maps; no-op for everything else.
+static MixType *resolve_expr_hinted(Sema *sema, AstNode *expr, MixType *hint) {
+    MixType *t = resolve_expr(sema, expr);
+    if (!hint || !expr) return t;
+    if (expr->kind == NODE_LIST_LIT && expr->list_lit.element_count == 0
+        && hint->kind == TYPE_LIST) {
+        expr->resolved_type = hint;
+        return hint;
+    }
+    if (expr->kind == NODE_SET_LIT && expr->set_lit.element_count == 0
+        && hint->kind == TYPE_SET) {
+        expr->resolved_type = hint;
+        return hint;
+    }
+    if (expr->kind == NODE_MAP_LIT && expr->map_lit.entry_count == 0
+        && hint->kind == TYPE_MAP) {
+        expr->resolved_type = hint;
+        return hint;
+    }
+    return t;
+}
+
 static MixType *resolve_expr(Sema *sema, AstNode *expr) {
     if (!expr) return make_type(sema->arena, TYPE_VOID);
 
@@ -1137,9 +1162,18 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                 expr->shape_lit.field_values = new_values;
                 expr->shape_lit.field_count = total;
             }
-            // Resolve field value expressions
+            // Resolve field value expressions, hinting with each field's
+            // declared type so empty collection literals (e.g.
+            // `Group(sprites: [])`) take on the correct element type.
             for (int i = 0; i < expr->shape_lit.field_count; i++) {
-                resolve_expr(sema, expr->shape_lit.field_values[i]);
+                MixType *hint = NULL;
+                if (stype && expr->shape_lit.field_names &&
+                    expr->shape_lit.field_names[i]) {
+                    ShapeFieldInfo *fi = type_find_field(stype,
+                        expr->shape_lit.field_names[i]);
+                    if (fi) hint = fi->type;
+                }
+                resolve_expr_hinted(sema, expr->shape_lit.field_values[i], hint);
             }
             return expr->resolved_type;
         }
@@ -1475,7 +1509,8 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
             // When there's a type annotation, still resolve the init expression
             // so it gets type-checked and its resolved_type is set.
             if (stmt->var_decl.type_ann && stmt->var_decl.init_expr) {
-                MixType *init_type = resolve_expr(sema, stmt->var_decl.init_expr);
+                MixType *init_type = resolve_expr_hinted(sema,
+                    stmt->var_decl.init_expr, type);
                 if (!types_compatible(type, init_type)) {
                     mix_error(stmt->loc,
                               "cannot assign %s to variable '%s' of type %s",
@@ -1485,12 +1520,12 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                 }
             }
             symtab_insert(&sema->symtab, stmt->var_decl.name, type, stmt->var_decl.is_mutable);
+            Symbol *new_sym = symtab_lookup_current(&sema->symtab, stmt->var_decl.name);
             // Shape-typed local NODE_VAR_DECLs use an alloca slot in QBE
             // (so loop-declared shape vars get a fresh slot per iteration);
             // mark the symbol so NODE_IDENT loads from it.
             if (type && type->kind == TYPE_SHAPE && !stmt->var_decl.is_global) {
-                Symbol *vsym = symtab_lookup_current(&sema->symtab, stmt->var_decl.name);
-                if (vsym) vsym->is_pointer_slot = true;
+                if (new_sym) new_sym->is_pointer_slot = true;
             }
             break;
         }
@@ -1529,8 +1564,12 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                     break;
                 }
             }
-            MixType *val_type = resolve_expr(sema, stmt->assign.value);
-            Symbol *var_sym = symtab_lookup(&sema->symtab, stmt->assign.name);
+            // Hint the value expression with the variable's declared type so
+            // empty list/set/map literals retype to match the lvalue.
+            Symbol *pre_sym = symtab_lookup(&sema->symtab, stmt->assign.name);
+            MixType *hint = (pre_sym && pre_sym->type) ? pre_sym->type : NULL;
+            MixType *val_type = resolve_expr_hinted(sema, stmt->assign.value, hint);
+            Symbol *var_sym = pre_sym;
             if (var_sym && var_sym->type && val_type) {
                 if (!var_sym->is_mutable) {
                     mix_error(stmt->loc, "cannot assign to immutable variable '%s'",
@@ -1548,19 +1587,27 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
         }
         case NODE_FIELD_ASSIGN: {
             MixType *obj_type = resolve_expr(sema, stmt->field_assign.object);
-            MixType *val_type = resolve_expr(sema, stmt->field_assign.value);
-            if (!obj_type) break;
+            if (!obj_type) {
+                resolve_expr(sema, stmt->field_assign.value);
+                break;
+            }
             if (obj_type->kind != TYPE_SHAPE) {
+                resolve_expr(sema, stmt->field_assign.value);
                 mix_error(stmt->loc, "cannot assign to field on non-shape type %s",
                           type_name(sema->arena, obj_type));
                 break;
             }
             ShapeFieldInfo *fi = type_find_field(obj_type, stmt->field_assign.field_name);
             if (!fi) {
+                resolve_expr(sema, stmt->field_assign.value);
                 mix_error(stmt->loc, "shape '%s' has no field '%s'",
                           obj_type->shape.name, stmt->field_assign.field_name);
                 break;
             }
+            // Hint with the field's declared type so `b.sprites = []` retypes
+            // the empty list literal to the field's [T] instead of [int].
+            MixType *val_type = resolve_expr_hinted(sema,
+                stmt->field_assign.value, fi->type);
             // The object expression must refer to a mutable binding. A bare
             // identifier is the common case (`p.x = ...` requires `p! = ...`);
             // chained accesses (`g.player.x = ...`) walk back to the root.
@@ -2555,6 +2602,22 @@ void sema_analyze(Sema *sema, AstNode *program) {
         ft->func.return_type = make_type(sema->arena, TYPE_INT);
         ft->func.param_count = 0;
         symtab_insert(&sema->symtab, "random_int", ft, false);
+    }
+    // Refcount instrumentation (test-only): counters of total shape
+    // allocations and frees observed by the runtime since program
+    // start. Used by tests/programs/0XX_shape_refcount_*.mix to assert
+    // that we don't leak. Underscored prefix marks them internal.
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_INT);
+        ft->func.param_count = 0;
+        symtab_insert(&sema->symtab, "_mix_rc_alloc_count", ft, false);
+    }
+    {
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_INT);
+        ft->func.param_count = 0;
+        symtab_insert(&sema->symtab, "_mix_rc_free_count", ft, false);
     }
     // random_float() -> float (in [0.0, 1.0])
     {

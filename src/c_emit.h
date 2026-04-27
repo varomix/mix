@@ -43,6 +43,12 @@ typedef struct {
     // redefinition. Reset at the start of every function body.
     struct { char *name; int active_idx; } var_decls[256];
     int var_decl_count;
+    // Refcount Phase 1: shape types declared in this translation unit.
+    // SHAPE_LIT codegen passes `release_<Name>` only if the shape is
+    // here; otherwise it passes 0 (mix_release falls back to
+    // mix_shape_free). Mirrors the QbeEmitter field of the same name.
+    char *local_shape_names[1024];
+    int   local_shape_name_count;
 } CEmitter;
 
 CEmitter c_emitter_create(FILE *out, Arena *arena, SymTab *symtab);

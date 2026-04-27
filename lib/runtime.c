@@ -78,6 +78,75 @@ void mix_free(void *ptr) {
     free(ptr);
 }
 
+// ---------------------------------------------------------------
+// Shape refcounting
+// ---------------------------------------------------------------
+// Every MIX shape allocation is prefixed by a 16-byte header:
+//   [ refcount : i64 ][ release_fn : void(*)(void*) ]
+// The pointer returned to MIX code points AFTER the header (at the
+// user-visible field area), so legacy field-offset codegen needs no
+// changes. mix_release reads the header at p - 16.
+//
+// release_fn is a per-shape function emitted by the compiler. It
+// recursively releases any shape-typed fields (Phase 2+) and then
+// calls mix_shape_free which actually frees the underlying allocation.
+//
+// Refcounts are NOT atomic — MIX is single-threaded for now.
+// Cycles are unreclaimed (documented limitation).
+
+typedef struct {
+    int64_t refcount;
+    void  (*release_fn)(void *);
+} MixHeader;
+
+#define MIX_HEADER_SIZE ((int64_t)sizeof(MixHeader))
+#define MIX_HEADER(p)   ((MixHeader *)((char *)(p) - MIX_HEADER_SIZE))
+
+void mix_shape_free(void *p);  // forward decl — defined below
+
+// Test-only counters: every refcount op bumps these so regression
+// tests can assert exact alloc/free balance without resorting to
+// getrusage / malloc-introspection. Exposed to MIX as builtins
+// `_mix_rc_alloc_count()` and `_mix_rc_free_count()`.
+static int64_t mix_rc_alloc_count = 0;
+static int64_t mix_rc_free_count  = 0;
+
+int64_t mix_rc_get_alloc_count(void) { return mix_rc_alloc_count; }
+int64_t mix_rc_get_free_count(void)  { return mix_rc_free_count; }
+
+void *mix_shape_alloc(int64_t size, void (*release_fn)(void *)) {
+    char *raw = malloc((size_t)(MIX_HEADER_SIZE + size));
+    if (!raw) mix_panic("out of memory");
+    MixHeader *h = (MixHeader *)raw;
+    h->refcount = 1;
+    h->release_fn = release_fn;
+    void *user = raw + MIX_HEADER_SIZE;
+    memset(user, 0, (size_t)size);
+    mix_rc_alloc_count++;
+    return user;
+}
+
+void mix_retain(void *p) {
+    if (!p) return;
+    MIX_HEADER(p)->refcount++;
+}
+
+void mix_release(void *p) {
+    if (!p) return;
+    MixHeader *h = MIX_HEADER(p);
+    if (--h->refcount > 0) return;
+    if (h->release_fn) h->release_fn(p);
+    else mix_shape_free(p);  // shouldn't normally happen — every shape has a release_fn
+}
+
+// Free the underlying allocation. Called by per-shape release_fn after
+// recursively releasing fields. User code never calls this directly.
+void mix_shape_free(void *p) {
+    if (!p) return;
+    mix_rc_free_count++;
+    free((char *)p - MIX_HEADER_SIZE);
+}
+
 // Allocate zeroed bytes (for SDL_Event buffers, etc.)
 void *mix_bytes(int64_t n) {
     void *ptr = calloc(1, (size_t)n);
@@ -165,6 +234,15 @@ typedef struct {
     int64_t len;
     int64_t cap;
     int64_t *data;
+    // Refcount Phase 3:
+    //   is_shape == 0  -> primitive list (int/float/str/bool); no retain/release
+    //   is_shape == 1  -> shape list; push retains, set retains+releases,
+    //                     clear/free releases all
+    // element_release_fn may be NULL even for shape lists — that means the
+    // element type has no per-shape release fn (C-imported or external),
+    // and `mix_release` falls back to `mix_shape_free` automatically.
+    int     is_shape;
+    void  (*element_release_fn)(void *);
 } MixList;
 
 void *mix_list_new(void) {
@@ -174,6 +252,19 @@ void *mix_list_new(void) {
     list->cap = 8;
     list->data = malloc(sizeof(int64_t) * 8);
     if (!list->data) mix_panic("out of memory");
+    list->is_shape = 0;
+    list->element_release_fn = NULL;
+    return list;
+}
+
+// Create a list whose elements are MIX shape pointers. release_fn is
+// the per-shape release function (or NULL — runtime will fall back to
+// mix_shape_free). All push/pop/set/clear ops retain/release elements
+// to keep refcounts balanced.
+void *mix_list_new_shape(void (*element_release_fn)(void *)) {
+    MixList *list = mix_list_new();
+    list->is_shape = 1;
+    list->element_release_fn = element_release_fn;
     return list;
 }
 
@@ -188,6 +279,11 @@ void mix_list_push(void *list_ptr, int64_t val) {
         list->cap *= 2;
         list->data = realloc(list->data, sizeof(int64_t) * list->cap);
         if (!list->data) mix_panic("out of memory");
+    }
+    // Phase 3: shape lists retain on push so the list owns a reference
+    // independent of whatever pushed the value.
+    if (list->is_shape && val) {
+        mix_retain((void *)val);
     }
     list->data[list->len++] = val;
 }
@@ -207,7 +303,15 @@ void mix_list_set(void *list_ptr, int64_t index, int64_t val) {
         fprintf(stderr, "panic: list index %"PRId64" out of bounds (len %"PRId64")\n", index, list->len);
         exit(1);
     }
-    list->data[index] = val;
+    // Phase 3: shape lists retain new + release old to keep counts balanced.
+    if (list->is_shape) {
+        if (val)              mix_retain((void *)val);
+        int64_t old = list->data[index];
+        list->data[index] = val;
+        if (old)              mix_release((void *)old);
+    } else {
+        list->data[index] = val;
+    }
 }
 
 void *mix_list_slice(const void *list_ptr, int64_t start, int64_t end, int32_t inclusive) {
@@ -275,7 +379,12 @@ void mix_print_list_bool(const void *list_ptr) {
 int64_t mix_list_pop(void *list_ptr) {
     MixList *list = list_ptr;
     if (list->len <= 0) mix_panic("pop from empty list");
-    return list->data[--list->len];
+    int64_t val = list->data[--list->len];
+    // Phase 3: pop transfers ownership to the caller (same convention
+    // as SHAPE_LIT and shape-returning function calls). The list's
+    // ref-on-push is now the caller's. So we DON'T release here —
+    // refcount stays the same. The caller must release when done.
+    return val;
 }
 
 void mix_list_remove(void *list_ptr, int64_t idx) {
@@ -283,6 +392,11 @@ void mix_list_remove(void *list_ptr, int64_t idx) {
     if (idx < 0 || idx >= list->len) {
         fprintf(stderr, "panic: list index %" PRId64 " out of bounds (len %" PRId64 ")\n", idx, list->len);
         exit(1);
+    }
+    // Phase 3: shape lists drop their ref to the removed element here,
+    // since the caller doesn't get the value back.
+    if (list->is_shape && list->data[idx]) {
+        mix_release((void *)list->data[idx]);
     }
     for (int64_t i = idx; i < list->len - 1; i++) {
         list->data[i] = list->data[i + 1];
@@ -295,6 +409,10 @@ void mix_list_insert(void *list_ptr, int64_t idx, int64_t val) {
     if (idx < 0 || idx > list->len) {
         fprintf(stderr, "panic: list insert index %" PRId64 " out of bounds (len %" PRId64 ")\n", idx, list->len);
         exit(1);
+    }
+    // Phase 3: shape lists retain on insert (same as push).
+    if (list->is_shape && val) {
+        mix_retain((void *)val);
     }
     // Ensure capacity
     if (list->len >= list->cap) {

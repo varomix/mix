@@ -37,6 +37,27 @@ static const char *qbe_type(MixType *type) {
     return type_to_qbe(type);
 }
 
+// Widen a narrow-integer temp (`w`) to `l` so it matches an int parameter
+// or runtime function argument. Bool / byte / int8..int32 / uint8..uint32
+// all live in `w` registers but MIX's `int` is `l`, so passing one to a
+// builtin that takes `int` produces "invalid type for first operand"
+// without this. Floats and already-`l` values pass through unchanged.
+static int widen_int_to_long(QbeEmitter *emit, int val, MixType *atype) {
+    if (!atype) return val;
+    const char *q = type_to_qbe(atype);
+    if (strcmp(q, "w") != 0) return val;
+    int ext = next_temp(emit);
+    // Use unsigned extension for unsigned source kinds (so a Uint32
+    // bitmask like 0xFFFFFFFF doesn't sign-extend into a negative long);
+    // signed extension for everything else.
+    bool unsigned_src = atype->kind == TYPE_UINT8 || atype->kind == TYPE_UINT16
+                     || atype->kind == TYPE_UINT32 || atype->kind == TYPE_BYTE
+                     || atype->kind == TYPE_BOOL;
+    fprintf(emit->out, "\t%%t%d =l %s %%t%d\n",
+            ext, unsigned_src ? "extuw" : "extsw", val);
+    return ext;
+}
+
 // Coerce a value temp to the QBE register type required by a field's type.
 // For example, an integer value (=l) being stored into a float32 field needs
 // conversion to =s via sltof+truncd, and into a float64 field needs =d sltof.
@@ -78,6 +99,14 @@ static int coerce_to_field_type(QbeEmitter *emit, int val, MixType *val_type,
         fprintf(emit->out, "\t%%t%d =d exts %%t%d\n", dbl, val);
         return dbl;
     }
+    // Narrow int (`w`) -> long (`l`): zero-extend if the source was an
+    // unsigned narrow type so a Uint32 mask doesn't sign-extend into a
+    // negative long; sign-extend otherwise. Without this, passing a
+    // bool/uint32/etc. into a function expecting `int` produces
+    // "invalid type for first operand" from QBE.
+    if (strcmp(field_qbe, "l") == 0 && strcmp(val_qbe, "w") == 0) {
+        return widen_int_to_long(emit, val, val_type);
+    }
     return val;
 }
 
@@ -92,6 +121,108 @@ static const char *qbe_sig_type(MixType *type, Arena *arena) {
     if (!type) return "l";
     if (type->kind == TYPE_SHAPE) return "l";
     return type_to_qbe(type);
+}
+
+// Forward decl — defined below; needed by rc_walk_collect_shape_locals.
+static bool is_owned_shape_source(AstNode *expr);
+
+// Refcount Phase 3: emit `mix_release(v)` for every shape-typed local
+// tracked in `emit->rc_locals`. Call this just before any function-exit
+// `ret` to balance the retain implicit at construction time. Must be
+// emitted in the same basic block as the ret (so emit before each ret
+// site individually).
+//
+// mix_release is null-safe; the slot is pre-zeroed by
+// emit_rc_pre_init_locals so locals declared inside conditionals
+// that never executed are NULL here (no crash).
+static void emit_rc_release_locals(QbeEmitter *emit) {
+    for (int i = 0; i < emit->rc_local_count; i++) {
+        int t = next_temp(emit);
+        fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", t, emit->rc_locals[i]);
+        fprintf(emit->out, "\tcall $mix_release(l %%t%d)\n", t);
+    }
+}
+
+// Walk the AST collecting names of shape-typed var-decls so we can
+// pre-allocate + zero-init their slots in the entry block. Without
+// this, a var-decl inside an `if` that never fires leaves an
+// uninitialized stack slot; the scope-exit release would load
+// garbage and crash.
+static void rc_walk_collect_shape_locals(QbeEmitter *emit, AstNode *node) {
+    if (!node) return;
+    switch (node->kind) {
+        case NODE_VAR_DECL:
+            if (node->resolved_type && node->resolved_type->kind == TYPE_SHAPE &&
+                is_owned_shape_source(node->var_decl.init_expr)) {
+                bool already = false;
+                for (int li = 0; li < emit->rc_local_count; li++) {
+                    if (strcmp(emit->rc_locals[li], node->var_decl.name) == 0) {
+                        already = true; break;
+                    }
+                }
+                if (!already && emit->rc_local_count < 256) {
+                    emit->rc_locals[emit->rc_local_count++] =
+                        arena_strdup(emit->arena, node->var_decl.name);
+                }
+            }
+            break;
+        case NODE_BLOCK:
+            for (int i = 0; i < node->block.stmt_count; i++)
+                rc_walk_collect_shape_locals(emit, node->block.stmts[i]);
+            break;
+        case NODE_IF_STMT:
+            rc_walk_collect_shape_locals(emit, node->if_stmt.then_block);
+            rc_walk_collect_shape_locals(emit, node->if_stmt.else_block);
+            break;
+        case NODE_WHILE_STMT:
+            rc_walk_collect_shape_locals(emit, node->while_stmt.body);
+            break;
+        case NODE_FOR_STMT:
+            rc_walk_collect_shape_locals(emit, node->for_stmt.body);
+            break;
+        case NODE_MATCH_STMT:
+            for (int i = 0; i < node->match_stmt.arm_count; i++)
+                rc_walk_collect_shape_locals(emit, node->match_stmt.arms[i].body);
+            break;
+        case NODE_UNSAFE_BLOCK:
+            rc_walk_collect_shape_locals(emit, node->unsafe_block.body);
+            break;
+        default:
+            break;
+    }
+}
+
+// Pre-emit `alloc8 + storel 0` for each tracked shape local in the
+// entry block (called immediately after parameter binding). This
+// guarantees the slot exists and contains NULL even if the var-decl
+// never executes at runtime.
+static void emit_rc_pre_init_locals(QbeEmitter *emit) {
+    for (int i = 0; i < emit->rc_local_count; i++) {
+        fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", emit->rc_locals[i]);
+        fprintf(emit->out, "\tstorel 0, %%v.%s\n", emit->rc_locals[i]);
+    }
+}
+
+// Refcount Phase 2: does this AST node produce an "owned" shape value
+// (refcount=1, freshly transferred to us) that we should `mix_release`
+// after consuming? True for SHAPE_LIT and shape-returning function /
+// method calls. False for variable reads, field loads, list indexing,
+// etc., where the source still owns its reference.
+static bool is_owned_shape_source(AstNode *expr) {
+    if (!expr) return false;
+    switch (expr->kind) {
+        case NODE_SHAPE_LIT:
+            return true;
+        case NODE_CALL_EXPR:
+        case NODE_METHOD_CALL: {
+            // Owned only if the call returns a shape (some function calls
+            // return non-shape values that we shouldn't release).
+            MixType *t = expr->resolved_type;
+            return t && t->kind == TYPE_SHAPE;
+        }
+        default:
+            return false;
+    }
 }
 
 // Register a string literal and return its QBE data name
@@ -236,15 +367,16 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             return t;
         }
         case NODE_IDENT: {
-            // Check if it's a compile-time constant (memoized)
+            // Check if it's a compile-time constant.
+            // We deliberately re-emit the literal at every use instead of
+            // caching the first temp. Caching looked attractive, but a temp
+            // defined inside one basic block (e.g. an `if` branch) does not
+            // dominate uses in sibling blocks — QBE then rejects the IR with
+            // "ssa temporary used undefined". Re-emitting `=l copy K` is
+            // cheap and lets QBE's own constant folding clean up later.
             for (int i = 0; i < emit->const_count; i++) {
                 if (strcmp(emit->constants[i].name, expr->ident.name) == 0) {
-                    if (emit->constants[i].cached_temp >= 0) {
-                        return emit->constants[i].cached_temp;
-                    }
-                    int ct = emit_expr(emit, emit->constants[i].value);
-                    emit->constants[i].cached_temp = ct;
-                    return ct;
+                    return emit_expr(emit, emit->constants[i].value);
                 }
             }
             // Check if it's a field reference inside a method (translate to self.field)
@@ -424,9 +556,34 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             return t;
         }
         case NODE_LIST_LIT: {
-            // Create list, push each element
+            // Create list, push each element. Phase 3: if the element
+            // type is a shape, use mix_list_new_shape so the list
+            // retains/releases on push/clear/etc.
             int list_t = next_temp(emit);
-            fprintf(emit->out, "\t%%t%d =l call $mix_list_new()\n", list_t);
+            MixType *list_type = expr->resolved_type;
+            MixType *etype_for_list = (list_type && list_type->kind == TYPE_LIST)
+                ? list_type->list.elem_type : NULL;
+            if (etype_for_list && etype_for_list->kind == TYPE_SHAPE) {
+                bool is_local = false;
+                const char *sname = etype_for_list->shape.name;
+                for (int li = 0; li < emit->local_shape_name_count; li++) {
+                    if (strcmp(emit->local_shape_names[li], sname) == 0) {
+                        is_local = true;
+                        break;
+                    }
+                }
+                if (is_local) {
+                    fprintf(emit->out,
+                        "\t%%t%d =l call $mix_list_new_shape(l $release_%s)\n",
+                        list_t, sname);
+                } else {
+                    fprintf(emit->out,
+                        "\t%%t%d =l call $mix_list_new_shape(l 0)\n",
+                        list_t);
+                }
+            } else {
+                fprintf(emit->out, "\t%%t%d =l call $mix_list_new()\n", list_t);
+            }
             for (int i = 0; i < expr->list_lit.element_count; i++) {
                 int val = emit_expr(emit, expr->list_lit.elements[i]);
                 MixType *etype = expr->list_lit.elements[i]->resolved_type;
@@ -449,6 +606,13 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 int push_t = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l call $mix_list_push(l %%t%d, l %%t%d)\n",
                         push_t, list_t, val);
+                // Phase 3: shape lists retain on push; release the
+                // owned source temp so we don't end up with refcount
+                // 2 forever.
+                if (etype_for_list && etype_for_list->kind == TYPE_SHAPE &&
+                    is_owned_shape_source(expr->list_lit.elements[i])) {
+                    fprintf(emit->out, "\tcall $mix_release(l %%t%d)\n", val);
+                }
             }
             return list_t;
         }
@@ -837,6 +1001,19 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 }
             }
 
+            // If the two integer operands disagree on width (typical when a
+            // C function returning Uint32 is used with a MIX `int` literal),
+            // promote the narrower to `l` first so QBE accepts the op.
+            MixType *rtype_for_widen = expr->binary.right->resolved_type;
+            const char *lq = qbe_type(ltype);
+            const char *rq = qbe_type(rtype_for_widen);
+            if (strcmp(lq, "w") == 0 && strcmp(rq, "l") == 0) {
+                left = widen_int_to_long(emit, left, ltype);
+                ltype = rtype_for_widen;
+            } else if (strcmp(lq, "l") == 0 && strcmp(rq, "w") == 0) {
+                right = widen_int_to_long(emit, right, rtype_for_widen);
+            }
+
             const char *ty = qbe_type(ltype);
             bool is_flt = ltype && type_is_float(ltype);
 
@@ -1122,8 +1299,9 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     fprintf(emit->out, "\t%%t%d =l call $mix_to_string_float(d %%t%d)\n",
                             t, arg_temps[0]);
                 } else {
+                    int v = widen_int_to_long(emit, arg_temps[0], atype);
                     fprintf(emit->out, "\t%%t%d =l call $mix_to_string_int(l %%t%d)\n",
-                            t, arg_temps[0]);
+                            t, v);
                 }
                 return t;
             }
@@ -1293,8 +1471,10 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 return t;
             }
             if (strcmp(expr->call.name, "poke_u32") == 0 && expr->call.arg_count == 3) {
+                int v = widen_int_to_long(emit, arg_temps[2],
+                                          expr->call.args[2]->resolved_type);
                 fprintf(emit->out, "\tcall $mix_poke_u32(l %%t%d, l %%t%d, l %%t%d)\n",
-                        arg_temps[0], arg_temps[1], arg_temps[2]);
+                        arg_temps[0], arg_temps[1], v);
                 fprintf(emit->out, "\t%%t%d =l copy 0\n", t);
                 return t;
             }
@@ -1336,6 +1516,14 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             }
             if (strcmp(expr->call.name, "random_int") == 0 && expr->call.arg_count == 0) {
                 fprintf(emit->out, "\t%%t%d =l call $mix_random_int()\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "_mix_rc_alloc_count") == 0 && expr->call.arg_count == 0) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_rc_get_alloc_count()\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "_mix_rc_free_count") == 0 && expr->call.arg_count == 0) {
+                fprintf(emit->out, "\t%%t%d =l call $mix_rc_get_free_count()\n", t);
                 return t;
             }
             if (strcmp(expr->call.name, "random_float") == 0 && expr->call.arg_count == 0) {
@@ -1430,6 +1618,18 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             }
             fprintf(emit->out, ")\n");
 
+            // Phase 3.5: release owned-shape args after the call. The
+            // callee borrowed the pointer (MIX convention); if it
+            // wanted to keep a ref it retained internally (e.g. via
+            // list_push retain). Either way our caller-side temp
+            // shouldn't outlive this call site.
+            for (int i = 0; i < expr->call.arg_count; i++) {
+                if (is_owned_shape_source(expr->call.args[i])) {
+                    fprintf(emit->out, "\tcall $mix_release(l %%t%d)\n",
+                            arg_temps[i]);
+                }
+            }
+
             return t;
         }
         case NODE_METHOD_CALL: {
@@ -1506,6 +1706,15 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     }
                     fprintf(emit->out, "\tcall $mix_list_push(l %%t%d, l %%t%d)\n",
                             obj_temp, push_val);
+                    // Phase 3: shape lists retain on push (handled in
+                    // runtime). If the arg was an owned-shape source
+                    // (SHAPE_LIT or shape-returning call), release the
+                    // temp now — push has its own ref, the list owns it.
+                    if (elem && elem->kind == TYPE_SHAPE &&
+                        is_owned_shape_source(expr->method_call.args[0])) {
+                        fprintf(emit->out, "\tcall $mix_release(l %%t%d)\n",
+                                arg_temps2[0]);
+                    }
                     return t;
                 } else if (strcmp(m, "pop") == 0 && expr->method_call.arg_count == 0) {
                     int t = next_temp(emit);
@@ -1717,21 +1926,53 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 fprintf(emit->out, "%s %%t%d", aty, arg_temps2[i]);
             }
             fprintf(emit->out, ")\n");
+            // Phase 3.5: release owned-shape args after the user-method
+            // call returns (same rationale as NODE_CALL_EXPR).
+            for (int i = 0; i < expr->method_call.arg_count; i++) {
+                if (is_owned_shape_source(expr->method_call.args[i])) {
+                    fprintf(emit->out, "\tcall $mix_release(l %%t%d)\n",
+                            arg_temps2[i]);
+                }
+            }
             return t;
         }
         case NODE_SHAPE_LIT: {
-            // Heap-allocate the shape via mix_alloc (matches the C backend).
-            // Stack alloca was tempting but QBE hoists `alloc8` to the entry
-            // block, so a SHAPE_LIT inside a loop would return the *same*
-            // slot on every iteration and the values would alias each other.
-            // Heap allocation guarantees fresh memory per construction; the
-            // tradeoff is that SHAPE_LIT now leaks (same as the C backend).
+            // Heap-allocate the shape via mix_shape_alloc — adds a 16-byte
+            // header (refcount + release_fn) ahead of the user pointer so
+            // mix_release(p) can find both fields at p - 16. The release
+            // function for this shape was emitted at program top.
+            //
+            // Stack alloca was tempting but QBE hoists `alloc8` to the
+            // entry block, so a SHAPE_LIT inside a loop would return the
+            // *same* slot on every iteration and the values would alias
+            // each other. Heap allocation + refcount keeps semantics
+            // simple and lets multi-owner cases (lists, fields) work.
             MixType *stype = expr->resolved_type;
             int size = stype ? stype->shape.total_size : 16;
+            const char *shape_name = (stype && stype->shape.name)
+                ? stype->shape.name
+                : expr->shape_lit.shape_name;
+            // Only reference $release_<Name> if THIS module declared
+            // the shape; otherwise it's a C-imported / external shape
+            // and runtime falls back to mix_shape_free via NULL.
+            bool is_local = false;
+            for (int li = 0; li < emit->local_shape_name_count; li++) {
+                if (strcmp(emit->local_shape_names[li], shape_name) == 0) {
+                    is_local = true;
+                    break;
+                }
+            }
             int t = next_temp(emit);
-            fprintf(emit->out, "\t%%t%d =l call $mix_alloc(l %d)\n", t, size);
-            // Zero-initialize (C struct interop requires unset fields = 0)
-            fprintf(emit->out, "\tcall $memset(l %%t%d, w 0, l %d)\n", t, size);
+            if (is_local) {
+                fprintf(emit->out,
+                    "\t%%t%d =l call $mix_shape_alloc(l %d, l $release_%s)\n",
+                    t, size, shape_name);
+            } else {
+                fprintf(emit->out,
+                    "\t%%t%d =l call $mix_shape_alloc(l %d, l 0)\n",
+                    t, size);
+            }
+            // mix_shape_alloc already zero-initializes the user region.
 
             if (stype && stype->kind == TYPE_SHAPE && stype->shape.is_tagged_union) {
                 // Tagged union construction: store tag + variant fields
@@ -1759,12 +2000,19 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     if (!fi) continue;
                     int val = emit_expr(emit, expr->shape_lit.field_values[i]);
 
-                    // Inline sub-struct: memcpy the sub-shape's data into parent
+                    // Inline sub-struct: memcpy the sub-shape's data into parent.
+                    // The source (val) is a separate heap allocation made by
+                    // the field expr's emit (e.g. a SHAPE_LIT temp). After
+                    // memcpy the parent owns the bytes, so the temp can be
+                    // released — otherwise it leaks (Phase 2 fix).
                     if (fi->type && fi->type->kind == TYPE_SHAPE) {
                         int dst_addr = next_temp(emit);
                         fprintf(emit->out, "\t%%t%d =l add %%t%d, %d\n", dst_addr, t, fi->offset);
                         fprintf(emit->out, "\tcall $memcpy(l %%t%d, l %%t%d, l %d)\n",
                                 dst_addr, val, fi->type->shape.total_size);
+                        if (is_owned_shape_source(expr->shape_lit.field_values[i])) {
+                            fprintf(emit->out, "\tcall $mix_release(l %%t%d)\n", val);
+                        }
                     } else {
                         val = coerce_to_field_type(emit, val,
                                 expr->shape_lit.field_values[i]->resolved_type, fi->type);
@@ -1968,7 +2216,34 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             // the current pointer back.
             if (stmt->resolved_type && stmt->resolved_type->kind == TYPE_SHAPE) {
                 int init = emit_expr(emit, stmt->var_decl.init_expr);
-                fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", stmt->var_decl.name);
+                // Phase 3: shape locals with owned-source init are
+                // pre-allocated (and zero-initialized) at function
+                // entry by emit_rc_pre_init_locals. Skip the alloc8
+                // here to avoid emitting two slots; just store.
+                bool pre_allocated = false;
+                if (is_owned_shape_source(stmt->var_decl.init_expr)) {
+                    for (int li = 0; li < emit->rc_local_count; li++) {
+                        if (strcmp(emit->rc_locals[li], stmt->var_decl.name) == 0) {
+                            pre_allocated = true;
+                            break;
+                        }
+                    }
+                }
+                if (!pre_allocated) {
+                    fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", stmt->var_decl.name);
+                }
+                // Phase 3.5: if the slot already holds an owned value
+                // (we tracked it for scope-exit release), release the
+                // OLD value before overwriting. Without this, var-decls
+                // re-emitted each loop iteration leak the previous
+                // iteration's shape (e.g. `tsbinding = ...` inside the
+                // per-segment loop in mixel's end_frame).
+                if (pre_allocated) {
+                    int old_t = next_temp(emit);
+                    fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n",
+                            old_t, stmt->var_decl.name);
+                    fprintf(emit->out, "\tcall $mix_release(l %%t%d)\n", old_t);
+                }
                 fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", init, stmt->var_decl.name);
             } else if (stmt->var_decl.is_mutable) {
                 int init = emit_expr(emit, stmt->var_decl.init_expr);
@@ -2597,9 +2872,17 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             }
             break;
         }
-        case NODE_EXPR_STMT:
-            emit_expr(emit, stmt->expr_stmt.expr);
+        case NODE_EXPR_STMT: {
+            int v = emit_expr(emit, stmt->expr_stmt.expr);
+            // Phase 3: if this expression statement throws away an
+            // owned-shape result (SHAPE_LIT not stored, function call
+            // returning shape discarded, list.pop!() discarded, etc.)
+            // release the temp so it doesn't leak.
+            if (is_owned_shape_source(stmt->expr_stmt.expr)) {
+                fprintf(emit->out, "\tcall $mix_release(l %%t%d)\n", v);
+            }
             break;
+        }
         case NODE_UNSAFE_BLOCK:
             // Unsafe just emits the block — the safety gate is in sema
             emit_block(emit, stmt->unsafe_block.body);
@@ -2693,6 +2976,13 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                         }
                         fprintf(emit->out, "\tcall $memcpy(l %%t%d, l %%t%d, l %d)\n",
                                 dst_addr, val, fi->type->shape.total_size);
+                        // Phase 2: release the source temp if we own it
+                        // (SHAPE_LIT or shape-returning call). Variable
+                        // reads/field loads are still owned by their
+                        // home, so we don't release those.
+                        if (is_owned_shape_source(stmt->field_assign.value)) {
+                            fprintf(emit->out, "\tcall $mix_release(l %%t%d)\n", val);
+                        }
                         break;
                     }
                     const char *mem_ty = type_to_qbe_mem(fi->type);
@@ -2818,7 +3108,18 @@ static void emit_fn_decl(QbeEmitter *emit, AstNode *fn) {
     // Reset defer stack and lambda var tracker for this function
     emit->defer_count = 0;
     emit->fn_ptr_var_count = 0;
+    emit->rc_local_count = 0;  // Phase 3: per-function shape-local tracking
     emit->dbg_line = 0; // reset so first stmt always emits dbgloc
+
+    // Phase 3: pre-walk the body to collect every owned-shape var-decl
+    // (even those buried in conditionals) and zero-init their slots
+    // here in the entry block. This guarantees scope-exit release
+    // sees NULL (no-op) instead of garbage when a var-decl never
+    // executed at runtime.
+    if (fn->fn_decl.body) {
+        rc_walk_collect_shape_locals(emit, fn->fn_decl.body);
+        emit_rc_pre_init_locals(emit);
+    }
     // Reset const memoization (temps are per-function in QBE)
     for (int ci = 0; ci < emit->const_count; ci++)
         emit->constants[ci].cached_temp = -1;
@@ -2922,6 +3223,12 @@ static void emit_fn_decl(QbeEmitter *emit, AstNode *fn) {
     // Emit deferred stmts before default return
     for (int i = emit->defer_count - 1; i >= 0; i--)
         emit_stmt(emit, emit->deferred[i]);
+
+    // Phase 3: release shape-typed locals before the default exit.
+    // (Mid-function `return` statements are not yet instrumented and
+    // will leak any shape locals declared along the way — Phase 3.5
+    // will use a single exit label to cover them.)
+    emit_rc_release_locals(emit);
 
     // Default return
     if (is_main) {
@@ -3146,6 +3453,50 @@ void qbe_emit_program(QbeEmitter *emit, AstNode *program) {
                 }
             }
         }
+    }
+    fprintf(emit->out, "\n");
+
+    // ---------------------------------------------------------------
+    // Refcount Phase 1: emit per-shape release_<ShapeName> functions.
+    // For now each is just `mix_shape_free(p)` — Phase 2 will add the
+    // recursive release of shape-typed and list-typed fields.
+    //
+    // We emit one release fn for every locally-declared non-generic
+    // shape, plus extern declarations for shapes imported from other
+    // modules (their release fn is emitted by the defining module).
+    // ---------------------------------------------------------------
+    {
+        // Reset and populate the local-shape-name set so SHAPE_LIT
+        // codegen knows whether this module owns a release fn for a
+        // given shape (and should reference it) versus an imported /
+        // C-bound shape (where we pass 0 and let runtime fall back to
+        // plain mix_shape_free).
+        emit->local_shape_name_count = 0;
+
+        for (int i = 0; i < program->program.decl_count; i++) {
+            AstNode *decl = program->program.decls[i];
+            if (decl->kind != NODE_SHAPE_DECL) continue;
+            if (decl->shape_decl.type_param_count > 0) continue;  // generic templates
+            const char *name = decl->shape_decl.name;
+            // Track for SHAPE_LIT's release-fn-reference decision.
+            if (emit->local_shape_name_count < 1024) {
+                emit->local_shape_names[emit->local_shape_name_count++] =
+                    arena_strdup(emit->arena, name);
+            }
+            // Emit as `export function` so cross-module SHAPE_LIT calls
+            // resolve at link time.
+            fprintf(emit->out,
+                "export function $release_%s(l %%p) {\n"
+                "@start\n"
+                "\tcall $mix_shape_free(l %%p)\n"
+                "\tret\n"
+                "}\n",
+                name);
+        }
+        // Imported / C-bound shapes have no release fn from us; their
+        // SHAPE_LIT passes 0 as release_fn so mix_release calls
+        // mix_shape_free directly (no recursive field cleanup needed
+        // for plain C structs without shape-typed children).
     }
     fprintf(emit->out, "\n");
 

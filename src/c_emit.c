@@ -15,6 +15,25 @@ CEmitter c_emitter_create(FILE *out, Arena *arena, SymTab *symtab) {
 static int next_temp(CEmitter *emit) { return emit->temp_counter++; }
 static int next_label(CEmitter *emit) { return emit->label_counter++; }
 
+// Refcount Phase 2 (parity with QBE backend): does this AST node
+// produce an owned shape value (refcount=1, freshly transferred to
+// us) that we should `mix_release` after consuming via memcpy?
+// True for SHAPE_LIT and shape-returning function/method calls.
+static bool is_owned_shape_source(AstNode *expr) {
+    if (!expr) return false;
+    switch (expr->kind) {
+        case NODE_SHAPE_LIT:
+            return true;
+        case NODE_CALL_EXPR:
+        case NODE_METHOD_CALL: {
+            MixType *t = expr->resolved_type;
+            return t && t->kind == TYPE_SHAPE;
+        }
+        default:
+            return false;
+    }
+}
+
 /* Variable shadowing: each MIX `x = 1; x! = 2` shadow gets a unique C name.
  * cname_decl() bumps the suffix and returns the new C name (e.g. "x", then "x__1").
  * cname_ref() returns the currently-active C name for a MIX identifier.
@@ -133,7 +152,14 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void mix_panic(const char *);\n"
         "extern void mix_assert(int32_t, const char *);\n"
         "extern void *mix_alloc(int64_t);\n"
+        "extern void *mix_shape_alloc(int64_t, void (*)(void *));\n"
+        "extern void mix_retain(void *);\n"
+        "extern void mix_release(void *);\n"
+        "extern void mix_shape_free(void *);\n"
+        "extern int64_t mix_rc_get_alloc_count(void);\n"
+        "extern int64_t mix_rc_get_free_count(void);\n"
         "extern void *mix_list_new(void);\n"
+        "extern void *mix_list_new_shape(void (*)(void *));\n"
         "extern int64_t mix_list_len(const void *);\n"
         "extern void mix_list_push(void *, int64_t);\n"
         "extern int64_t mix_list_get(const void *, int64_t);\n"
@@ -589,7 +615,30 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
         }
         case NODE_LIST_LIT: {
             int list_t = next_temp(emit);
-            ind(emit); fprintf(emit->out, "void *t%d = mix_list_new();\n", list_t);
+            // Phase 3: shape-element lists use mix_list_new_shape so
+            // push/set/remove retain/release elements.
+            MixType *list_type = expr->resolved_type;
+            MixType *etype_for_list = (list_type && list_type->kind == TYPE_LIST)
+                ? list_type->list.elem_type : NULL;
+            if (etype_for_list && etype_for_list->kind == TYPE_SHAPE) {
+                bool is_local = false;
+                const char *sname = etype_for_list->shape.name;
+                for (int li = 0; li < emit->local_shape_name_count; li++) {
+                    if (strcmp(emit->local_shape_names[li], sname) == 0) {
+                        is_local = true; break;
+                    }
+                }
+                if (is_local) {
+                    ind(emit); fprintf(emit->out,
+                        "void *t%d = mix_list_new_shape((void(*)(void*))release_%s);\n",
+                        list_t, sname);
+                } else {
+                    ind(emit); fprintf(emit->out,
+                        "void *t%d = mix_list_new_shape(0);\n", list_t);
+                }
+            } else {
+                ind(emit); fprintf(emit->out, "void *t%d = mix_list_new();\n", list_t);
+            }
             for (int i = 0; i < expr->list_lit.element_count; i++) {
                 int val = emit_expr(emit, expr->list_lit.elements[i]);
                 MixType *etype = expr->list_lit.elements[i]->resolved_type;
@@ -597,6 +646,11 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                     { ind(emit); fprintf(emit->out, "mix_list_push(t%d, mix_double_to_bits(t%d));\n", list_t, val); }
                 else
                     { ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", list_t, val); }
+                // Phase 3: release owned-shape source after push.
+                if (etype_for_list && etype_for_list->kind == TYPE_SHAPE &&
+                    is_owned_shape_source(expr->list_lit.elements[i])) {
+                    ind(emit); fprintf(emit->out, "mix_release((void *)t%d);\n", val);
+                }
             }
             return list_t;
         }
@@ -1309,6 +1363,14 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 ind(emit); fprintf(emit->out, "int64_t t%d = mix_random_int();\n", t);
                 return t;
             }
+            if (strcmp(expr->call.name, "_mix_rc_alloc_count") == 0 && expr->call.arg_count == 0) {
+                ind(emit); fprintf(emit->out, "int64_t t%d = mix_rc_get_alloc_count();\n", t);
+                return t;
+            }
+            if (strcmp(expr->call.name, "_mix_rc_free_count") == 0 && expr->call.arg_count == 0) {
+                ind(emit); fprintf(emit->out, "int64_t t%d = mix_rc_get_free_count();\n", t);
+                return t;
+            }
             if (strcmp(expr->call.name, "random_float") == 0 && expr->call.arg_count == 0) {
                 ind(emit); fprintf(emit->out, "double t%d = mix_random_float();\n", t);
                 return t;
@@ -1465,6 +1527,13 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                         { ind(emit); fprintf(emit->out, "mix_list_push(t%d, mix_double_to_bits(t%d));\n", obj_temp, arg_temps2[0]); }
                     else
                         { ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", obj_temp, arg_temps2[0]); }
+                    // Phase 3: shape lists retain on push (in runtime).
+                    // Release the owned-shape source temp so the list
+                    // is the sole owner.
+                    if (elem && elem->kind == TYPE_SHAPE &&
+                        is_owned_shape_source(expr->method_call.args[0])) {
+                        ind(emit); fprintf(emit->out, "mix_release((void *)t%d);\n", arg_temps2[0]);
+                    }
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 } else if (strcmp(m, "pop") == 0) {
                     ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_pop(t%d);\n", t, obj_temp);
@@ -1686,18 +1755,45 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 }
                 ind(emit); fprintf(emit->out, "void *t%d = _tu%d;\n", t, t);
             } else if (stype && stype->kind == TYPE_SHAPE) {
-                /* Regular struct construction — heap-allocate so pointer survives returns */
-                ind(emit); fprintf(emit->out, "%s *t%d = (%s *)mix_alloc(sizeof(%s));\n",
+                /* Regular struct construction — heap-allocate via mix_shape_alloc
+                 * so the 16-byte refcount header is in place. Pass the local
+                 * release fn name only if this module declared the shape; for
+                 * C-imported shapes, NULL release_fn = mix_shape_free fallback. */
+                bool is_local_shape = false;
+                for (int li = 0; li < emit->local_shape_name_count; li++) {
+                    if (strcmp(emit->local_shape_names[li], stype->shape.name) == 0) {
+                        is_local_shape = true;
+                        break;
+                    }
+                }
+                if (is_local_shape) {
+                    ind(emit); fprintf(emit->out,
+                        "%s *t%d = (%s *)mix_shape_alloc(sizeof(%s), release_%s);\n",
+                        stype->shape.name, t, stype->shape.name,
+                        stype->shape.name, stype->shape.name);
+                } else {
+                    ind(emit); fprintf(emit->out,
+                        "%s *t%d = (%s *)mix_shape_alloc(sizeof(%s), 0);\n",
                         stype->shape.name, t, stype->shape.name, stype->shape.name);
-                ind(emit); fprintf(emit->out, "memset(t%d, 0, sizeof(%s));\n", t, stype->shape.name);
+                }
+                /* mix_shape_alloc already zero-inits the user region, so the
+                 * memset below would be redundant — kept commented as a
+                 * reminder for Phase 2 where field defaults may need it. */
+                /* ind(emit); fprintf(emit->out, "memset(t%d, 0, sizeof(%s));\n", t, stype->shape.name); */
                 for (int i = 0; i < expr->shape_lit.field_count; i++) {
                     ShapeFieldInfo *fi = type_find_field(stype, expr->shape_lit.field_names[i]);
                     if (!fi) continue;
                     int val = emit_expr(emit, expr->shape_lit.field_values[i]);
                     // Sub-shape stored inline — memcpy from the value pointer.
+                    // Phase 2: if the source is owned (SHAPE_LIT or shape-
+                    // returning call), release the temp after memcpy so it
+                    // doesn't leak.
                     if (fi->type && fi->type->kind == TYPE_SHAPE) {
                         ind(emit); fprintf(emit->out, "memcpy(&t%d->%s, t%d, sizeof(%s));\n",
                                 t, fi->name, val, fi->type->shape.name);
+                        if (is_owned_shape_source(expr->shape_lit.field_values[i])) {
+                            ind(emit); fprintf(emit->out, "mix_release(t%d);\n", val);
+                        }
                     } else {
                         ind(emit); fprintf(emit->out, "t%d->%s = (%s)t%d;\n",
                                 t, fi->name, c_type(fi->type), val);
@@ -2273,9 +2369,15 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                 emit->deferred[emit->defer_count++] = stmt->defer_stmt.stmt;
             break;
         }
-        case NODE_EXPR_STMT:
-            emit_expr(emit, stmt->expr_stmt.expr);
+        case NODE_EXPR_STMT: {
+            int v = emit_expr(emit, stmt->expr_stmt.expr);
+            // Phase 3: discarded owned-shape result needs release. The
+            // is_owned_shape_source check guarantees t is a pointer.
+            if (is_owned_shape_source(stmt->expr_stmt.expr)) {
+                ind(emit); fprintf(emit->out, "mix_release((void *)t%d);\n", v);
+            }
             break;
+        }
         case NODE_UNSAFE_BLOCK:
             emit_block(emit, stmt->unsafe_block.body);
             break;
@@ -2326,6 +2428,10 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                             "memcpy(&((%s *)t%d)->%s, t%d, sizeof(%s));\n",
                             obj_type->shape.name, obj, stmt->field_assign.field_name,
                             val, fi_dst->type->shape.name);
+                    // Phase 2: release source temp if owned.
+                    if (is_owned_shape_source(stmt->field_assign.value)) {
+                        ind(emit); fprintf(emit->out, "mix_release(t%d);\n", val);
+                    }
                     break;
                 }
                 if (stmt->field_assign.op == TOK_EQ) {
@@ -2733,6 +2839,33 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                 }
             }
         }
+    }
+    fprintf(emit->out, "\n");
+
+    /* ---------------------------------------------------------------
+     * Refcount Phase 1: emit one release_<ShapeName>(void *) per
+     * locally-declared shape and populate local_shape_names so
+     * SHAPE_LIT codegen knows when to reference the local fn vs pass
+     * NULL (for C-imported / external shapes).
+     *
+     * Each release fn currently just calls mix_shape_free; Phase 2
+     * adds recursive release of shape-typed and list-typed fields.
+     * --------------------------------------------------------------- */
+    emit->local_shape_name_count = 0;
+    for (int i = 0; i < program->program.decl_count; i++) {
+        AstNode *decl = program->program.decls[i];
+        if (decl->kind != NODE_SHAPE_DECL) continue;
+        if (decl->shape_decl.type_param_count > 0) continue;
+        const char *name = decl->shape_decl.name;
+        if (emit->local_shape_name_count < 1024) {
+            emit->local_shape_names[emit->local_shape_name_count++] =
+                arena_strdup(emit->arena, name);
+        }
+        fprintf(emit->out,
+            "static void release_%s(void *p) {\n"
+            "    mix_shape_free(p);\n"
+            "}\n",
+            name);
     }
     fprintf(emit->out, "\n");
 

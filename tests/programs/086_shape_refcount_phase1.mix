@@ -1,0 +1,44 @@
+// Refcount Phase 1 — verifies that the shape-allocation infrastructure
+// works end-to-end with the new 16-byte header in place.
+//
+// Background: every SHAPE_LIT now goes through mix_shape_alloc which
+// prepends [refcount: i64][release_fn: ptr]. The compiler emits one
+// release_<ShapeName>() per locally-declared shape (currently a stub
+// that just calls mix_shape_free; Phase 2 adds recursive field
+// release). SHAPE_LIT codegen passes the local release fn for shapes
+// declared in this module, or 0 for C-imported shapes.
+//
+// This test does NOT check that memory is freed — Phase 1 only adds
+// infrastructure; the auto-release-on-scope-exit lives in Phase 1.5
+// or later. Here we just confirm:
+//   1. Shape construction with fields still works.
+//   2. Field reads return the values written.
+//   3. Multiple shapes can coexist.
+//   4. Shape returned from a function works (header survives).
+
+shape Vec2
+    x: float
+    y: float
+
+shape Box
+    pos: Vec2
+    width: int
+    height: int
+
+make_vec(x: float, y: float) -> Vec2
+    Vec2(x: x, y: y)
+
+main()
+    a = Vec2(x: 1.0, y: 2.0)
+    print(a.x)                    // 1
+    print(a.y)                    // 2
+
+    b = make_vec(3.5, 4.5)
+    print(b.x)                    // 3.5
+    print(b.y)                    // 4.5
+
+    box = Box(pos: Vec2(x: 10.0, y: 20.0), width: 100, height: 200)
+    print(box.pos.x)              // 10
+    print(box.pos.y)              // 20
+    print(box.width)              // 100
+    print(box.height)             // 200

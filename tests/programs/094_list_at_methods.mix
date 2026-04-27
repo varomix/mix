@@ -1,0 +1,27 @@
+// Explicit list element accessors: read-only `at()` and mutable `at_mut!()`.
+
+shape Sprite
+    x: float
+    y: float
+
+    move(dx: float, dy: float) !
+        x = x + dx
+        y = y + dy
+
+set_to(v!: int, next: int)
+    v = next
+
+main()
+    sprites! = [Sprite(x: 1.0, y: 2.0), Sprite(x: 3.0, y: 4.0)]
+
+    first = sprites.at(0)
+    print(first.x)
+
+    sprites.at_mut!(1).x = 9.0
+    sprites.at_mut!(1).move!(1.0, 2.0)
+    print(sprites.at(1).x)
+    print(sprites.at(1).y)
+
+    nums! = [10, 20, 30]
+    set_to(nums.at_mut!(1), 77)
+    print(nums[1])

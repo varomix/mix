@@ -1,0 +1,3 @@
+// ERROR: cannot borrow a non-addressable expression
+main()
+    x = ref 1

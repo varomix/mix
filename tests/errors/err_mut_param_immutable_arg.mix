@@ -1,0 +1,7 @@
+// ERROR: must be mutable
+set_to(v!: int, next: int)
+    v! = next
+
+main()
+    x = 0
+    set_to(x, 1)

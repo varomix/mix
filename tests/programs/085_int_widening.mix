@@ -1,0 +1,26 @@
+// Builtins and binary ops used to fail with "invalid type for first
+// operand" when handed a narrow int (`w` in QBE: bool, byte, int8/16/32,
+// uint8/16/32). MIX's `int` is `l`, so any mix of widths blew up.
+// qbe_emit now auto-widens narrow ints to `l` at:
+//   * to_string / poke_u32 builtin call boundaries,
+//   * binary arithmetic when the two operands disagree on width.
+
+shape Box
+    flag: bool
+    code: int
+
+main()
+    b = Box(flag: true, code: 0)
+    // to_string(bool) — used to emit mix_to_string_int(l, w_temp).
+    print("flag=" + to_string(b.flag))      // flag=1
+
+    // peek_u32 returns int (l). Pre-fix, mixing it with a w-width value
+    // (e.g. anything from a narrow-int load) crashed the QBE backend.
+    // Below we exercise the round-trip path that the mouse subsystem
+    // uses heavily.
+    buf = bytes(8)
+    poke_u32(buf, 0, 7)
+    val = peek_u32(buf, 0)
+    print(val % 2)                           // 1
+    print(val + 100)                         // 107
+    free_mem(buf)

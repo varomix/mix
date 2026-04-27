@@ -1,0 +1,44 @@
+// Regression: a compile-time @const referenced from inside a branch was
+// memoized to a temp defined in that branch, then reused in a sibling
+// branch where the temp was undefined. QBE rejected the IR with
+// "ssa temporary used undefined". The fix re-emits the literal at every
+// use; this test exercises the original failing pattern (two `==` checks
+// against the same @const, each in its own branch).
+
+@const FADE_IN  = 0
+@const FADE_OUT = 1
+
+shape Fade
+    kind: int
+    alpha: float
+    finished: bool
+
+step(f!: Fade)
+    if f.finished
+        done
+    if f.alpha <= 0.0
+        f.finished = true
+        if f.kind == FADE_IN
+            f.alpha = 0.0
+        else
+            f.alpha = 1.0
+        done
+    if f.kind == FADE_IN
+        f.alpha = f.alpha - 0.5
+    else
+        f.alpha = f.alpha + 0.5
+
+main()
+    f! = Fade(kind: FADE_IN, alpha: 1.0, finished: false)
+    step(f)
+    print(to_int(f.alpha * 10.0))   // 5
+    step(f)
+    print(to_int(f.alpha * 10.0))   // 0
+    step(f)
+    print(f.finished)               // true
+
+    g! = Fade(kind: FADE_OUT, alpha: 0.0, finished: false)
+    step(g)
+    print(to_int(g.alpha * 10.0))   // 5
+    step(g)
+    print(to_int(g.alpha * 10.0))   // 10

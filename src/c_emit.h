@@ -38,6 +38,15 @@ typedef struct {
     int last_match_temp;
     // Indentation level
     int indent;
+    // Continue labels for structured loops. Used so mutable list iteration
+    // can run its writeback path even on `continue`.
+    int continue_labels[32];
+    int loop_depth;
+    // Mutable params are passed by address, copied into locals at entry,
+    // then written back before every return.
+    char *mutable_param_names[256];
+    MixType *mutable_param_types[256];
+    int mutable_param_count;
     // Per-function variable shadowing: each MIX `x = 1; x! = 2` shadow gets a
     // unique C name (`v_x`, `v_x__1`, ...) so the C compiler doesn't see a
     // redefinition. Reset at the start of every function body.

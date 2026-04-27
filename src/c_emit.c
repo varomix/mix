@@ -14,25 +14,7 @@ CEmitter c_emitter_create(FILE *out, Arena *arena, SymTab *symtab) {
 
 static int next_temp(CEmitter *emit) { return emit->temp_counter++; }
 static int next_label(CEmitter *emit) { return emit->label_counter++; }
-
-// Refcount Phase 2 (parity with QBE backend): does this AST node
-// produce an owned shape value (refcount=1, freshly transferred to
-// us) that we should `mix_release` after consuming via memcpy?
-// True for SHAPE_LIT and shape-returning function/method calls.
-static bool is_owned_shape_source(AstNode *expr) {
-    if (!expr) return false;
-    switch (expr->kind) {
-        case NODE_SHAPE_LIT:
-            return true;
-        case NODE_CALL_EXPR:
-        case NODE_METHOD_CALL: {
-            MixType *t = expr->resolved_type;
-            return t && t->kind == TYPE_SHAPE;
-        }
-        default:
-            return false;
-    }
-}
+static void emit_stmt(CEmitter *emit, AstNode *stmt);
 
 /* Variable shadowing: each MIX `x = 1; x! = 2` shadow gets a unique C name.
  * cname_decl() bumps the suffix and returns the new C name (e.g. "x", then "x__1").
@@ -75,8 +57,33 @@ static void cname_reset(CEmitter *emit) {
     emit->var_decl_count = 0;
 }
 
+static void cname_bind_existing(CEmitter *emit, const char *name) {
+    for (int i = 0; i < emit->var_decl_count; i++) {
+        if (strcmp(emit->var_decls[i].name, name) == 0) return;
+    }
+    if (emit->var_decl_count < 256) {
+        emit->var_decls[emit->var_decl_count].name = arena_strdup(emit->arena, name);
+        emit->var_decls[emit->var_decl_count].active_idx = 0;
+        emit->var_decl_count++;
+    }
+}
+
 static void ind(CEmitter *emit) {
     for (int i = 0; i < emit->indent; i++) fprintf(emit->out, "    ");
+}
+
+static void c_push_continue_label(CEmitter *emit, int label) {
+    if (emit->loop_depth >= 32) return;
+    emit->continue_labels[emit->loop_depth++] = label;
+}
+
+static void c_pop_continue_label(CEmitter *emit) {
+    if (emit->loop_depth > 0) emit->loop_depth--;
+}
+
+static int c_current_continue_label(CEmitter *emit) {
+    if (emit->loop_depth <= 0) return -1;
+    return emit->continue_labels[emit->loop_depth - 1];
 }
 
 /* Map MixType to C type string */
@@ -95,11 +102,83 @@ static const char *c_type(MixType *type) {
         case TYPE_STR: return "const char *";
         case TYPE_LIST: case TYPE_MAP: case TYPE_SET:
         case TYPE_OPTIONAL: case TYPE_RESULT:
-        case TYPE_SHARED: case TYPE_TASK:
-        case TYPE_PTR: case TYPE_FUNC: return "void *";
+        case TYPE_SHARED: case TYPE_ZONE: case TYPE_TASK:
+        case TYPE_PTR: case TYPE_REF: case TYPE_BOX:
+        case TYPE_FUNC: return "void *";
         case TYPE_VOID: return "void";
         default: return "int64_t";
     }
+}
+
+static const char *c_value_type(MixType *type) {
+    if (type && type->kind == TYPE_SHAPE) return type->shape.name;
+    if (type && type_is_float(type)) return "double";
+    return c_type(type);
+}
+
+static void emit_c_param_decl(CEmitter *emit, MixType *type,
+                              const char *name, bool is_mutable) {
+    if (type && type->kind == TYPE_SHAPE) {
+        (void)is_mutable;
+        fprintf(emit->out, "%s *p_%s", type->shape.name, name);
+    } else if (is_mutable) {
+        fprintf(emit->out, "%s *p_%s", c_value_type(type), name);
+    } else if (type && type_is_float(type)) {
+        fprintf(emit->out, "double p_%s", name);
+    } else {
+        fprintf(emit->out, "%s p_%s", c_type(type), name);
+    }
+}
+
+static void emit_c_fnptr_param_type(CEmitter *emit, MixType *type,
+                                    bool is_mutable) {
+    (void)emit;
+    if (type && type->kind == TYPE_SHAPE) {
+        (void)is_mutable;
+        fprintf(emit->out, "%s *", type->shape.name);
+    } else if (is_mutable) {
+        fprintf(emit->out, "%s *", c_value_type(type));
+    } else if (type && type_is_float(type)) {
+        fprintf(emit->out, "double");
+    } else {
+        fprintf(emit->out, "%s", c_type(type));
+    }
+}
+
+static void emit_c_call_arg(CEmitter *emit, MixType *type, int temp,
+                            bool is_mutable) {
+    if (type && type->kind == TYPE_SHAPE) {
+        (void)is_mutable;
+        fprintf(emit->out, "(%s *)t%d", type->shape.name, temp);
+    } else if (is_mutable) {
+        fprintf(emit->out, "(%s *)t%d", c_value_type(type), temp);
+    } else if (type && type_is_float(type)) {
+        fprintf(emit->out, "(double)t%d", temp);
+    } else {
+        fprintf(emit->out, "(%s)t%d", c_type(type), temp);
+    }
+}
+
+static void track_mutable_param(CEmitter *emit, const char *name,
+                                MixType *type) {
+    if (emit->mutable_param_count >= 256) return;
+    emit->mutable_param_names[emit->mutable_param_count] =
+        arena_strdup(emit->arena, name);
+    emit->mutable_param_types[emit->mutable_param_count] = type;
+    emit->mutable_param_count++;
+}
+
+static void emit_mutable_param_writebacks(CEmitter *emit) {
+    for (int i = 0; i < emit->mutable_param_count; i++) {
+        const char *name = emit->mutable_param_names[i];
+        ind(emit); fprintf(emit->out, "*p_%s = v_%s;\n", name, name);
+    }
+}
+
+static void emit_function_epilogue(CEmitter *emit) {
+    for (int i = emit->defer_count - 1; i >= 0; i--)
+        emit_stmt(emit, emit->deferred[i]);
+    emit_mutable_param_writebacks(emit);
 }
 
 /* Write C-escaped string to output */
@@ -159,15 +238,20 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern int64_t mix_rc_get_alloc_count(void);\n"
         "extern int64_t mix_rc_get_free_count(void);\n"
         "extern void *mix_list_new(void);\n"
-        "extern void *mix_list_new_shape(void (*)(void *));\n"
+        "extern void *mix_list_new_shape(int64_t);\n"
         "extern int64_t mix_list_len(const void *);\n"
         "extern void mix_list_push(void *, int64_t);\n"
+        "extern void mix_list_push_bytes(void *, const void *);\n"
         "extern int64_t mix_list_get(const void *, int64_t);\n"
+        "extern void *mix_list_ptr(void *, int64_t);\n"
         "extern void mix_list_set(void *, int64_t, int64_t);\n"
+        "extern void mix_list_set_bytes(void *, int64_t, const void *);\n"
         "extern void *mix_list_slice(const void *, int64_t, int64_t, int32_t);\n"
         "extern int64_t mix_list_pop(void *);\n"
+        "extern void mix_list_pop_bytes(void *, void *);\n"
         "extern void mix_list_remove(void *, int64_t);\n"
         "extern void mix_list_insert(void *, int64_t, int64_t);\n"
+        "extern void mix_list_insert_bytes(void *, int64_t, const void *);\n"
         "extern void mix_list_sort(void *);\n"
         "extern void mix_list_sort_str(void *);\n"
         "extern void mix_list_sort_float(void *);\n"
@@ -280,6 +364,14 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void mix_zone_enter(void);\n"
         "extern void mix_zone_exit(void);\n"
         "extern void *mix_zone_alloc(int64_t);\n"
+        "extern void *zone_create(const char *, int64_t);\n"
+        "extern void zone_destroy(void *);\n"
+        "extern void zone_reset(void *);\n"
+        "extern void *zone_alloc(void *, int64_t);\n"
+        "extern void *mix_box_clone(void *, const void *, int64_t);\n"
+        "extern int64_t _mix_zone_alloc_bytes(void *);\n"
+        "extern int64_t _mix_zone_high_water(void *);\n"
+        "extern int64_t _mix_zone_reset_count(void *);\n"
         "extern void mix_project_build(void *);\n"
         "extern void mix_free(void *);\n"
         "extern void *mix_bytes(int64_t);\n"
@@ -381,6 +473,189 @@ static void prescan_lambdas(CEmitter *emit, AstNode *node) {
     }
 }
 static int emit_expr(CEmitter *emit, AstNode *expr);
+
+static MixType *ref_base_type(MixType *type) {
+    while (type &&
+           (type->kind == TYPE_REF || type->kind == TYPE_BOX)) {
+        if (type->kind == TYPE_REF) type = type->ref.base;
+        else type = type->box.inner;
+    }
+    return type;
+}
+
+static bool ref_uses_direct_value(MixType *base) {
+    if (!base) return false;
+    switch (base->kind) {
+        case TYPE_SHAPE:
+        case TYPE_LIST:
+        case TYPE_MAP:
+        case TYPE_SET:
+        case TYPE_STR:
+        case TYPE_OPTIONAL:
+        case TYPE_RESULT:
+        case TYPE_SHARED:
+        case TYPE_ZONE:
+        case TYPE_TASK:
+        case TYPE_PTR:
+        case TYPE_REF:
+        case TYPE_BOX:
+        case TYPE_FUNC:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static int spill_ref_value_temp(CEmitter *emit, int val, MixType *type) {
+    int t = next_temp(emit);
+    const char *ty = c_type(type);
+    if (type && type_is_float(type)) ty = "double";
+    ind(emit); fprintf(emit->out, "%s _ref_%d = (%s)t%d;\n", ty, t, ty, val);
+    ind(emit); fprintf(emit->out, "void *t%d = &_ref_%d;\n", t, t);
+    return t;
+}
+
+static int emit_borrow_expr_temp(CEmitter *emit, AstNode *operand) {
+    if (!operand) return -1;
+    MixType *base = operand->resolved_type;
+    if (base && base->kind == TYPE_REF) {
+        return emit_expr(emit, operand);
+    }
+    if (ref_uses_direct_value(base)) {
+        return emit_expr(emit, operand);
+    }
+    if (operand->kind == NODE_UNARY_EXPR && operand->unary.op == TOK_STAR) {
+        return emit_expr(emit, operand->unary.operand);
+    }
+    if (operand->kind == NODE_IDENT) {
+        if (emit->current_shape) {
+            ShapeFieldInfo *fi = type_find_field(emit->current_shape,
+                                                 operand->ident.name);
+            if (fi) {
+                int t = next_temp(emit);
+                ind(emit); fprintf(emit->out, "void *t%d = &v_self->%s;\n",
+                                   t, fi->name);
+                return t;
+            }
+        }
+        if (operand->ident.is_stack_slot || operand->ident.is_mutable) {
+            int t = next_temp(emit);
+            ind(emit); fprintf(emit->out, "void *t%d = &v_%s;\n", t,
+                               cname_ref(emit, operand->ident.name));
+            return t;
+        }
+        int val = emit_expr(emit, operand);
+        return spill_ref_value_temp(emit, val, base);
+    }
+    if (operand->kind == NODE_FIELD_EXPR) {
+        MixType *obj_type = ref_base_type(
+            operand->field_expr.object ? operand->field_expr.object->resolved_type : NULL);
+        if (obj_type && obj_type->kind == TYPE_SHAPE) {
+            int obj = emit_expr(emit, operand->field_expr.object);
+            ShapeFieldInfo *fi = type_find_field(obj_type,
+                                                 operand->field_expr.field_name);
+            if (fi) {
+                int t = next_temp(emit);
+                ind(emit); fprintf(emit->out, "void *t%d = &((%s *)t%d)->%s;\n",
+                                   t, obj_type->shape.name, obj, fi->name);
+                return t;
+            }
+        }
+    }
+    if (operand->kind == NODE_INDEX_EXPR) {
+        MixType *obj_type = ref_base_type(
+            operand->index_expr.object ? operand->index_expr.object->resolved_type : NULL);
+        if (obj_type && obj_type->kind == TYPE_LIST) {
+            int obj = emit_expr(emit, operand->index_expr.object);
+            int idx = emit_expr(emit, operand->index_expr.index);
+            int t = next_temp(emit);
+            ind(emit); fprintf(emit->out, "void *t%d = mix_list_ptr(t%d, (int64_t)t%d);\n",
+                               t, obj, idx);
+            return t;
+        }
+    }
+    int val = emit_expr(emit, operand);
+    return spill_ref_value_temp(emit, val, base);
+}
+
+static int emit_mutable_arg_address_temp(CEmitter *emit, AstNode *arg,
+                                         MixType *expected_type) {
+    if (!arg) return -1;
+
+    if (arg->resolved_type && arg->resolved_type->kind == TYPE_REF) {
+        return emit_expr(emit, arg);
+    }
+
+    if (arg->kind == NODE_UNARY_EXPR && arg->unary.op == TOK_STAR) {
+        return emit_expr(emit, arg->unary.operand);
+    }
+
+    if (arg->kind == NODE_IDENT) {
+        if (emit->current_shape) {
+            ShapeFieldInfo *fi = type_find_field(emit->current_shape,
+                                                 arg->ident.name);
+            if (fi) {
+                if (expected_type && expected_type->kind == TYPE_SHAPE) {
+                    mix_error(arg->loc,
+                              "cannot pass inline shape field '%s' as a mutable argument",
+                              arg->ident.name);
+                    return -1;
+                }
+                int t = next_temp(emit);
+                ind(emit); fprintf(emit->out, "void *t%d = &v_self->%s;\n",
+                                   t, fi->name);
+                return t;
+            }
+        }
+        int t = next_temp(emit);
+        const char *cn = cname_ref(emit, arg->ident.name);
+        if (arg->resolved_type && arg->resolved_type->kind == TYPE_SHAPE &&
+            !arg->ident.is_stack_slot) {
+            ind(emit); fprintf(emit->out, "void *t%d = v_%s;\n", t, cn);
+        } else {
+            ind(emit); fprintf(emit->out, "void *t%d = &v_%s;\n", t, cn);
+        }
+        return t;
+    }
+
+    if (arg->kind == NODE_FIELD_EXPR) {
+        if (expected_type && expected_type->kind == TYPE_SHAPE) {
+            mix_error(arg->loc,
+                      "cannot pass an inline shape field as a mutable argument");
+            return -1;
+        }
+        int obj = emit_expr(emit, arg->field_expr.object);
+        MixType *obj_type = arg->field_expr.object->resolved_type;
+        if (obj_type && obj_type->kind == TYPE_SHAPE) {
+            ShapeFieldInfo *fi = type_find_field(obj_type,
+                                                 arg->field_expr.field_name);
+            if (fi) {
+                int t = next_temp(emit);
+                ind(emit); fprintf(emit->out, "void *t%d = &((%s *)t%d)->%s;\n",
+                                   t, obj_type->shape.name, obj, fi->name);
+                return t;
+            }
+        }
+    }
+
+    if (arg->kind == NODE_METHOD_CALL &&
+        arg->method_call.is_mutable_call &&
+        strcmp(arg->method_call.method_name, "at_mut") == 0 &&
+        arg->method_call.object &&
+        arg->method_call.object->resolved_type &&
+        arg->method_call.object->resolved_type->kind == TYPE_LIST &&
+        arg->method_call.arg_count == 1) {
+        int obj = emit_expr(emit, arg->method_call.object);
+        int idx = emit_expr(emit, arg->method_call.args[0]);
+        int t = next_temp(emit);
+        ind(emit); fprintf(emit->out, "void *t%d = mix_list_ptr(t%d, (int64_t)t%d);\n",
+                           t, obj, idx);
+        return t;
+    }
+
+    mix_error(arg->loc, "mutable argument is not addressable");
+    return -1;
+}
 
 static int emit_expr(CEmitter *emit, AstNode *expr) {
     if (!expr) return -1;
@@ -534,8 +809,13 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 }
             }
             if (itype && itype->kind == TYPE_SHAPE) {
-                ind(emit); fprintf(emit->out, "%s *t%d = (%s *)v_%s;\n",
-                        itype->shape.name, t, itype->shape.name, cn);
+                if (expr->ident.is_stack_slot) {
+                    ind(emit); fprintf(emit->out, "%s *t%d = &v_%s;\n",
+                            itype->shape.name, t, cn);
+                } else {
+                    ind(emit); fprintf(emit->out, "%s *t%d = (%s *)v_%s;\n",
+                            itype->shape.name, t, itype->shape.name, cn);
+                }
             } else {
                 const char *ty = c_type(itype);
                 if (!itype || itype->kind == TYPE_VOID) ty = "int64_t";
@@ -615,42 +895,25 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
         }
         case NODE_LIST_LIT: {
             int list_t = next_temp(emit);
-            // Phase 3: shape-element lists use mix_list_new_shape so
-            // push/set/remove retain/release elements.
             MixType *list_type = expr->resolved_type;
             MixType *etype_for_list = (list_type && list_type->kind == TYPE_LIST)
                 ? list_type->list.elem_type : NULL;
             if (etype_for_list && etype_for_list->kind == TYPE_SHAPE) {
-                bool is_local = false;
-                const char *sname = etype_for_list->shape.name;
-                for (int li = 0; li < emit->local_shape_name_count; li++) {
-                    if (strcmp(emit->local_shape_names[li], sname) == 0) {
-                        is_local = true; break;
-                    }
-                }
-                if (is_local) {
-                    ind(emit); fprintf(emit->out,
-                        "void *t%d = mix_list_new_shape((void(*)(void*))release_%s);\n",
-                        list_t, sname);
-                } else {
-                    ind(emit); fprintf(emit->out,
-                        "void *t%d = mix_list_new_shape(0);\n", list_t);
-                }
+                ind(emit); fprintf(emit->out,
+                    "void *t%d = mix_list_new_shape(sizeof(%s));\n",
+                    list_t, etype_for_list->shape.name);
             } else {
                 ind(emit); fprintf(emit->out, "void *t%d = mix_list_new();\n", list_t);
             }
             for (int i = 0; i < expr->list_lit.element_count; i++) {
                 int val = emit_expr(emit, expr->list_lit.elements[i]);
                 MixType *etype = expr->list_lit.elements[i]->resolved_type;
-                if (etype && type_is_float(etype))
+                if (etype_for_list && etype_for_list->kind == TYPE_SHAPE)
+                    { ind(emit); fprintf(emit->out, "mix_list_push_bytes(t%d, t%d);\n", list_t, val); }
+                else if (etype && type_is_float(etype))
                     { ind(emit); fprintf(emit->out, "mix_list_push(t%d, mix_double_to_bits(t%d));\n", list_t, val); }
                 else
                     { ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", list_t, val); }
-                // Phase 3: release owned-shape source after push.
-                if (etype_for_list && etype_for_list->kind == TYPE_SHAPE &&
-                    is_owned_shape_source(expr->list_lit.elements[i])) {
-                    ind(emit); fprintf(emit->out, "mix_release((void *)t%d);\n", val);
-                }
             }
             return list_t;
         }
@@ -730,14 +993,21 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
         case NODE_INDEX_EXPR: {
             int obj = emit_expr(emit, expr->index_expr.object);
             int idx = emit_expr(emit, expr->index_expr.index);
-            MixType *obj_type = expr->index_expr.object->resolved_type;
+            MixType *obj_type = ref_base_type(expr->index_expr.object->resolved_type);
             int t = next_temp(emit);
             if (obj_type && obj_type->kind == TYPE_MAP) {
                 ind(emit); fprintf(emit->out, "int64_t t%d = mix_map_get(t%d, (const char *)t%d);\n",
                         t, obj, idx);
             } else {
                 MixType *elem = (obj_type && obj_type->kind == TYPE_LIST) ? obj_type->list.elem_type : NULL;
-                if (elem && type_is_float(elem)) {
+                if (elem && elem->kind == TYPE_SHAPE) {
+                    ind(emit); fprintf(emit->out, "%s _shape_%d;\n", elem->shape.name, t);
+                    ind(emit); fprintf(emit->out, "%s *t%d = &_shape_%d;\n",
+                            elem->shape.name, t, t);
+                    ind(emit); fprintf(emit->out,
+                            "memcpy(t%d, mix_list_ptr(t%d, (int64_t)t%d), sizeof(%s));\n",
+                            t, obj, idx, elem->shape.name);
+                } else if (elem && type_is_float(elem)) {
                     ind(emit); fprintf(emit->out, "double t%d = mix_bits_to_double(mix_list_get(t%d, (int64_t)t%d));\n",
                             t, obj, idx);
                 } else {
@@ -769,7 +1039,15 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
         }
         case NODE_LIST_COMP: {
             int result_list = next_temp(emit);
-            ind(emit); fprintf(emit->out, "void *t%d = mix_list_new();\n", result_list);
+            MixType *result_type = expr->resolved_type;
+            MixType *result_elem = (result_type && result_type->kind == TYPE_LIST)
+                ? result_type->list.elem_type : NULL;
+            if (result_elem && result_elem->kind == TYPE_SHAPE) {
+                ind(emit); fprintf(emit->out, "void *t%d = mix_list_new_shape(sizeof(%s));\n",
+                        result_list, result_elem->shape.name);
+            } else {
+                ind(emit); fprintf(emit->out, "void *t%d = mix_list_new();\n", result_list);
+            }
             int list_ptr = emit_expr(emit, expr->list_comp.iterable);
             int len_t = next_temp(emit);
             ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_len(t%d);\n", len_t, list_ptr);
@@ -777,15 +1055,28 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             ind(emit); fprintf(emit->out, "for (int64_t _cidx_%d = 0; _cidx_%d < t%d; _cidx_%d++) {\n",
                     idx_id, idx_id, len_t, idx_id);
             emit->indent++;
-            ind(emit); fprintf(emit->out, "int64_t v_%s = mix_list_get(t%d, _cidx_%d);\n",
-                    cname_decl(emit, expr->list_comp.var_name), list_ptr, idx_id);
+            MixType *iter_type = expr->list_comp.iterable ? expr->list_comp.iterable->resolved_type : NULL;
+            MixType *iter_elem = (iter_type && iter_type->kind == TYPE_LIST)
+                ? iter_type->list.elem_type : NULL;
+            const char *comp_vn = cname_decl(emit, expr->list_comp.var_name);
+            if (iter_elem && iter_elem->kind == TYPE_SHAPE) {
+                ind(emit); fprintf(emit->out, "%s v_%s;\n", iter_elem->shape.name, comp_vn);
+                ind(emit); fprintf(emit->out,
+                        "memcpy(&v_%s, mix_list_ptr(t%d, _cidx_%d), sizeof(%s));\n",
+                        comp_vn, list_ptr, idx_id, iter_elem->shape.name);
+            } else {
+                ind(emit); fprintf(emit->out, "int64_t v_%s = mix_list_get(t%d, _cidx_%d);\n",
+                        comp_vn, list_ptr, idx_id);
+            }
             if (expr->list_comp.condition) {
                 int cond_val = emit_expr(emit, expr->list_comp.condition);
                 ind(emit); fprintf(emit->out, "if (t%d) {\n", cond_val);
                 emit->indent++;
                 int val = emit_expr(emit, expr->list_comp.expr);
                 MixType *comp_etype = expr->list_comp.expr->resolved_type;
-                if (comp_etype && type_is_float(comp_etype))
+                if (result_elem && result_elem->kind == TYPE_SHAPE)
+                    { ind(emit); fprintf(emit->out, "mix_list_push_bytes(t%d, t%d);\n", result_list, val); }
+                else if (comp_etype && type_is_float(comp_etype))
                     { ind(emit); fprintf(emit->out, "mix_list_push(t%d, mix_double_to_bits(t%d));\n", result_list, val); }
                 else
                     { ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", result_list, val); }
@@ -794,7 +1085,9 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             } else {
                 int val = emit_expr(emit, expr->list_comp.expr);
                 MixType *comp_etype = expr->list_comp.expr->resolved_type;
-                if (comp_etype && type_is_float(comp_etype))
+                if (result_elem && result_elem->kind == TYPE_SHAPE)
+                    { ind(emit); fprintf(emit->out, "mix_list_push_bytes(t%d, t%d);\n", result_list, val); }
+                else if (comp_etype && type_is_float(comp_etype))
                     { ind(emit); fprintf(emit->out, "mix_list_push(t%d, mix_double_to_bits(t%d));\n", result_list, val); }
                 else
                     { ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", result_list, val); }
@@ -910,12 +1203,26 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                     snprintf(mangled, sizeof(mangled), "%s_%s", ltype->shape.name, op_method);
                     Symbol *msym = symtab_lookup(emit->symtab, mangled);
                     if (msym) {
-                        const char *rty = c_type(expr->resolved_type);
-                        if (expr->resolved_type && expr->resolved_type->kind == TYPE_SHAPE)
-                            rty = "void *";
+                        bool shape_return = expr->resolved_type &&
+                            expr->resolved_type->kind == TYPE_SHAPE;
+                        const char *rty = shape_return ? "void"
+                            : c_type(expr->resolved_type);
+                        bool has_return = !(expr->resolved_type &&
+                            expr->resolved_type->kind == TYPE_VOID) && !shape_return;
+                        if (shape_return) {
+                            ind(emit); fprintf(emit->out, "%s _shape_ret_%d;\n",
+                                    expr->resolved_type->shape.name, t);
+                            ind(emit); fprintf(emit->out, "%s *t%d = &_shape_ret_%d;\n",
+                                    expr->resolved_type->shape.name, t, t);
+                        }
                         MixType *rtype = expr->binary.right->resolved_type;
-                        ind(emit); fprintf(emit->out, "%s t%d = %s((%s *)t%d, ",
-                                rty, t, mangled, ltype->shape.name, left);
+                        ind(emit);
+                        if (has_return) fprintf(emit->out, "%s t%d = ", rty, t);
+                        fprintf(emit->out, "%s(", mangled);
+                        if (shape_return) {
+                            fprintf(emit->out, "t%d, ", t);
+                        }
+                        fprintf(emit->out, "(%s *)t%d, ", ltype->shape.name, left);
                         if (rtype && rtype->kind == TYPE_SHAPE)
                             fprintf(emit->out, "(%s *)t%d", rtype->shape.name, right);
                         else if (rtype && type_is_float(rtype))
@@ -923,6 +1230,9 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                         else
                             fprintf(emit->out, "(int64_t)t%d", right);
                         fprintf(emit->out, ");\n");
+                        if (!has_return && !shape_return) {
+                            ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
+                        }
                         return t;
                     }
                 }
@@ -975,6 +1285,9 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 ind(emit); fprintf(emit->out, "%s t%d = -t%d;\n", ty, t, operand);
             } else if (expr->unary.op == TOK_NOT) {
                 ind(emit); fprintf(emit->out, "int32_t t%d = !t%d;\n", t, operand);
+            } else if (expr->unary.op == TOK_REF ||
+                       expr->unary.op == TOK_REF_MUT) {
+                return emit_borrow_expr_temp(emit, expr->unary.operand);
             } else if (expr->unary.op == TOK_AMPERSAND) {
                 AstNode *inner = expr->unary.operand;
                 if (inner->kind == NODE_IDENT && inner->ident.is_mutable) {
@@ -984,6 +1297,20 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                     ind(emit); fprintf(emit->out, "int64_t _addr_%d = (int64_t)t%d;\n", t, operand);
                     ind(emit); fprintf(emit->out, "void *t%d = &_addr_%d;\n", t, t);
                 }
+            } else if (expr->unary.op == TOK_STAR &&
+                       expr->unary.operand->resolved_type &&
+                       (expr->unary.operand->resolved_type->kind == TYPE_REF ||
+                        expr->unary.operand->resolved_type->kind == TYPE_BOX)) {
+                MixType *base = expr->unary.operand->resolved_type->kind == TYPE_REF
+                    ? expr->unary.operand->resolved_type->ref.base
+                    : expr->unary.operand->resolved_type->box.inner;
+                if (ref_uses_direct_value(base)) {
+                    return operand;
+                }
+                const char *bty = c_type(base);
+                if (base && type_is_float(base)) bty = "double";
+                ind(emit); fprintf(emit->out, "%s t%d = *(%s *)t%d;\n",
+                                   bty, t, bty, operand);
             } else {
                 ind(emit); fprintf(emit->out, "%s t%d = t%d;\n", ty, t, operand);
             }
@@ -995,9 +1322,23 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 mix_error(expr->loc, "too many function arguments (max 64)");
                 return -1;
             }
+            Symbol *fn_sym = symtab_lookup(emit->symtab, expr->call.name);
+            MixType *fn_type = (fn_sym && fn_sym->type && fn_sym->type->kind == TYPE_FUNC)
+                ? fn_sym->type : NULL;
             int arg_temps[64];
             for (int i = 0; i < expr->call.arg_count; i++) {
-                arg_temps[i] = emit_expr(emit, expr->call.args[i]);
+                MixType *pt = (fn_type && i < fn_type->func.param_count)
+                    ? fn_type->func.param_types[i]
+                    : expr->call.args[i]->resolved_type;
+                bool param_mutable = fn_type && i < fn_type->func.param_count &&
+                    fn_type->func.param_mutable &&
+                    fn_type->func.param_mutable[i];
+                if (param_mutable) {
+                    arg_temps[i] = emit_mutable_arg_address_temp(
+                        emit, expr->call.args[i], pt);
+                } else {
+                    arg_temps[i] = emit_expr(emit, expr->call.args[i]);
+                }
             }
             int t = next_temp(emit);
 
@@ -1354,6 +1695,28 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 return t;
             }
+            if ((strcmp(expr->call.name, "box") == 0 ||
+                 strcmp(expr->call.name, "promote") == 0) &&
+                expr->call.arg_count == 2) {
+                MixType *src_type = expr->call.args[1]->resolved_type;
+                MixType *boxed_type = src_type;
+                int src_ptr = arg_temps[1];
+                if (boxed_type && boxed_type->kind == TYPE_REF) {
+                    boxed_type = boxed_type->ref.base;
+                } else if (boxed_type && boxed_type->kind == TYPE_BOX) {
+                    boxed_type = boxed_type->box.inner;
+                } else if (!(boxed_type && boxed_type->kind == TYPE_SHAPE)) {
+                    const char *src_ty = c_value_type(boxed_type);
+                    ind(emit); fprintf(emit->out, "%s _box_src_%d = (%s)t%d;\n",
+                            src_ty, t, src_ty, arg_temps[1]);
+                    src_ptr = next_temp(emit);
+                    ind(emit); fprintf(emit->out, "void *t%d = &_box_src_%d;\n",
+                            src_ptr, t);
+                }
+                ind(emit); fprintf(emit->out, "void *t%d = mix_box_clone(t%d, t%d, (int64_t)sizeof(%s));\n",
+                        t, arg_temps[0], src_ptr, c_value_type(boxed_type));
+                return t;
+            }
             if (strcmp(expr->call.name, "random_seed") == 0 && expr->call.arg_count == 1) {
                 ind(emit); fprintf(emit->out, "mix_random_seed((int64_t)t%d);\n", arg_temps[0]);
                 ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
@@ -1390,11 +1753,6 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 return t;
             }
 
-            /* Regular / indirect function call */
-            Symbol *fn_sym = symtab_lookup(emit->symtab, expr->call.name);
-            MixType *fn_type = (fn_sym && fn_sym->type && fn_sym->type->kind == TYPE_FUNC)
-                ? fn_sym->type : NULL;
-
             bool is_lambda_var = false;
             for (int fv = 0; fv < emit->fn_ptr_var_count; fv++) {
                 if (strcmp(emit->fn_ptr_vars[fv], expr->call.name) == 0) {
@@ -1407,10 +1765,17 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                     is_lambda_var = true;
             }
 
+            bool shape_return = expr->resolved_type &&
+                expr->resolved_type->kind == TYPE_SHAPE;
             const char *ret_ty = c_type(expr->resolved_type);
-            if (expr->resolved_type && expr->resolved_type->kind == TYPE_SHAPE)
-                ret_ty = "void *";
-            bool has_return = !(expr->resolved_type && expr->resolved_type->kind == TYPE_VOID);
+            bool has_return = !(expr->resolved_type &&
+                expr->resolved_type->kind == TYPE_VOID) && !shape_return;
+            if (shape_return) {
+                ind(emit); fprintf(emit->out, "%s _shape_ret_%d;\n",
+                        expr->resolved_type->shape.name, t);
+                ind(emit); fprintf(emit->out, "%s *t%d = &_shape_ret_%d;\n",
+                        expr->resolved_type->shape.name, t, t);
+            }
 
             if (is_lambda_var) {
                 /* Build function pointer type and call */
@@ -1421,18 +1786,38 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 if (has_return) fprintf(emit->out, "%s", ret_ty);
                 else fprintf(emit->out, "void");
                 fprintf(emit->out, " (*)(");
-                for (int i = 0; i < expr->call.arg_count; i++) {
-                    if (i > 0) fprintf(emit->out, ", ");
-                    fprintf(emit->out, "int64_t");
+                if (shape_return) {
+                    fprintf(emit->out, "%s *", expr->resolved_type->shape.name);
+                    if (expr->call.arg_count > 0) fprintf(emit->out, ", ");
                 }
-                if (expr->call.arg_count == 0) fprintf(emit->out, "void");
-                fprintf(emit->out, "))v_%s)(", cname_ref(emit, expr->call.name));
                 for (int i = 0; i < expr->call.arg_count; i++) {
                     if (i > 0) fprintf(emit->out, ", ");
-                    fprintf(emit->out, "(int64_t)t%d", arg_temps[i]);
+                    MixType *pt = (fn_type && i < fn_type->func.param_count)
+                        ? fn_type->func.param_types[i]
+                        : expr->call.args[i]->resolved_type;
+                    bool param_mutable = fn_type && i < fn_type->func.param_count &&
+                        fn_type->func.param_mutable &&
+                        fn_type->func.param_mutable[i];
+                    emit_c_fnptr_param_type(emit, pt, param_mutable);
+                }
+                if (expr->call.arg_count == 0 && !shape_return) fprintf(emit->out, "void");
+                fprintf(emit->out, "))v_%s)(", cname_ref(emit, expr->call.name));
+                if (shape_return) {
+                    fprintf(emit->out, "t%d", t);
+                    if (expr->call.arg_count > 0) fprintf(emit->out, ", ");
+                }
+                for (int i = 0; i < expr->call.arg_count; i++) {
+                    if (i > 0) fprintf(emit->out, ", ");
+                    MixType *pt = (fn_type && i < fn_type->func.param_count)
+                        ? fn_type->func.param_types[i]
+                        : expr->call.args[i]->resolved_type;
+                    bool param_mutable = fn_type && i < fn_type->func.param_count &&
+                        fn_type->func.param_mutable &&
+                        fn_type->func.param_mutable[i];
+                    emit_c_call_arg(emit, pt, arg_temps[i], param_mutable);
                 }
                 fprintf(emit->out, ");\n");
-                if (!has_return) {
+                if (!has_return && !shape_return) {
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 }
             } else {
@@ -1440,6 +1825,10 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 const char *call_name = (fn_sym && fn_sym->c_name) ? fn_sym->c_name : expr->call.name;
                 if (has_return) {
                     fprintf(emit->out, "%s t%d = %s(", ret_ty, t, call_name);
+                } else if (shape_return) {
+                    fprintf(emit->out, "%s(", call_name);
+                    fprintf(emit->out, "t%d", t);
+                    if (expr->call.arg_count > 0) fprintf(emit->out, ", ");
                 } else {
                     fprintf(emit->out, "%s(", call_name);
                 }
@@ -1448,17 +1837,13 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                     MixType *pt = (fn_type && i < fn_type->func.param_count)
                         ? fn_type->func.param_types[i]
                         : expr->call.args[i]->resolved_type;
-                    /* Cast arg to expected param type */
-                    const char *cast_ty = c_type(pt);
-                    if (pt && pt->kind == TYPE_SHAPE)
-                        fprintf(emit->out, "(void *)t%d", arg_temps[i]);
-                    else if (pt && type_is_float(pt))
-                        fprintf(emit->out, "(double)t%d", arg_temps[i]);
-                    else
-                        fprintf(emit->out, "(%s)t%d", cast_ty, arg_temps[i]);
+                    bool param_mutable = fn_type && i < fn_type->func.param_count &&
+                        fn_type->func.param_mutable &&
+                        fn_type->func.param_mutable[i];
+                    emit_c_call_arg(emit, pt, arg_temps[i], param_mutable);
                 }
                 fprintf(emit->out, ");\n");
-                if (!has_return) {
+                if (!has_return && !shape_return) {
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 }
             }
@@ -1466,11 +1851,35 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
         }
         case NODE_METHOD_CALL: {
             int obj_temp = emit_expr(emit, expr->method_call.object);
+            MixType *obj_type = ref_base_type(expr->method_call.object->resolved_type);
+            const char *shape_name = (obj_type && obj_type->kind == TYPE_SHAPE)
+                ? obj_type->shape.name : "Unknown";
+            char mangled[256];
+            mangled[0] = '\0';
+            MixType *mtype = NULL;
+            if (obj_type && obj_type->kind == TYPE_SHAPE) {
+                snprintf(mangled, sizeof(mangled), "%s_%s",
+                         shape_name, expr->method_call.method_name);
+                Symbol *msym = symtab_lookup(emit->symtab, mangled);
+                if (msym && msym->type && msym->type->kind == TYPE_FUNC) {
+                    mtype = msym->type;
+                }
+            }
             int arg_temps2[64];
-            for (int i = 0; i < expr->method_call.arg_count; i++)
-                arg_temps2[i] = emit_expr(emit, expr->method_call.args[i]);
-
-            MixType *obj_type = expr->method_call.object->resolved_type;
+            for (int i = 0; i < expr->method_call.arg_count; i++) {
+                MixType *pt = (mtype && i + 1 < mtype->func.param_count)
+                    ? mtype->func.param_types[i + 1]
+                    : expr->method_call.args[i]->resolved_type;
+                bool param_mutable = mtype && i + 1 < mtype->func.param_count &&
+                    mtype->func.param_mutable &&
+                    mtype->func.param_mutable[i + 1];
+                if (param_mutable) {
+                    arg_temps2[i] = emit_mutable_arg_address_temp(
+                        emit, expr->method_call.args[i], pt);
+                } else {
+                    arg_temps2[i] = emit_expr(emit, expr->method_call.args[i]);
+                }
+            }
 
             /* Indirect call through a fn-typed field — set by sema when
              * no real method exists by this name but a fn-pointer (or `int`
@@ -1481,25 +1890,55 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 && obj_type && obj_type->kind == TYPE_SHAPE) {
                 ShapeFieldInfo *fi = type_find_field(obj_type, expr->method_call.method_name);
                 if (fi) {
+                    bool shape_return = expr->resolved_type &&
+                        expr->resolved_type->kind == TYPE_SHAPE;
                     int t = next_temp(emit);
-                    const char *rty = c_type(expr->resolved_type);
-                    if (!expr->resolved_type
-                        || expr->resolved_type->kind == TYPE_VOID)
+                    const char *rty = shape_return ? "void" : c_type(expr->resolved_type);
+                    bool has_return = !(expr->resolved_type &&
+                        expr->resolved_type->kind == TYPE_VOID) && !shape_return;
+                    if (!expr->resolved_type ||
+                        expr->resolved_type->kind == TYPE_VOID) {
                         rty = "int64_t";
+                    }
+                    if (shape_return) {
+                        ind(emit); fprintf(emit->out, "%s _shape_ret_%d;\n",
+                                expr->resolved_type->shape.name, t);
+                        ind(emit); fprintf(emit->out, "%s *t%d = &_shape_ret_%d;\n",
+                                expr->resolved_type->shape.name, t, t);
+                    }
                     /* Build the function-pointer cast string */
                     ind(emit);
-                    fprintf(emit->out, "%s t%d = ((%s(*)(", rty, t, rty);
+                    if (has_return) {
+                        fprintf(emit->out, "%s t%d = ", rty, t);
+                    }
+                    fprintf(emit->out, "((%s(*)(", has_return ? rty : "void");
+                    if (shape_return) {
+                        fprintf(emit->out, "%s *", expr->resolved_type->shape.name);
+                        if (expr->method_call.arg_count > 0) fprintf(emit->out, ", ");
+                    }
                     for (int i = 0; i < expr->method_call.arg_count; i++) {
                         if (i > 0) fprintf(emit->out, ", ");
-                        fprintf(emit->out, "int64_t");
+                        emit_c_fnptr_param_type(emit,
+                                expr->method_call.args[i]->resolved_type, false);
+                    }
+                    if (expr->method_call.arg_count == 0 && !shape_return) {
+                        fprintf(emit->out, "void");
                     }
                     fprintf(emit->out, "))((%s *)t%d)->%s)(",
                             obj_type->shape.name, obj_temp, fi->name);
+                    if (shape_return) {
+                        fprintf(emit->out, "t%d", t);
+                        if (expr->method_call.arg_count > 0) fprintf(emit->out, ", ");
+                    }
                     for (int i = 0; i < expr->method_call.arg_count; i++) {
                         if (i > 0) fprintf(emit->out, ", ");
-                        fprintf(emit->out, "(int64_t)t%d", arg_temps2[i]);
+                        emit_c_call_arg(emit, expr->method_call.args[i]->resolved_type,
+                                arg_temps2[i], false);
                     }
                     fprintf(emit->out, ");\n");
+                    if (!has_return && !shape_return) {
+                        ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
+                    }
                     return t;
                 }
             }
@@ -1523,26 +1962,68 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 int t = next_temp(emit);
                 if (strcmp(m, "push") == 0 && expr->method_call.arg_count == 1) {
                     MixType *elem = obj_type->list.elem_type;
-                    if (elem && type_is_float(elem))
+                    if (elem && elem->kind == TYPE_SHAPE)
+                        { ind(emit); fprintf(emit->out, "mix_list_push_bytes(t%d, t%d);\n", obj_temp, arg_temps2[0]); }
+                    else if (elem && type_is_float(elem))
                         { ind(emit); fprintf(emit->out, "mix_list_push(t%d, mix_double_to_bits(t%d));\n", obj_temp, arg_temps2[0]); }
                     else
                         { ind(emit); fprintf(emit->out, "mix_list_push(t%d, (int64_t)t%d);\n", obj_temp, arg_temps2[0]); }
-                    // Phase 3: shape lists retain on push (in runtime).
-                    // Release the owned-shape source temp so the list
-                    // is the sole owner.
-                    if (elem && elem->kind == TYPE_SHAPE &&
-                        is_owned_shape_source(expr->method_call.args[0])) {
-                        ind(emit); fprintf(emit->out, "mix_release((void *)t%d);\n", arg_temps2[0]);
-                    }
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 } else if (strcmp(m, "pop") == 0) {
-                    ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_pop(t%d);\n", t, obj_temp);
+                    MixType *elem = obj_type->list.elem_type;
+                    if (elem && elem->kind == TYPE_SHAPE) {
+                        ind(emit); fprintf(emit->out, "%s _shape_%d;\n", elem->shape.name, t);
+                        ind(emit); fprintf(emit->out, "%s *t%d = &_shape_%d;\n",
+                                elem->shape.name, t, t);
+                        ind(emit); fprintf(emit->out, "mix_list_pop_bytes(t%d, t%d);\n", obj_temp, t);
+                    } else if (elem && type_is_float(elem)) {
+                        ind(emit); fprintf(emit->out, "double t%d = mix_bits_to_double(mix_list_pop(t%d));\n", t, obj_temp);
+                    } else {
+                        ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_pop(t%d);\n", t, obj_temp);
+                    }
+                } else if ((strcmp(m, "at") == 0 || strcmp(m, "at_mut") == 0) &&
+                           expr->method_call.arg_count == 1) {
+                    MixType *elem = obj_type->list.elem_type;
+                    bool want_ref = expr->resolved_type &&
+                        expr->resolved_type->kind == TYPE_REF;
+                    if (elem && elem->kind == TYPE_SHAPE) {
+                        if (want_ref) {
+                            ind(emit); fprintf(emit->out,
+                                    "void *t%d = mix_list_ptr(t%d, (int64_t)t%d);\n",
+                                    t, obj_temp, arg_temps2[0]);
+                        } else {
+                            ind(emit); fprintf(emit->out, "%s _shape_%d;\n", elem->shape.name, t);
+                            ind(emit); fprintf(emit->out, "%s *t%d = &_shape_%d;\n",
+                                    elem->shape.name, t, t);
+                            ind(emit); fprintf(emit->out,
+                                    "memcpy(t%d, mix_list_ptr(t%d, (int64_t)t%d), sizeof(%s));\n",
+                                    t, obj_temp, arg_temps2[0], elem->shape.name);
+                        }
+                    } else if (want_ref && !ref_uses_direct_value(elem)) {
+                        ind(emit); fprintf(emit->out,
+                                "void *t%d = mix_list_ptr(t%d, (int64_t)t%d);\n",
+                                t, obj_temp, arg_temps2[0]);
+                    } else if (elem && type_is_float(elem)) {
+                        ind(emit); fprintf(emit->out,
+                                "double t%d = mix_bits_to_double(mix_list_get(t%d, (int64_t)t%d));\n",
+                                t, obj_temp, arg_temps2[0]);
+                    } else {
+                        ind(emit); fprintf(emit->out,
+                                "int64_t t%d = mix_list_get(t%d, (int64_t)t%d);\n",
+                                t, obj_temp, arg_temps2[0]);
+                    }
                 } else if (strcmp(m, "remove") == 0 && expr->method_call.arg_count == 1) {
                     ind(emit); fprintf(emit->out, "mix_list_remove(t%d, (int64_t)t%d);\n", obj_temp, arg_temps2[0]);
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 } else if (strcmp(m, "insert") == 0 && expr->method_call.arg_count == 2) {
-                    ind(emit); fprintf(emit->out, "mix_list_insert(t%d, (int64_t)t%d, (int64_t)t%d);\n",
-                            obj_temp, arg_temps2[0], arg_temps2[1]);
+                    MixType *elem = obj_type->list.elem_type;
+                    if (elem && elem->kind == TYPE_SHAPE) {
+                        ind(emit); fprintf(emit->out, "mix_list_insert_bytes(t%d, (int64_t)t%d, t%d);\n",
+                                obj_temp, arg_temps2[0], arg_temps2[1]);
+                    } else {
+                        ind(emit); fprintf(emit->out, "mix_list_insert(t%d, (int64_t)t%d, (int64_t)t%d);\n",
+                                obj_temp, arg_temps2[0], arg_temps2[1]);
+                    }
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 } else if (strcmp(m, "sort") == 0) {
                     MixType *elem = obj_type->list.elem_type;
@@ -1688,46 +2169,50 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
 
             /* User-defined shape methods */
             {
-                const char *shape_name = (obj_type && obj_type->kind == TYPE_SHAPE)
-                    ? obj_type->shape.name : "Unknown";
-                char mangled[256];
-                snprintf(mangled, sizeof(mangled), "%s_%s", shape_name, expr->method_call.method_name);
-
                 int t = next_temp(emit);
-                const char *ret_ty = c_type(expr->resolved_type);
-                if (expr->resolved_type && expr->resolved_type->kind == TYPE_SHAPE)
-                    ret_ty = "void *";
-                bool has_return = !(expr->resolved_type && expr->resolved_type->kind == TYPE_VOID);
-
-                Symbol *msym = symtab_lookup(emit->symtab, mangled);
-                MixType *mtype = (msym && msym->type && msym->type->kind == TYPE_FUNC)
-                    ? msym->type : NULL;
+                bool shape_return = expr->resolved_type &&
+                    expr->resolved_type->kind == TYPE_SHAPE;
+                const char *ret_ty = shape_return ? "void" : c_type(expr->resolved_type);
+                bool has_return = !(expr->resolved_type &&
+                    expr->resolved_type->kind == TYPE_VOID) && !shape_return;
+                if (shape_return) {
+                    ind(emit); fprintf(emit->out, "%s _shape_ret_%d;\n",
+                            expr->resolved_type->shape.name, t);
+                    ind(emit); fprintf(emit->out, "%s *t%d = &_shape_ret_%d;\n",
+                            expr->resolved_type->shape.name, t, t);
+                }
 
                 ind(emit);
                 if (has_return) fprintf(emit->out, "%s t%d = ", ret_ty, t);
                 fprintf(emit->out, "%s(", mangled);
 
+                bool needs_comma = false;
+                if (shape_return) {
+                    fprintf(emit->out, "t%d", t);
+                    needs_comma = true;
+                }
                 /* First arg: self */
+                if (needs_comma) fprintf(emit->out, ", ");
                 if (obj_type && obj_type->kind == TYPE_SHAPE)
                     fprintf(emit->out, "(%s *)t%d", shape_name, obj_temp);
                 else
                     fprintf(emit->out, "t%d", obj_temp);
+                needs_comma = true;
 
                 /* Remaining args */
                 for (int i = 0; i < expr->method_call.arg_count; i++) {
-                    fprintf(emit->out, ", ");
+                    if (needs_comma) fprintf(emit->out, ", ");
                     MixType *pt = (mtype && i + 1 < mtype->func.param_count)
                         ? mtype->func.param_types[i + 1]
                         : expr->method_call.args[i]->resolved_type;
-                    if (pt && pt->kind == TYPE_SHAPE)
-                        fprintf(emit->out, "(%s *)t%d", pt->shape.name, arg_temps2[i]);
-                    else if (pt && type_is_float(pt))
-                        fprintf(emit->out, "(double)t%d", arg_temps2[i]);
-                    else
-                        fprintf(emit->out, "t%d", arg_temps2[i]);
+                    bool param_mutable = mtype && i + 1 < mtype->func.param_count &&
+                        mtype->func.param_mutable &&
+                        mtype->func.param_mutable[i + 1];
+                    emit_c_call_arg(emit, pt, arg_temps2[i], param_mutable);
+                    needs_comma = true;
                 }
                 fprintf(emit->out, ");\n");
-                if (!has_return) {
+                if (!has_return && !shape_return) {
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 }
                 return t;
@@ -1755,45 +2240,18 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 }
                 ind(emit); fprintf(emit->out, "void *t%d = _tu%d;\n", t, t);
             } else if (stype && stype->kind == TYPE_SHAPE) {
-                /* Regular struct construction — heap-allocate via mix_shape_alloc
-                 * so the 16-byte refcount header is in place. Pass the local
-                 * release fn name only if this module declared the shape; for
-                 * C-imported shapes, NULL release_fn = mix_shape_free fallback. */
-                bool is_local_shape = false;
-                for (int li = 0; li < emit->local_shape_name_count; li++) {
-                    if (strcmp(emit->local_shape_names[li], stype->shape.name) == 0) {
-                        is_local_shape = true;
-                        break;
-                    }
-                }
-                if (is_local_shape) {
-                    ind(emit); fprintf(emit->out,
-                        "%s *t%d = (%s *)mix_shape_alloc(sizeof(%s), release_%s);\n",
-                        stype->shape.name, t, stype->shape.name,
-                        stype->shape.name, stype->shape.name);
-                } else {
-                    ind(emit); fprintf(emit->out,
-                        "%s *t%d = (%s *)mix_shape_alloc(sizeof(%s), 0);\n",
-                        stype->shape.name, t, stype->shape.name, stype->shape.name);
-                }
-                /* mix_shape_alloc already zero-inits the user region, so the
-                 * memset below would be redundant — kept commented as a
-                 * reminder for Phase 2 where field defaults may need it. */
-                /* ind(emit); fprintf(emit->out, "memset(t%d, 0, sizeof(%s));\n", t, stype->shape.name); */
+                ind(emit); fprintf(emit->out, "%s _shape_%d;\n", stype->shape.name, t);
+                ind(emit); fprintf(emit->out, "%s *t%d = &_shape_%d;\n",
+                        stype->shape.name, t, t);
+                ind(emit); fprintf(emit->out, "memset(t%d, 0, sizeof(%s));\n",
+                        t, stype->shape.name);
                 for (int i = 0; i < expr->shape_lit.field_count; i++) {
                     ShapeFieldInfo *fi = type_find_field(stype, expr->shape_lit.field_names[i]);
                     if (!fi) continue;
                     int val = emit_expr(emit, expr->shape_lit.field_values[i]);
-                    // Sub-shape stored inline — memcpy from the value pointer.
-                    // Phase 2: if the source is owned (SHAPE_LIT or shape-
-                    // returning call), release the temp after memcpy so it
-                    // doesn't leak.
                     if (fi->type && fi->type->kind == TYPE_SHAPE) {
                         ind(emit); fprintf(emit->out, "memcpy(&t%d->%s, t%d, sizeof(%s));\n",
                                 t, fi->name, val, fi->type->shape.name);
-                        if (is_owned_shape_source(expr->shape_lit.field_values[i])) {
-                            ind(emit); fprintf(emit->out, "mix_release(t%d);\n", val);
-                        }
                     } else {
                         ind(emit); fprintf(emit->out, "t%d->%s = (%s)t%d;\n",
                                 t, fi->name, c_type(fi->type), val);
@@ -1806,7 +2264,7 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
         }
         case NODE_FIELD_EXPR: {
             int obj = emit_expr(emit, expr->field_expr.object);
-            MixType *obj_type = expr->field_expr.object->resolved_type;
+            MixType *obj_type = ref_base_type(expr->field_expr.object->resolved_type);
 
             /* List .len */
             if (obj_type && obj_type->kind == TYPE_LIST) {
@@ -1881,9 +2339,28 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 Symbol *msym = symtab_lookup(emit->symtab, mangled);
                 if (msym) {
                     int t = next_temp(emit);
-                    const char *rty = c_type(expr->resolved_type);
-                    ind(emit); fprintf(emit->out, "%s t%d = %s((%s *)t%d);\n",
-                            rty, t, mangled, obj_type->shape.name, obj);
+                    bool shape_return = expr->resolved_type &&
+                        expr->resolved_type->kind == TYPE_SHAPE;
+                    const char *rty = shape_return ? "void"
+                        : c_type(expr->resolved_type);
+                    bool has_return = !(expr->resolved_type &&
+                        expr->resolved_type->kind == TYPE_VOID) && !shape_return;
+                    if (shape_return) {
+                        ind(emit); fprintf(emit->out, "%s _shape_ret_%d;\n",
+                                expr->resolved_type->shape.name, t);
+                        ind(emit); fprintf(emit->out, "%s *t%d = &_shape_ret_%d;\n",
+                                expr->resolved_type->shape.name, t, t);
+                    }
+                    ind(emit);
+                    if (has_return) fprintf(emit->out, "%s t%d = ", rty, t);
+                    fprintf(emit->out, "%s(", mangled);
+                    if (shape_return) {
+                        fprintf(emit->out, "t%d, ", t);
+                    }
+                    fprintf(emit->out, "(%s *)t%d);\n", obj_type->shape.name, obj);
+                    if (!has_return && !shape_return) {
+                        ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
+                    }
                     return t;
                 }
             }
@@ -1964,8 +2441,10 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
             if (vtype && vtype->kind == TYPE_SHAPE) {
                 int init = emit_expr(emit, stmt->var_decl.init_expr);
                 const char *cn = cname_decl(emit, stmt->var_decl.name);
-                ind(emit); fprintf(emit->out, "%s *v_%s = (%s *)t%d;\n",
-                        vtype->shape.name, cn, vtype->shape.name, init);
+                ind(emit); fprintf(emit->out, "%s v_%s;\n",
+                        vtype->shape.name, cn);
+                ind(emit); fprintf(emit->out, "memcpy(&v_%s, t%d, sizeof(%s));\n",
+                        cn, init, vtype->shape.name);
             } else if (stmt->var_decl.is_mutable) {
                 int init = emit_expr(emit, stmt->var_decl.init_expr);
                 const char *ty = vtype_is_void ? "int64_t" : c_type(vtype);
@@ -2004,7 +2483,23 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
         }
         case NODE_ASSIGN: {
             int val = emit_expr(emit, stmt->assign.value);
+            Symbol *assign_sym = symtab_lookup(emit->symtab, stmt->assign.name);
+            MixType *var_type = assign_sym ? assign_sym->type : NULL;
             const char *cn = cname_ref(emit, stmt->assign.name);
+            if (var_type && var_type->kind == TYPE_SHAPE) {
+                if (stmt->assign.op != TOK_EQ) {
+                    mix_error(stmt->loc, "compound assignment is not supported on shape values");
+                    break;
+                }
+                if (assign_sym && assign_sym->is_stack_slot) {
+                    ind(emit); fprintf(emit->out, "memcpy(&v_%s, t%d, sizeof(%s));\n",
+                            cn, val, var_type->shape.name);
+                } else {
+                    ind(emit); fprintf(emit->out, "memcpy(v_%s, t%d, sizeof(%s));\n",
+                            cn, val, var_type->shape.name);
+                }
+                break;
+            }
             if (stmt->assign.op == TOK_EQ) {
                 ind(emit); fprintf(emit->out, "v_%s = t%d;\n", cn, val);
             } else {
@@ -2042,12 +2537,16 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
             break;
         }
         case NODE_WHILE_STMT: {
+            int cont_label = next_label(emit);
             ind(emit); fprintf(emit->out, "while (1) {\n");
+            c_push_continue_label(emit, cont_label);
             emit->indent++;
             int cond = emit_expr(emit, stmt->while_stmt.condition);
             ind(emit); fprintf(emit->out, "if (!t%d) break;\n", cond);
             emit_block(emit, stmt->while_stmt.body);
+            ind(emit); fprintf(emit->out, "L%d:\n", cont_label);
             emit->indent--;
+            c_pop_continue_label(emit);
             ind(emit); fprintf(emit->out, "}\n");
             break;
         }
@@ -2067,8 +2566,10 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                 int len_t = next_temp(emit);
                 ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_len(t%d);\n", len_t, keys_list);
                 int idx_id = next_label(emit);
+                int cont_label = next_label(emit);
                 ind(emit); fprintf(emit->out, "for (int64_t _midx_%d = 0; _midx_%d < t%d; _midx_%d++) {\n",
                         idx_id, idx_id, len_t, idx_id);
+                c_push_continue_label(emit, cont_label);
                 emit->indent++;
                 ind(emit); fprintf(emit->out, "int64_t _key_%d = mix_list_get(t%d, _midx_%d);\n",
                         idx_id, keys_list, idx_id);
@@ -2079,21 +2580,29 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                 ind(emit); fprintf(emit->out, "int64_t v_%s = mix_map_get(t%d, (const char *)_key_%d);\n",
                         cname_decl(emit, stmt->for_stmt.var_name), map_ptr, idx_id);
                 emit_block(emit, stmt->for_stmt.body);
+                ind(emit); fprintf(emit->out, "L%d:\n", cont_label);
                 emit->indent--;
+                c_pop_continue_label(emit);
                 ind(emit); fprintf(emit->out, "}\n");
             } else if (is_list) {
                 int list_ptr = emit_expr(emit, iter);
                 int len_t = next_temp(emit);
                 ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_len(t%d);\n", len_t, list_ptr);
                 int idx_id = next_label(emit);
+                int cont_label = next_label(emit);
                 ind(emit); fprintf(emit->out, "for (int64_t _idx_%d = 0; _idx_%d < t%d; _idx_%d++) {\n",
                         idx_id, idx_id, len_t, idx_id);
+                c_push_continue_label(emit, cont_label);
                 emit->indent++;
                 MixType *elem = iter_type->list.elem_type;
                 const char *vn = cname_decl(emit, stmt->for_stmt.var_name);
                 if (elem && type_is_float(elem)) {
                     ind(emit); fprintf(emit->out, "double v_%s = mix_bits_to_double(mix_list_get(t%d, _idx_%d));\n",
                             vn, list_ptr, idx_id);
+                } else if (elem && elem->kind == TYPE_SHAPE) {
+                    ind(emit); fprintf(emit->out, "%s v_%s;\n", elem->shape.name, vn);
+                    ind(emit); fprintf(emit->out, "memcpy(&v_%s, mix_list_ptr(t%d, _idx_%d), sizeof(%s));\n",
+                            vn, list_ptr, idx_id, elem->shape.name);
                 } else {
                     ind(emit); fprintf(emit->out, "int64_t v_%s = mix_list_get(t%d, _idx_%d);\n",
                             vn, list_ptr, idx_id);
@@ -2103,7 +2612,24 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                             cname_decl(emit, stmt->for_stmt.index_name), idx_id);
                 }
                 emit_block(emit, stmt->for_stmt.body);
+                ind(emit); fprintf(emit->out, "L%d:\n", cont_label);
+                if (stmt->for_stmt.var_is_mutable) {
+                    if (elem && elem->kind == TYPE_SHAPE) {
+                        ind(emit); fprintf(emit->out,
+                                "mix_list_set_bytes(t%d, _idx_%d, &v_%s);\n",
+                                list_ptr, idx_id, vn);
+                    } else if (elem && type_is_float(elem)) {
+                        ind(emit); fprintf(emit->out,
+                                "mix_list_set(t%d, _idx_%d, mix_double_to_bits(v_%s));\n",
+                                list_ptr, idx_id, vn);
+                    } else {
+                        ind(emit); fprintf(emit->out,
+                                "mix_list_set(t%d, _idx_%d, (int64_t)v_%s);\n",
+                                list_ptr, idx_id, vn);
+                    }
+                }
                 emit->indent--;
+                c_pop_continue_label(emit);
                 ind(emit); fprintf(emit->out, "}\n");
             } else if (is_set) {
                 int set_ptr = emit_expr(emit, iter);
@@ -2118,13 +2644,17 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                 int len_t = next_temp(emit);
                 ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_len(t%d);\n", len_t, list_ptr);
                 int idx_id = next_label(emit);
+                int cont_label = next_label(emit);
                 ind(emit); fprintf(emit->out, "for (int64_t _sidx_%d = 0; _sidx_%d < t%d; _sidx_%d++) {\n",
                         idx_id, idx_id, len_t, idx_id);
+                c_push_continue_label(emit, cont_label);
                 emit->indent++;
                 ind(emit); fprintf(emit->out, "int64_t v_%s = mix_list_get(t%d, _sidx_%d);\n",
                         cname_decl(emit, stmt->for_stmt.var_name), list_ptr, idx_id);
                 emit_block(emit, stmt->for_stmt.body);
+                ind(emit); fprintf(emit->out, "L%d:\n", cont_label);
                 emit->indent--;
+                c_pop_continue_label(emit);
                 ind(emit); fprintf(emit->out, "}\n");
             } else {
                 /* For-range */
@@ -2141,11 +2671,15 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                 }
                 const char *cmp_op = inclusive ? "<=" : "<";
                 const char *vn = cname_decl(emit, stmt->for_stmt.var_name);
+                int cont_label = next_label(emit);
                 ind(emit); fprintf(emit->out, "for (int64_t v_%s = t%d; v_%s %s t%d; v_%s++) {\n",
                         vn, start_val, vn, cmp_op, end_val, vn);
+                c_push_continue_label(emit, cont_label);
                 emit->indent++;
                 emit_block(emit, stmt->for_stmt.body);
+                ind(emit); fprintf(emit->out, "L%d:\n", cont_label);
                 emit->indent--;
+                c_pop_continue_label(emit);
                 ind(emit); fprintf(emit->out, "}\n");
             }
             break;
@@ -2336,8 +2870,7 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
             break;
         }
         case NODE_DONE_STMT: {
-            for (int i = emit->defer_count - 1; i >= 0; i--)
-                emit_stmt(emit, emit->deferred[i]);
+            emit_function_epilogue(emit);
             if (stmt->done_stmt.value) {
                 int val = emit_expr(emit, stmt->done_stmt.value);
                 if (emit->current_return_type &&
@@ -2356,6 +2889,11 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                            emit->current_return_type->kind == TYPE_OPTIONAL &&
                            stmt->done_stmt.value->kind != NODE_NONE_LIT) {
                     ind(emit); fprintf(emit->out, "return mix_optional_some((int64_t)t%d);\n", val);
+                } else if (emit->current_return_type &&
+                           emit->current_return_type->kind == TYPE_SHAPE) {
+                    ind(emit); fprintf(emit->out, "memcpy(p_ret, t%d, sizeof(%s));\n",
+                            val, emit->current_return_type->shape.name);
+                    ind(emit); fprintf(emit->out, "return;\n");
                 } else {
                     ind(emit); fprintf(emit->out, "return t%d;\n", val);
                 }
@@ -2370,12 +2908,7 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
             break;
         }
         case NODE_EXPR_STMT: {
-            int v = emit_expr(emit, stmt->expr_stmt.expr);
-            // Phase 3: discarded owned-shape result needs release. The
-            // is_owned_shape_source check guarantees t is a pointer.
-            if (is_owned_shape_source(stmt->expr_stmt.expr)) {
-                ind(emit); fprintf(emit->out, "mix_release((void *)t%d);\n", v);
-            }
+            (void)emit_expr(emit, stmt->expr_stmt.expr);
             break;
         }
         case NODE_UNSAFE_BLOCK:
@@ -2399,13 +2932,15 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
             int obj = emit_expr(emit, stmt->index_assign.object);
             int idx = emit_expr(emit, stmt->index_assign.index);
             int val = emit_expr(emit, stmt->index_assign.value);
-            MixType *obj_type = stmt->index_assign.object->resolved_type;
+            MixType *obj_type = ref_base_type(stmt->index_assign.object->resolved_type);
             if (obj_type && obj_type->kind == TYPE_MAP) {
                 ind(emit); fprintf(emit->out, "mix_map_set(t%d, (const char *)t%d, (int64_t)t%d);\n",
                         obj, idx, val);
             } else {
                 MixType *elem = (obj_type && obj_type->kind == TYPE_LIST) ? obj_type->list.elem_type : NULL;
-                if (elem && type_is_float(elem))
+                if (elem && elem->kind == TYPE_SHAPE)
+                    { ind(emit); fprintf(emit->out, "mix_list_set_bytes(t%d, (int64_t)t%d, t%d);\n", obj, idx, val); }
+                else if (elem && type_is_float(elem))
                     { ind(emit); fprintf(emit->out, "mix_list_set(t%d, (int64_t)t%d, mix_double_to_bits(t%d));\n", obj, idx, val); }
                 else
                     { ind(emit); fprintf(emit->out, "mix_list_set(t%d, (int64_t)t%d, (int64_t)t%d);\n", obj, idx, val); }
@@ -2415,7 +2950,7 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
         case NODE_FIELD_ASSIGN: {
             int obj = emit_expr(emit, stmt->field_assign.object);
             int val = emit_expr(emit, stmt->field_assign.value);
-            MixType *obj_type = stmt->field_assign.object->resolved_type;
+            MixType *obj_type = ref_base_type(stmt->field_assign.object->resolved_type);
             if (obj_type && obj_type->kind == TYPE_SHAPE) {
                 ShapeFieldInfo *fi_dst =
                     type_find_field(obj_type, stmt->field_assign.field_name);
@@ -2428,10 +2963,6 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
                             "memcpy(&((%s *)t%d)->%s, t%d, sizeof(%s));\n",
                             obj_type->shape.name, obj, stmt->field_assign.field_name,
                             val, fi_dst->type->shape.name);
-                    // Phase 2: release source temp if owned.
-                    if (is_owned_shape_source(stmt->field_assign.value)) {
-                        ind(emit); fprintf(emit->out, "mix_release(t%d);\n", val);
-                    }
                     break;
                 }
                 if (stmt->field_assign.op == TOK_EQ) {
@@ -2456,8 +2987,7 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
             int fval = emit_expr(emit, stmt->fail_stmt.value);
             if (emit->current_return_type &&
                 emit->current_return_type->kind == TYPE_RESULT) {
-                for (int i = emit->defer_count - 1; i >= 0; i--)
-                    emit_stmt(emit, emit->deferred[i]);
+                emit_function_epilogue(emit);
                 ind(emit); fprintf(emit->out, "return mix_result_err((int64_t)t%d);\n", fval);
             } else {
                 MixType *vtype = stmt->fail_stmt.value->resolved_type;
@@ -2473,7 +3003,12 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
             ind(emit); fprintf(emit->out, "break;\n");
             break;
         case NODE_CONTINUE_STMT:
-            ind(emit); fprintf(emit->out, "continue;\n");
+            if (c_current_continue_label(emit) >= 0) {
+                ind(emit); fprintf(emit->out, "goto L%d;\n",
+                                   c_current_continue_label(emit));
+            } else {
+                ind(emit); fprintf(emit->out, "continue;\n");
+            }
             break;
         default:
             break;
@@ -2499,41 +3034,59 @@ static void emit_fn_decl(CEmitter *emit, AstNode *fn) {
             ret_type = fn_sig_sym->type->func.return_type;
         }
 
+        bool shape_return = ret_type && ret_type->kind == TYPE_SHAPE;
         const char *ret_str = ret_type ? c_type(ret_type) : "void";
         /* Result/optional return as void* */
         if (ret_type && (ret_type->kind == TYPE_RESULT || ret_type->kind == TYPE_OPTIONAL))
             ret_str = "void *";
-        else if (ret_type && ret_type->kind == TYPE_SHAPE)
-            ret_str = "void *";
+        else if (shape_return)
+            ret_str = "void";
 
         const char *static_kw = fn->fn_decl.is_pub ? "" : "static ";
         fprintf(emit->out, "%s%s %s(", static_kw, ret_str, fn->fn_decl.name);
 
+        bool needs_comma = false;
+        if (shape_return) {
+            fprintf(emit->out, "%s *p_ret", ret_type->shape.name);
+            needs_comma = true;
+        }
         for (int i = 0; i < fn->fn_decl.param_count; i++) {
-            if (i > 0) fprintf(emit->out, ", ");
+            if (needs_comma) fprintf(emit->out, ", ");
             Param *param = &fn->fn_decl.params[i];
             MixType *ptype = param->type ? param->type->resolved_type : NULL;
-            if (ptype && ptype->kind == TYPE_SHAPE)
-                fprintf(emit->out, "%s *p_%s", ptype->shape.name, param->name);
-            else if (ptype && type_is_float(ptype))
-                fprintf(emit->out, "double p_%s", param->name);
-            else {
-                const char *pty = c_type(ptype);
-                fprintf(emit->out, "%s p_%s", pty, param->name);
-            }
+            emit_c_param_decl(emit, ptype, param->name, param->is_mutable);
+            needs_comma = true;
         }
-        if (fn->fn_decl.param_count == 0) fprintf(emit->out, "void");
+        if (fn->fn_decl.param_count == 0 && !shape_return) fprintf(emit->out, "void");
         fprintf(emit->out, ") {\n");
         emit->indent = 1;
     }
+
+    /* Reset per-function state */
+    emit->defer_count = 0;
+    emit->fn_ptr_var_count = 0;
+    emit->mutable_param_count = 0;
+    for (int ci = 0; ci < emit->const_count; ci++)
+        emit->constants[ci].cached_temp = -1;
 
     /* Copy parameters to v_ variables */
     for (int i = 0; i < fn->fn_decl.param_count; i++) {
         Param *param = &fn->fn_decl.params[i];
         MixType *ptype = param->type ? param->type->resolved_type : NULL;
-        if (ptype && ptype->kind == TYPE_SHAPE) {
-            ind(emit); fprintf(emit->out, "%s *v_%s = p_%s;\n",
-                    ptype->shape.name, param->name, param->name);
+        if (param->is_mutable) {
+            const char *ty = c_value_type(ptype);
+            if (ptype && ptype->kind == TYPE_SHAPE) {
+                ind(emit); fprintf(emit->out, "%s *v_%s = p_%s;\n",
+                        ty, param->name, param->name);
+            } else {
+                ind(emit); fprintf(emit->out, "%s v_%s = *p_%s;\n",
+                        ty, param->name, param->name);
+                track_mutable_param(emit, param->name, ptype);
+            }
+        } else if (ptype && ptype->kind == TYPE_SHAPE) {
+            ind(emit); fprintf(emit->out, "%s v_%s;\n", ptype->shape.name, param->name);
+            ind(emit); fprintf(emit->out, "memcpy(&v_%s, p_%s, sizeof(%s));\n",
+                    param->name, param->name, ptype->shape.name);
         } else {
             const char *ty = c_type(ptype);
             if (type_is_float(ptype))
@@ -2541,12 +3094,6 @@ static void emit_fn_decl(CEmitter *emit, AstNode *fn) {
             ind(emit); fprintf(emit->out, "%s v_%s = p_%s;\n", ty, param->name, param->name);
         }
     }
-
-    /* Reset per-function state */
-    emit->defer_count = 0;
-    emit->fn_ptr_var_count = 0;
-    for (int ci = 0; ci < emit->const_count; ci++)
-        emit->constants[ci].cached_temp = -1;
 
     /* Track return type */
     MixType *ret_type_resolved = fn->fn_decl.return_type
@@ -2567,6 +3114,8 @@ static void emit_fn_decl(CEmitter *emit, AstNode *fn) {
     }
 
     cname_reset(emit);
+    for (int i = 0; i < fn->fn_decl.param_count; i++)
+        cname_bind_existing(emit, fn->fn_decl.params[i].name);
 
     /* Emit body with implicit return handling */
     if (fn->fn_decl.body) {
@@ -2579,10 +3128,14 @@ static void emit_fn_decl(CEmitter *emit, AstNode *fn) {
         if (stmt_count > 0) {
             AstNode *last = body->block.stmts[stmt_count - 1];
             if (!is_main && fn->fn_decl.return_type && last->kind == NODE_EXPR_STMT) {
-                for (int i = emit->defer_count - 1; i >= 0; i--)
-                    emit_stmt(emit, emit->deferred[i]);
+                emit_function_epilogue(emit);
                 int val = emit_expr(emit, last->expr_stmt.expr);
-                if (ret_type_resolved && ret_type_resolved->kind == TYPE_OPTIONAL &&
+                if (emit->current_return_type &&
+                    emit->current_return_type->kind == TYPE_SHAPE) {
+                    ind(emit); fprintf(emit->out, "memcpy(p_ret, t%d, sizeof(%s));\n",
+                            val, emit->current_return_type->shape.name);
+                    ind(emit); fprintf(emit->out, "return;\n");
+                } else if (ret_type_resolved && ret_type_resolved->kind == TYPE_OPTIONAL &&
                     last->expr_stmt.expr->kind != NODE_NONE_LIT) {
                     ind(emit); fprintf(emit->out, "return mix_optional_some((int64_t)t%d);\n", val);
                 } else if (emit->current_return_type &&
@@ -2606,10 +3159,14 @@ static void emit_fn_decl(CEmitter *emit, AstNode *fn) {
                 emit->last_match_temp = -1;
                 emit_stmt(emit, last);
                 if (emit->last_match_temp >= 0) {
-                    for (int i = emit->defer_count - 1; i >= 0; i--)
-                        emit_stmt(emit, emit->deferred[i]);
+                    emit_function_epilogue(emit);
                     int val = emit->last_match_temp;
-                    if (ret_type_resolved && ret_type_resolved->kind == TYPE_OPTIONAL) {
+                    if (emit->current_return_type &&
+                        emit->current_return_type->kind == TYPE_SHAPE) {
+                        ind(emit); fprintf(emit->out, "memcpy(p_ret, t%d, sizeof(%s));\n",
+                                val, emit->current_return_type->shape.name);
+                        ind(emit); fprintf(emit->out, "return;\n");
+                    } else if (ret_type_resolved && ret_type_resolved->kind == TYPE_OPTIONAL) {
                         ind(emit); fprintf(emit->out, "return mix_optional_some((int64_t)t%d);\n", val);
                     } else if (emit->current_return_type && emit->current_return_type->kind == TYPE_RESULT) {
                         ind(emit); fprintf(emit->out, "return mix_result_ok((int64_t)t%d);\n", val);
@@ -2625,12 +3182,12 @@ static void emit_fn_decl(CEmitter *emit, AstNode *fn) {
         }
     }
 
-    for (int i = emit->defer_count - 1; i >= 0; i--)
-        emit_stmt(emit, emit->deferred[i]);
+    emit_function_epilogue(emit);
 
     if (is_main) {
         ind(emit); fprintf(emit->out, "return 0;\n");
-    } else if (!fn->fn_decl.return_type) {
+    } else if (!fn->fn_decl.return_type || (emit->current_return_type &&
+               emit->current_return_type->kind == TYPE_SHAPE)) {
         /* void return */
     } else {
         ind(emit); fprintf(emit->out, "return 0;\n");
@@ -2646,30 +3203,40 @@ static void emit_method(CEmitter *emit, AstNode *method, const char *shape_name,
 
     MixType *ret_type = method->fn_decl.return_type
         ? method->fn_decl.return_type->resolved_type : NULL;
+    bool shape_return = ret_type && ret_type->kind == TYPE_SHAPE;
     const char *ret_str = ret_type ? c_type(ret_type) : "void";
     if (ret_type && (ret_type->kind == TYPE_RESULT || ret_type->kind == TYPE_OPTIONAL))
         ret_str = "void *";
-    else if (ret_type && ret_type->kind == TYPE_SHAPE)
-        ret_str = "void *";
+    else if (shape_return)
+        ret_str = "void";
 
     const char *static_kw = is_pub ? "" : "static ";
-    fprintf(emit->out, "%s%s %s(%s *p_self", static_kw, ret_str, mangled, shape_name);
+    fprintf(emit->out, "%s%s %s(", static_kw, ret_str, mangled);
+    bool needs_comma = false;
+    if (shape_return) {
+        fprintf(emit->out, "%s *p_ret", ret_type->shape.name);
+        needs_comma = true;
+    }
+    if (needs_comma) fprintf(emit->out, ", ");
+    fprintf(emit->out, "%s *p_self", shape_name);
+    needs_comma = true;
 
     for (int i = 0; i < method->fn_decl.param_count; i++) {
-        fprintf(emit->out, ", ");
+        if (needs_comma) fprintf(emit->out, ", ");
         Param *param = &method->fn_decl.params[i];
         MixType *ptype = param->type ? param->type->resolved_type : NULL;
-        if (ptype && ptype->kind == TYPE_SHAPE)
-            fprintf(emit->out, "%s *p_%s", ptype->shape.name, param->name);
-        else if (ptype && type_is_float(ptype))
-            fprintf(emit->out, "double p_%s", param->name);
-        else {
-            const char *pty = c_type(ptype);
-            fprintf(emit->out, "%s p_%s", pty, param->name);
-        }
+        emit_c_param_decl(emit, ptype, param->name, param->is_mutable);
+        needs_comma = true;
     }
     fprintf(emit->out, ") {\n");
     emit->indent = 1;
+
+    emit->current_shape = shape_type;
+    emit->defer_count = 0;
+    emit->fn_ptr_var_count = 0;
+    emit->mutable_param_count = 0;
+    for (int ci = 0; ci < emit->const_count; ci++)
+        emit->constants[ci].cached_temp = -1;
 
     /* Alias self to v_self so NODE_IDENT lookups (which generate v_*) resolve. */
     ind(emit); fprintf(emit->out, "%s *v_self = p_self;\n", shape_name);
@@ -2678,22 +3245,30 @@ static void emit_method(CEmitter *emit, AstNode *method, const char *shape_name,
     for (int i = 0; i < method->fn_decl.param_count; i++) {
         Param *param = &method->fn_decl.params[i];
         MixType *ptype = param->type ? param->type->resolved_type : NULL;
-        if (ptype && ptype->kind == TYPE_SHAPE) {
-            ind(emit); fprintf(emit->out, "%s *v_%s = p_%s;\n",
-                    ptype->shape.name, param->name, param->name);
+        if (param->is_mutable) {
+            const char *ty = c_value_type(ptype);
+            if (ptype && ptype->kind == TYPE_SHAPE) {
+                ind(emit); fprintf(emit->out, "%s *v_%s = p_%s;\n",
+                        ty, param->name, param->name);
+            } else {
+                ind(emit); fprintf(emit->out, "%s v_%s = *p_%s;\n",
+                        ty, param->name, param->name);
+                track_mutable_param(emit, param->name, ptype);
+            }
+        } else if (ptype && ptype->kind == TYPE_SHAPE) {
+            ind(emit); fprintf(emit->out, "%s v_%s;\n",
+                    ptype->shape.name, param->name);
+            ind(emit); fprintf(emit->out, "memcpy(&v_%s, p_%s, sizeof(%s));\n",
+                    param->name, param->name, ptype->shape.name);
         } else {
             const char *ty = type_is_float(ptype) ? "double" : c_type(ptype);
             ind(emit); fprintf(emit->out, "%s v_%s = p_%s;\n", ty, param->name, param->name);
         }
     }
 
-    emit->current_shape = shape_type;
-    emit->defer_count = 0;
-    emit->fn_ptr_var_count = 0;
-    for (int ci = 0; ci < emit->const_count; ci++)
-        emit->constants[ci].cached_temp = -1;
-
     cname_reset(emit);
+    for (int i = 0; i < method->fn_decl.param_count; i++)
+        cname_bind_existing(emit, method->fn_decl.params[i].name);
 
     /* Emit body with implicit return */
     if (method->fn_decl.body) {
@@ -2706,10 +3281,15 @@ static void emit_method(CEmitter *emit, AstNode *method, const char *shape_name,
         if (stmt_count > 0) {
             AstNode *last = body->block.stmts[stmt_count - 1];
             if (ret_type && last->kind == NODE_EXPR_STMT) {
-                for (int i = emit->defer_count - 1; i >= 0; i--)
-                    emit_stmt(emit, emit->deferred[i]);
+                emit_function_epilogue(emit);
                 int val = emit_expr(emit, last->expr_stmt.expr);
-                ind(emit); fprintf(emit->out, "return t%d;\n", val);
+                if (shape_return) {
+                    ind(emit); fprintf(emit->out, "memcpy(p_ret, t%d, sizeof(%s));\n",
+                            val, ret_type->shape.name);
+                    ind(emit); fprintf(emit->out, "return;\n");
+                } else {
+                    ind(emit); fprintf(emit->out, "return t%d;\n", val);
+                }
                 emit->current_shape = NULL;
                 fprintf(emit->out, "}\n\n");
                 return;
@@ -2719,10 +3299,9 @@ static void emit_method(CEmitter *emit, AstNode *method, const char *shape_name,
         }
     }
 
-    for (int i = emit->defer_count - 1; i >= 0; i--)
-        emit_stmt(emit, emit->deferred[i]);
+    emit_function_epilogue(emit);
 
-    if (ret_type)
+    if (ret_type && !shape_return)
         { ind(emit); fprintf(emit->out, "return 0;\n"); }
 
     emit->current_shape = NULL;
@@ -2910,6 +3489,8 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                     "to_float","to_set","str_reverse","str_count","file_open","file_read",
                     "file_write","file_close","file_read_all","file_write_all","file_exists",
                     "list_dir","shell","shell_output","env","exit","getcwd","mkdir","args",
+                    "zone_create","zone_destroy","zone_reset","zone_alloc",
+                    "_mix_zone_alloc_bytes","_mix_zone_high_water","_mix_zone_reset_count",
                     "ord","chr","alloc","bytes","peek_u32","peek_byte","peek_f32","peek_ptr","memcpy","poke_f32","poke_u32","poke_ptr","pack2","pack3","list_to_f32","free_mem",
                     "panic","assert","len","type_of","sizeof",
                     "random_seed","random_int","random_float","time_now_ms","int_to_hex","int_to_bin",NULL};
@@ -2926,9 +3507,9 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                 for (int j = 0; j < sym->type->func.param_count; j++) {
                     if (j > 0) fprintf(emit->out, ", ");
                     MixType *pt = sym->type->func.param_types[j];
-                    if (pt && pt->kind == TYPE_SHAPE) fprintf(emit->out, "void *");
-                    else if (pt && type_is_float(pt)) fprintf(emit->out, "double");
-                    else fprintf(emit->out, "%s", c_type(pt));
+                    bool param_mutable = sym->type->func.param_mutable &&
+                        sym->type->func.param_mutable[j];
+                    emit_c_fnptr_param_type(emit, pt, param_mutable);
                 }
                 if (sym->type->func.param_count == 0) fprintf(emit->out, "void");
                 fprintf(emit->out, ");\n");
@@ -2957,9 +3538,9 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                 for (int k = 0; k < sym->type->func.param_count; k++) {
                     if (k > 0) fprintf(emit->out, ", ");
                     MixType *pt = sym->type->func.param_types[k];
-                    if (pt && pt->kind == TYPE_SHAPE) fprintf(emit->out, "void *");
-                    else if (pt && type_is_float(pt)) fprintf(emit->out, "double");
-                    else fprintf(emit->out, "%s", c_type(pt));
+                    bool param_mutable = sym->type->func.param_mutable &&
+                        sym->type->func.param_mutable[k];
+                    emit_c_fnptr_param_type(emit, pt, param_mutable);
                 }
                 if (sym->type->func.param_count == 0) fprintf(emit->out, "void");
                 fprintf(emit->out, ");\n");
@@ -3068,12 +3649,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                 if (j > 0) fprintf(emit->out, ", ");
                 Param *p = &decl->fn_decl.params[j];
                 MixType *pt = p->type ? p->type->resolved_type : NULL;
-                if (pt && pt->kind == TYPE_SHAPE)
-                    fprintf(emit->out, "%s *", pt->shape.name);
-                else if (pt && type_is_float(pt))
-                    fprintf(emit->out, "double");
-                else
-                    fprintf(emit->out, "%s", c_type(pt));
+                emit_c_param_decl(emit, pt, p->name, p->is_mutable);
             }
             if (decl->fn_decl.param_count == 0) fprintf(emit->out, "void");
             fprintf(emit->out, ");\n");
@@ -3098,12 +3674,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                     fprintf(emit->out, ", ");
                     Param *p = &m->fn_decl.params[k];
                     MixType *pt = p->type ? p->type->resolved_type : NULL;
-                    if (pt && pt->kind == TYPE_SHAPE)
-                        fprintf(emit->out, "%s *", pt->shape.name);
-                    else if (pt && type_is_float(pt))
-                        fprintf(emit->out, "double");
-                    else
-                        fprintf(emit->out, "%s", c_type(pt));
+                    emit_c_param_decl(emit, pt, p->name, p->is_mutable);
                 }
                 fprintf(emit->out, ");\n");
             }
@@ -3121,7 +3692,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                         if (k > 0) fprintf(emit->out, ", ");
                         Param *p = &cd->fn_decl.params[k];
                         MixType *pt = p->type ? p->type->resolved_type : NULL;
-                        fprintf(emit->out, "%s", c_type(pt));
+                        emit_c_param_decl(emit, pt, p->name, p->is_mutable);
                     }
                     if (cd->fn_decl.param_count == 0) fprintf(emit->out, "void");
                     fprintf(emit->out, ");\n");

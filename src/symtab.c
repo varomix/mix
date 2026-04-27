@@ -30,6 +30,8 @@ void symtab_insert(SymTab *st, const char *name, MixType *type, bool is_mutable)
     sym->type = type;
     sym->is_mutable = is_mutable;
     sym->is_global = false;
+    sym->has_mutation = false;
+    sym->is_stack_slot = false;
     sym->is_pointer_slot = false;
     sym->next = st->current->symbols;
     st->current->symbols = sym;

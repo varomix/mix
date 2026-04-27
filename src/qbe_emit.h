@@ -55,6 +55,11 @@ typedef struct {
     // Reset at function entry, walked before each `ret` to emit mix_release.
     char *rc_locals[256];
     int   rc_local_count;
+    // Mutable params are passed by address, copied into local storage at
+    // function entry, then written back on every return path.
+    char *mutable_param_names[256];
+    MixType *mutable_param_types[256];
+    int mutable_param_count;
     // Names of shape types declared in THIS translation unit. SHAPE_LIT
     // codegen passes `$release_<Name>` only if the shape is in here;
     // otherwise it passes 0 and lets mix_release fall back to a plain

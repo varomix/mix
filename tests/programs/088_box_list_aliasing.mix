@@ -1,0 +1,17 @@
+shape Item
+    id: int
+
+main() ~
+    long = zone_create("long", 4096)
+    items! = [
+        box(long, Item(id: 1)),
+        box(long, Item(id: 2))
+    ]
+
+    for item! in items
+        item.id += 10
+
+    print(items[0].id)
+    print(items[1].id)
+
+    zone_destroy(long)

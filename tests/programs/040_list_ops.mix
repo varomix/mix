@@ -1,6 +1,6 @@
 // list operations — sort, contains, index_of, pop, reverse, insert, remove, join
 main()
-    nums = [5, 3, 1, 4, 2]
+    nums! = [5, 3, 1, 4, 2]
 
     // sort
     nums.sort!()

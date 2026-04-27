@@ -1,0 +1,16 @@
+shape Token
+    id: int
+
+make_token(flag: bool) -> Token
+    if flag
+        done Token(id: 7)
+
+    t! = Token(id: 3)
+    t.id = 9
+    t
+
+main()
+    a = make_token(true)
+    b = make_token(false)
+    print(a.id)
+    print(b.id)

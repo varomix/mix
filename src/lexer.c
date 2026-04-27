@@ -45,6 +45,8 @@ const char *token_kind_name(TokenKind kind) {
         case TOK_STREAM:     return "STREAM";
         case TOK_YIELD:      return "YIELD";
         case TOK_SHARED:     return "SHARED";
+        case TOK_REF:        return "REF";
+        case TOK_REF_MUT:    return "REF_MUT";
         case TOK_REPEAT:     return "REPEAT";
         case TOK_AS:         return "AS";
         case TOK_THEN:       return "THEN";
@@ -189,6 +191,7 @@ static Keyword keywords[] = {
     {"and", TOK_AND}, {"or", TOK_OR}, {"not", TOK_NOT},
     {"go", TOK_GO}, {"run", TOK_RUN}, {"wait", TOK_WAIT},
     {"stream", TOK_STREAM}, {"yield", TOK_YIELD}, {"shared", TOK_SHARED},
+    {"ref", TOK_REF},
     {"repeat", TOK_REPEAT}, {"as", TOK_AS}, {"then", TOK_THEN}, {"set", TOK_SET},
     {"true", TOK_TRUE}, {"false", TOK_FALSE}, {"none", TOK_NONE},
     // Type keywords
@@ -226,6 +229,16 @@ static void scan_identifier(Lexer *lex) {
     if (peek(lex) == '!') {
         advance(lex);
         TokenKind kw = lookup_keyword(start, length);
+        if (kw == TOK_REF) {
+            Token tok = {0};
+            tok.kind = TOK_REF_MUT;
+            tok.start = start;
+            tok.length = length + 1;
+            tok.line = lex->line;
+            tok.col = start_col;
+            emit_token(lex, tok);
+            return;
+        }
         // Keywords can't be mutable
         if (kw != TOK_IDENT) {
             SrcLoc loc = {lex->filename, lex->line, start_col};

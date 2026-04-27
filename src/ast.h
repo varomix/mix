@@ -70,6 +70,7 @@ typedef enum {
     // Type nodes
     NODE_TYPE_NAME,
     NODE_TYPE_PTR,
+    NODE_TYPE_REF,
     NODE_TYPE_OPTIONAL,     // T?
 
     // Concurrency
@@ -192,6 +193,7 @@ struct AstNode {
         // NODE_FOR_STMT
         struct {
             char *var_name;
+            bool var_is_mutable;
             char *index_name;   // NULL if no index var
             AstNode *iterable;
             AstNode *body;
@@ -269,7 +271,12 @@ struct AstNode {
         struct { bool value; } bool_lit;
 
         // NODE_IDENT
-        struct { char *name; bool is_mutable; bool is_pointer_slot; } ident;
+        struct {
+            char *name;
+            bool is_mutable;
+            bool is_pointer_slot;
+            bool is_stack_slot;
+        } ident;
 
         // NODE_BINARY_EXPR
         struct { TokenKind op; AstNode *left; AstNode *right; } binary;
@@ -393,6 +400,7 @@ struct AstNode {
             char *method_name;
             AstNode **args;
             int arg_count;
+            bool is_mutable_call;
             bool is_field_call;
         } method_call;
 
@@ -435,6 +443,12 @@ struct AstNode {
 
         // NODE_TYPE_PTR
         struct { AstNode *base_type; } type_ptr;
+
+        // NODE_TYPE_REF
+        struct {
+            AstNode *base_type;
+            bool is_mutable;
+        } type_ref;
 
         // NODE_TYPE_OPTIONAL
         struct { AstNode *inner_type; } type_optional;

@@ -10,6 +10,11 @@ typedef struct Symbol {
     MixType *type;
     bool is_mutable;
     bool is_global;     // module-level mutable; emit/read as global storage
+    bool has_mutation;  // fn/method declared with trailing `!`
+    // When true, `%v.<name>` names an alloca-backed storage slot rather than
+    // an SSA value. QBE uses this to choose a load even for read-only loop
+    // bindings whose language-level mutability is false.
+    bool is_stack_slot;
     // For SHAPE-typed variables only: when true, %v.<name> is an alloca slot
     // holding a pointer to the shape (e.g. a for-each loop var over a shape
     // list). When false (the default), %v.<name> is the pointer itself —

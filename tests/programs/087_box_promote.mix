@@ -1,0 +1,29 @@
+shape Vec2
+    x: float
+    y: float
+
+shape Sprite
+    pos: Vec2
+    vel: Vec2
+
+    update(dt: float) !
+        pos!.x += vel.x * dt
+        pos!.y += vel.y * dt
+
+main() ~
+    long = zone_create("long", 4096)
+
+    a! = box(long, Sprite(
+        pos: Vec2(x: 1.0, y: 2.0),
+        vel: Vec2(x: 3.0, y: 4.0)
+    ))
+    b = promote(long, a)
+
+    a.update!(2.0)
+
+    print(a.pos.x)
+    print(a.pos.y)
+    print(b.pos.x)
+    print(b.pos.y)
+
+    zone_destroy(long)

@@ -335,9 +335,15 @@ static void emit_completion(JsonWriter *w, const char *label, int kind,
 
 static void add_builtin_methods(JsonWriter *w, MixType *type) {
     if (!type) return;
+    while (type && (type->kind == TYPE_REF || type->kind == TYPE_BOX)) {
+        if (type->kind == TYPE_REF) type = type->ref.base;
+        else type = type->box.inner;
+    }
     switch (type->kind) {
         case TYPE_LIST:
             emit_completion(w, "push", 2, "push!(value)");
+            emit_completion(w, "at", 2, "at(index: int) -> ref value");
+            emit_completion(w, "at_mut", 2, "at_mut!(index: int) -> ref! value");
             emit_completion(w, "len", 5, "int");
             break;
         case TYPE_STR:

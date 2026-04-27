@@ -48,6 +48,8 @@ typedef enum {
     TOK_STREAM,
     TOK_YIELD,
     TOK_SHARED,
+    TOK_REF,
+    TOK_REF_MUT,
     TOK_REPEAT,
     TOK_AS,
     TOK_THEN,

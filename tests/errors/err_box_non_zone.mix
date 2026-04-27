@@ -1,0 +1,3 @@
+// ERROR: argument 1 of 'box': expected Zone
+main()
+    x = box(1, 2)

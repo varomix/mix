@@ -82,6 +82,14 @@ static AstNode *parse_type(Parser *p);
 static AstNode *parse_type(Parser *p) {
     SrcLoc loc = tok_loc(p);
 
+    if (match_tok(p, TOK_REF) || match_tok(p, TOK_REF_MUT)) {
+        TokenKind op = p->tokens[p->pos - 1].kind;
+        AstNode *node = ast_new(p->arena, NODE_TYPE_REF, loc);
+        node->type_ref.is_mutable = (op == TOK_REF_MUT);
+        node->type_ref.base_type = parse_type(p);
+        return node;
+    }
+
     // Pointer type: *T
     if (match_tok(p, TOK_STAR)) {
         AstNode *node = ast_new(p->arena, NODE_TYPE_PTR, loc);
@@ -648,6 +656,14 @@ static AstNode *parse_primary(Parser *p) {
             node->unary.operand = parse_expr_prec(p, PREC_UNARY);
             return node;
         }
+        case TOK_REF:
+        case TOK_REF_MUT: {
+            TokenKind op = advance_tok(p)->kind;
+            AstNode *node = ast_new(p->arena, NODE_UNARY_EXPR, loc);
+            node->unary.op = op;
+            node->unary.operand = parse_expr_prec(p, PREC_UNARY);
+            return node;
+        }
         case TOK_SHARED: {
             // shared int(expr) or shared(expr)
             advance_tok(p); // skip 'shared'
@@ -746,6 +762,7 @@ static AstNode *parse_expr_prec(Parser *p, Precedence min_prec) {
             break;
         }
         char *field_name = tok_str(p, field);
+        bool is_mut = (field->kind == TOK_IDENT_MUT);
         advance_tok(p);
 
         // Check for method call: obj.name(args)
@@ -792,6 +809,7 @@ static AstNode *parse_expr_prec(Parser *p, Precedence min_prec) {
             AstNode *node = ast_new(p->arena, NODE_METHOD_CALL, dot_loc);
             node->method_call.object = left;
             node->method_call.method_name = field_name;
+            node->method_call.is_mutable_call = is_mut;
 
             AstNode **args = NULL;
             int arg_count = 0;
@@ -938,18 +956,32 @@ static AstNode *parse_for_stmt(Parser *p) {
     expect(p, TOK_FOR);
 
     AstNode *node = ast_new(p->arena, NODE_FOR_STMT, loc);
+    node->for_stmt.var_is_mutable = false;
 
-    // Parse: for var in expr  OR  for idx, var in expr
-    Token *first = expect(p, TOK_IDENT);
+    // Parse: for var in expr
+    //     or for var! in expr
+    //     or for idx, var in expr
+    //     or for idx, var! in expr
+    Token *first = advance_tok(p);
+    if (first->kind != TOK_IDENT && first->kind != TOK_IDENT_MUT) {
+        mix_error(tok_loc(p), "expected identifier after 'for'");
+        return node;
+    }
     char *first_name = tok_str(p, first);
 
     if (match_tok(p, TOK_COMMA)) {
-        Token *second = expect(p, TOK_IDENT);
+        Token *second = advance_tok(p);
+        if (second->kind != TOK_IDENT && second->kind != TOK_IDENT_MUT) {
+            mix_error(tok_loc(p), "expected loop variable name after ','");
+            return node;
+        }
         node->for_stmt.index_name = first_name;
         node->for_stmt.var_name = tok_str(p, second);
+        node->for_stmt.var_is_mutable = (second->kind == TOK_IDENT_MUT);
     } else {
         node->for_stmt.var_name = first_name;
         node->for_stmt.index_name = NULL;
+        node->for_stmt.var_is_mutable = (first->kind == TOK_IDENT_MUT);
     }
 
     expect(p, TOK_IN);
@@ -1242,6 +1274,7 @@ static AstNode *parse_fn_decl(Parser *p) {
 
     AstNode *node = ast_new(p->arena, NODE_FN_DECL, loc);
     node->fn_decl.name = tok_str(p, name_tok);
+    if (name_tok->kind == TOK_IDENT_MUT) node->fn_decl.has_mutation = true;
 
     // Parse parameters
     node->fn_decl.params = parse_params(p, &node->fn_decl.param_count);
@@ -1276,6 +1309,7 @@ static AstNode *parse_extern_fn_decl(Parser *p) {
 
     AstNode *node = ast_new(p->arena, NODE_EXTERN_FN_DECL, loc);
     node->extern_fn_decl.name = tok_str(p, name_tok);
+    if (name_tok->kind == TOK_IDENT_MUT) node->extern_fn_decl.has_mutation = true;
 
     // Optional C symbol name: gl_Clear "glad_glClear" (...)
     if (check(p, TOK_STRING_LIT)) {

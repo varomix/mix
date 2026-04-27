@@ -1,0 +1,10 @@
+// ERROR: method 'update' is mutating
+shape Sprite
+    x: float
+
+    update(dt: float) !
+        x = x + dt
+
+main()
+    s! = Sprite(x: 1.0)
+    s.update(2.0)

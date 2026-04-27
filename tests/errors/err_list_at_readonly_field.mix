@@ -1,0 +1,7 @@
+// ERROR: cannot assign to field 'x' on a non-mutable temporary
+shape Sprite
+    x: float
+
+main()
+    sprites! = [Sprite(x: 1.0)]
+    sprites.at(0).x = 2.0

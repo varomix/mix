@@ -1,0 +1,21 @@
+// Mutable `for x! in list` must write changes back to the underlying list,
+// including when the loop body exits via `continue`.
+
+main()
+    nums! = [1, 2, 3]
+    for n! in nums
+        n = n + 10
+    print(nums)
+
+    floats! = [1.5, 2.5]
+    for f! in floats
+        f = f * 2.0
+    print(floats[0])
+    print(floats[1])
+
+    nums2! = [5, 6, 7]
+    for i, n! in nums2
+        n = n * 2
+        if i == 1
+            continue
+    print(nums2)

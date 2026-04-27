@@ -9,6 +9,8 @@ typedef enum {
     TYPE_UINT8, TYPE_UINT16, TYPE_UINT32, TYPE_UINT64,
     TYPE_FLOAT32, TYPE_FLOAT64,
     TYPE_PTR,
+    TYPE_REF,
+    TYPE_BOX,
     TYPE_LIST,
     TYPE_MAP,
     TYPE_OPTIONAL,
@@ -17,6 +19,7 @@ typedef enum {
     TYPE_NAMED,
     TYPE_INFER,
     TYPE_SHARED,
+    TYPE_ZONE,
     TYPE_TASK,
     TYPE_RESULT,
     TYPE_SET,
@@ -42,12 +45,15 @@ struct MixType {
     TypeKind kind;
     union {
         struct { struct MixType *base; } ptr;
+        struct { struct MixType *base; bool is_mutable; } ref;
+        struct { struct MixType *inner; } box;
         struct { struct MixType *elem_type; } list;
         struct { struct MixType *key_type; struct MixType *val_type; } map;
         struct { struct MixType *inner; } optional;
         struct {
             struct MixType *return_type;
             struct MixType **param_types;
+            bool *param_mutable;
             int param_count;
             bool is_variadic;
             // Generic constraints copied from the AST so call sites can

@@ -1,0 +1,3 @@
+after pressed=F clicked=T
+set2 pressed=T clicked=T
+clr1 pressed=F clicked=T

@@ -1,0 +1,7 @@
+// ERROR: cannot spawn 'set_to' with mutable parameter(s) via `go`
+set_to(v!: int, next: int)
+    v! = next
+
+main()
+    x! = 0
+    go set_to(x, 1)

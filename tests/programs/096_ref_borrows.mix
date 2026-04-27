@@ -1,0 +1,32 @@
+shape Sprite
+    x: int
+
+    bump() !
+        x = x + 1
+
+show_len(items: ref [int])
+    print(items.len)
+
+bump_int(v: ref! int)
+    *v = *v + 7
+
+main()
+    nums! = [10, 20, 30]
+    show_len(ref nums)
+
+    r = nums.at(1)
+    print(*r)
+
+    bump_int(nums.at_mut!(1))
+    print(nums[1])
+
+    x! = 5
+    rx = ref! x
+    *rx = *rx + 3
+    print(x)
+
+    sprites! = [Sprite(x: 1), Sprite(x: 2)]
+    s = sprites.at(0)
+    print(s.x)
+    sprites.at_mut!(1).bump!()
+    print(sprites.at(1).x)

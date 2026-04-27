@@ -1,0 +1,3 @@
+// ERROR: cannot return a ref type
+bad(x: ref int) -> ref int
+    x

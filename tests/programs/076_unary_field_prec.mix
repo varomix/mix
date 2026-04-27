@@ -14,8 +14,8 @@ shape Sprite
 main()
     a = Sprite(pos: Vec2(x: 0.0, y: 0.0), vel: Vec2(x: 7.0, y: 8.0))
     b = Sprite(pos: Vec2(x: 0.0, y: 0.0), vel: Vec2(x: 9.0, y: 10.0))
-    list = [a, b]
-    for sp in list
+    list! = [a, b]
+    for sp! in list
         // Read, negate, write back through nested fields — exercises the
         // unary-vs-field precedence and the for-each-loop-var pointer slot.
         print(sp.vel.x)

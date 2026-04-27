@@ -1,7 +1,7 @@
 // lists — create, index, len, push, iterate
 main()
     // list literal
-    nums = [10, 20, 30, 40, 50]
+    nums! = [10, 20, 30, 40, 50]
     print(nums[0])
     print(nums[2])
     print(nums[4])

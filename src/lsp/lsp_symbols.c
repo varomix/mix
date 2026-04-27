@@ -456,6 +456,8 @@ static const char *ast_type_name(AstNode *type_node) {
     if (!type_node) return NULL;
     if (type_node->kind == NODE_TYPE_NAME) return type_node->type_name.name;
     if (type_node->kind == NODE_TYPE_PTR) return "*byte";
+    if (type_node->kind == NODE_TYPE_REF)
+        return type_node->type_ref.is_mutable ? "ref!" : "ref";
     return NULL;
 }
 

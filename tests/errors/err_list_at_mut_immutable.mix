@@ -1,0 +1,7 @@
+// ERROR: cannot call mutating method 'at_mut!' through immutable 'sprites'
+shape Sprite
+    x: float
+
+main()
+    sprites = [Sprite(x: 1.0)]
+    sprites.at_mut!(0).x = 2.0

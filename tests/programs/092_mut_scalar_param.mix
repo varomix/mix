@@ -1,0 +1,19 @@
+// Mutable scalar params are passed by address and write back to the caller.
+
+shape Counter
+    n: int
+
+set_to(v!: int, next: int)
+    v! = next
+
+set_field(c!: Counter, next: int)
+    set_to(c.n, next)
+
+main()
+    x! = 1
+    set_to(x, 41)
+    print(x)
+
+    c! = Counter(n: 0)
+    set_field(c, 99)
+    print(c.n)

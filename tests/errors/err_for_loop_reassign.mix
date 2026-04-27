@@ -1,0 +1,4 @@
+// ERROR: cannot assign to immutable variable 'i'
+main()
+    for i in 0..3
+        i! += 1

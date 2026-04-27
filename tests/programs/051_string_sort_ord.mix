@@ -12,12 +12,12 @@ main()
 
     // String list sorting (alphabetical)
     names! = ["charlie", "alice", "bob", "dave"]
-    names.sort()
+    names.sort!()
     print(names)
 
     // Int list sorting still works
     nums! = [5, 3, 1, 4, 2]
-    nums.sort()
+    nums.sort!()
     print(nums)
 
     // ord() builtin

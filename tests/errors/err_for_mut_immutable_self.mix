@@ -1,0 +1,11 @@
+// ERROR: cannot use mutable loop binding 'n!' through immutable 'self'
+shape CounterList
+    nums: [int]
+
+    bump_all()
+        for n! in self.nums
+            n = n + 1
+
+main()
+    c = CounterList(nums: [1, 2])
+    c.bump_all()

@@ -1,0 +1,43 @@
+// Regression: adjacent bool fields used to clobber each other because
+// type_to_qbe_mem treated bool as "w" (4-byte store) while type_size
+// treated it as 1 byte. A `b.just_clicked = true` (storew at offset 1)
+// followed by `b.pressed = false` (storew at offset 0) silently zeroed
+// the just_clicked byte. Fix in types.c: store bools as "b" / load as
+// "ub" so writes match the 1-byte field stride.
+
+shape Btn
+    pressed: bool
+    just_clicked: bool
+
+// Mimics mixel's button_update: clear just_clicked, conditionally set it
+// while inside, then unconditionally clear pressed when not held. Pre-fix
+// the second store wiped the bit set by the first.
+update(b!: Btn, inside: bool, jr: bool, held: bool)
+    b.just_clicked = false
+    if inside
+        if jr and b.pressed
+            b.just_clicked = true
+    if not held
+        b.pressed = false
+
+show(label: str, b: Btn)
+    p! = "F"
+    if b.pressed
+        p! = "T"
+    c! = "F"
+    if b.just_clicked
+        c! = "T"
+    print(label + " pressed=" + p + " clicked=" + c)
+
+main()
+    b! = Btn(pressed: true, just_clicked: false)
+    update(b, true, true, false)
+    show("after", b)        // should be: pressed=F, clicked=T
+
+    // Three adjacent bool fields — same overlap risk on a longer struct.
+    b2! = Btn(pressed: false, just_clicked: false)
+    b2.pressed = true
+    b2.just_clicked = true
+    show("set2", b2)        // pressed=T, clicked=T
+    b2.pressed = false
+    show("clr1", b2)        // pressed=F, clicked=T  (clearing pressed must NOT clear just_clicked)

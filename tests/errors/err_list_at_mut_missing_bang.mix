@@ -1,0 +1,4 @@
+// ERROR: method 'at_mut' is mutating; call it as `at_mut!(...)`
+main()
+    nums! = [1, 2]
+    print(nums.at_mut(0))

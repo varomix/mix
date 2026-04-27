@@ -1,0 +1,3 @@
+// ERROR: Box expects exactly 1 type argument
+bad(x: Box[int, int])
+    x

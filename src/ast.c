@@ -85,7 +85,8 @@ void ast_print(AstNode *node, int indent) {
             ast_print(node->while_stmt.body, indent + 1);
             break;
         case NODE_FOR_STMT:
-            printf("For: %s", node->for_stmt.var_name);
+            printf("For: %s%s", node->for_stmt.var_name,
+                   node->for_stmt.var_is_mutable ? "!" : "");
             if (node->for_stmt.index_name) printf(", %s", node->for_stmt.index_name);
             printf("\n");
             ast_print(node->for_stmt.iterable, indent + 1);
@@ -250,7 +251,8 @@ void ast_print(AstNode *node, int indent) {
             ast_print(node->field_expr.object, indent + 1);
             break;
         case NODE_METHOD_CALL:
-            printf("MethodCall: .%s(%d args)\n", node->method_call.method_name,
+            printf("MethodCall: .%s%s(%d args)\n", node->method_call.method_name,
+                   node->method_call.is_mutable_call ? "!" : "",
                    node->method_call.arg_count);
             ast_print(node->method_call.object, indent + 1);
             for (int i = 0; i < node->method_call.arg_count; i++)
@@ -276,6 +278,10 @@ void ast_print(AstNode *node, int indent) {
         case NODE_TYPE_PTR:
             printf("TypePtr\n");
             ast_print(node->type_ptr.base_type, indent + 1);
+            break;
+        case NODE_TYPE_REF:
+            printf("TypeRef%s\n", node->type_ref.is_mutable ? "!" : "");
+            ast_print(node->type_ref.base_type, indent + 1);
             break;
         case NODE_TYPE_OPTIONAL:
             printf("TypeOptional\n");
@@ -405,6 +411,7 @@ static AstNode *do_clone(AstNode *node, Arena *arena,
             break;
         case NODE_FOR_STMT:
             out->for_stmt.var_name = clone_str(arena, node->for_stmt.var_name);
+            out->for_stmt.var_is_mutable = node->for_stmt.var_is_mutable;
             out->for_stmt.index_name = clone_str(arena, node->for_stmt.index_name);
             out->for_stmt.iterable = do_clone(node->for_stmt.iterable, arena, bindings, binding_count);
             out->for_stmt.body = do_clone(node->for_stmt.body, arena, bindings, binding_count);
@@ -528,6 +535,8 @@ static AstNode *do_clone(AstNode *node, Arena *arena,
             out->method_call.method_name = clone_str(arena, node->method_call.method_name);
             out->method_call.args = clone_node_array(node->method_call.args,
                 node->method_call.arg_count, arena, bindings, binding_count);
+            out->method_call.is_mutable_call = node->method_call.is_mutable_call;
+            out->method_call.is_field_call = node->method_call.is_field_call;
             break;
         case NODE_SHAPE_LIT:
             out->shape_lit.shape_name = clone_str(arena, node->shape_lit.shape_name);
@@ -560,6 +569,10 @@ static AstNode *do_clone(AstNode *node, Arena *arena,
             break;
         case NODE_TYPE_PTR:
             out->type_ptr.base_type = do_clone(node->type_ptr.base_type, arena, bindings, binding_count);
+            break;
+        case NODE_TYPE_REF:
+            out->type_ref.is_mutable = node->type_ref.is_mutable;
+            out->type_ref.base_type = do_clone(node->type_ref.base_type, arena, bindings, binding_count);
             break;
         case NODE_TYPE_OPTIONAL:
             out->type_optional.inner_type = do_clone(node->type_optional.inner_type, arena, bindings, binding_count);

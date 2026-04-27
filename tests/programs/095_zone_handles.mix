@@ -1,0 +1,30 @@
+// Explicit Zone handles: create, allocate, reset, and inspect metrics.
+
+main()
+    z: Zone = zone_create("frame", 1024)
+
+    print(type_of(z))
+    print(_mix_zone_alloc_bytes(z))
+    print(_mix_zone_high_water(z))
+    print(_mix_zone_reset_count(z))
+
+    buf = zone_alloc(z, 8)
+    poke_u32(buf, 0, 123)
+    print(peek_u32(buf, 0))
+
+    buf2 = zone_alloc(z, 24)
+    print(_mix_zone_alloc_bytes(z))
+    print(_mix_zone_high_water(z))
+
+    zone_reset(z)
+    print(_mix_zone_alloc_bytes(z))
+    print(_mix_zone_high_water(z))
+    print(_mix_zone_reset_count(z))
+
+    buf3 = zone_alloc(z, 4)
+    poke_u32(buf3, 0, 77)
+    print(peek_u32(buf3, 0))
+    print(_mix_zone_alloc_bytes(z))
+    print(_mix_zone_high_water(z))
+
+    zone_destroy(z)

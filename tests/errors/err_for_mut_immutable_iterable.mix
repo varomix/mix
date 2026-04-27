@@ -1,0 +1,5 @@
+// ERROR: cannot use mutable loop binding 'n!' through immutable 'nums'
+main()
+    nums = [1, 2, 3]
+    for n! in nums
+        n = n + 1

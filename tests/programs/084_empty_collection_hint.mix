@@ -1,0 +1,31 @@
+// Empty collection literals (`[]`, `{}`, `set()` style) used to default
+// to [int] / {str: int} / set str regardless of context, so an
+// assignment like `bricks.sprites = []` failed with a type mismatch
+// against the field's declared [Sprite]. Sema now hints the literal's
+// element type from the surrounding lvalue / field declaration / var
+// type annotation.
+
+shape Group
+    sprites: [int]
+
+shape Box
+    items: [int]
+
+main()
+    // Field assignment via mutable shape param — pre-fix this failed.
+    g! = Group(sprites: [1, 2, 3])
+    g.sprites = []
+    print(g.sprites.len)              // 0
+
+    // Shape constructor with empty list — hint comes from the field type.
+    b! = Box(items: [])
+    print(b.items.len)                // 0
+
+    // Reassignment of a typed mutable variable.
+    xs! = [10, 20, 30]
+    xs = []
+    print(xs.len)                     // 0
+
+    // Variable decl with explicit type annotation.
+    ys: [int] = []
+    print(ys.len)                     // 0

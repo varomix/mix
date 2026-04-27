@@ -24,6 +24,18 @@ int mix_type_to_string(MixType *type, char *buf, int size) {
             n += mix_type_to_string(type->ptr.base, buf + n, size - n);
             return n;
         }
+        case TYPE_REF: {
+            int n = snprintf(buf, size, "ref%s ",
+                             type->ref.is_mutable ? "!" : "");
+            n += mix_type_to_string(type->ref.base, buf + n, size - n);
+            return n;
+        }
+        case TYPE_BOX: {
+            int n = snprintf(buf, size, "Box[");
+            n += mix_type_to_string(type->box.inner, buf + n, size - n);
+            n += snprintf(buf + n, size - n, "]");
+            return n;
+        }
         case TYPE_LIST: {
             int n = snprintf(buf, size, "[");
             n += mix_type_to_string(type->list.elem_type, buf + n, size - n);
@@ -64,6 +76,8 @@ int mix_type_to_string(MixType *type, char *buf, int size) {
             n += mix_type_to_string(type->shared.inner, buf + n, size - n);
             return n;
         }
+        case TYPE_ZONE:
+            return snprintf(buf, size, "Zone");
         case TYPE_TASK: {
             int n = snprintf(buf, size, "task<");
             n += mix_type_to_string(type->task.result_type, buf + n, size - n);

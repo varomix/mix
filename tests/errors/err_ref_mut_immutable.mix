@@ -1,0 +1,4 @@
+// ERROR: cannot take mutable ref through immutable 'x'
+main()
+    x = 1
+    y = ref! x

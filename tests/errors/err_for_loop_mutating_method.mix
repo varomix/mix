@@ -1,0 +1,11 @@
+// ERROR: cannot call mutating method 'update!' through immutable 's'
+shape Sprite
+    x: float
+
+    update(dt: float) !
+        x = x + dt
+
+main()
+    sprites = [Sprite(x: 1.0)]
+    for s in sprites
+        s.update!(2.0)

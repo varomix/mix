@@ -1,0 +1,8 @@
+// ERROR: cannot assign to field 'x' through immutable 's'
+shape Sprite
+    x: float
+
+main()
+    sprites = [Sprite(x: 1.0)]
+    for s in sprites
+        s.x = 2.0

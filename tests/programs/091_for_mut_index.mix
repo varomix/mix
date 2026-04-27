@@ -1,0 +1,17 @@
+// Parser + runtime regression for `for i, x! in list`.
+
+shape Sprite
+    x: float
+
+main()
+    a! = Sprite(x: 1.0)
+    b! = Sprite(x: 2.0)
+    sprites! = [a, b]
+
+    for i, s! in sprites
+        s.x = s.x + to_float(i)
+
+    print(a.x)
+    print(b.x)
+    print(sprites[0].x)
+    print(sprites[1].x)

@@ -1,8 +1,8 @@
-// Iterating a [Sprite] (or any [Shape]) and mutating each element via a
-// `s.method!()` call. Previously the QBE backend would compute the address
-// of the loop var's slot instead of loading the pointer the slot holds, so
-// `Sprite_update(self, ...)` would write off into the slot's memory and the
-// outer `a`/`b` would never see the mutation. The C backend already worked.
+// Iterating a [Sprite] (or any [Shape]) and mutating each element via an
+// explicit `for s! in list` loop. Previously the QBE backend would compute
+// the address of the loop var's slot instead of loading the pointer the slot
+// holds, so `Sprite_update(self, ...)` would write off into the slot's
+// memory and the outer `a`/`b` would never see the mutation.
 
 shape Vec2
     x: float
@@ -19,10 +19,14 @@ shape Sprite
 main()
     a! = Sprite(pos: Vec2(x: 0.0, y: 0.0), vel: Vec2(x: 1.0, y: 2.0))
     b! = Sprite(pos: Vec2(x: 10.0, y: 10.0), vel: Vec2(x: 3.0, y: 4.0))
-    list = [a, b]
-    for s in list
+    list! = [a, b]
+    for s! in list
         s.update!(1.0)
     print(a.pos.x)
     print(a.pos.y)
     print(b.pos.x)
     print(b.pos.y)
+    print(list[0].pos.x)
+    print(list[0].pos.y)
+    print(list[1].pos.x)
+    print(list[1].pos.y)

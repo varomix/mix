@@ -1,0 +1,4 @@
+// ERROR: cannot call mutating method 'update!' through immutable 'counter'
+main()
+    counter = shared int(0)
+    counter.update!(v => v + 1)

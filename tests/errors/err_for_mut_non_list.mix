@@ -1,0 +1,4 @@
+// ERROR: mutable loop binding 'i!' is only supported when iterating a list
+main()
+    for i! in 0..3
+        print(i)

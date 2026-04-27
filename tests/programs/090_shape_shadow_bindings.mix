@@ -1,0 +1,22 @@
+// Regression: shadowed shape locals and foreach bindings must not reuse the
+// same `%v.name` slot. The outer `s` should survive both an inner block
+// shadow and a `for s in ...` loop unchanged.
+
+shape Item
+    id: int
+
+main()
+    s! = Item(id: 7)
+    items! = [Item(id: 1)]
+    items.push!(Item(id: 2))
+
+    if true
+        s = Item(id: 9)
+        print(s.id)
+
+    print(s.id)
+
+    for s in items
+        print(s.id)
+
+    print(s.id)

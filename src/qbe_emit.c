@@ -22,6 +22,80 @@ static int next_label(QbeEmitter *emit) {
     return emit->label_counter++;
 }
 
+static const char *qbe_name_tagged(QbeEmitter *emit, const char *base,
+                                   const void *tag, const char *kind) {
+    unsigned long long id = (unsigned long long)(uintptr_t)tag;
+    size_t len = strlen(base) + strlen(kind) + 40;
+    char *out = arena_alloc(emit->arena, len);
+    snprintf(out, len, "%s__%s_%llx", base, kind, id);
+    return out;
+}
+
+static const char *qbe_var_decl_name(QbeEmitter *emit, AstNode *decl) {
+    return qbe_name_tagged(emit, decl->var_decl.name, decl, "v");
+}
+
+static const char *qbe_for_binding_name(QbeEmitter *emit, AstNode *for_stmt,
+                                        const char *name, const char *role) {
+    return qbe_name_tagged(emit, name, for_stmt, role);
+}
+
+static const char *qbe_list_comp_name(QbeEmitter *emit, AstNode *expr,
+                                      const char *name) {
+    return qbe_name_tagged(emit, name, expr, "lc");
+}
+
+static const char *qbe_match_binding_name(QbeEmitter *emit, AstNode *binding,
+                                          const char *name, const char *kind) {
+    return qbe_name_tagged(emit, name, binding, kind);
+}
+
+static void qbe_local_names_reset(QbeEmitter *emit) {
+    emit->local_binding_count = 0;
+    emit->local_scope_depth = 0;
+}
+
+static void qbe_bind_local_name(QbeEmitter *emit, const char *source_name,
+                                const char *emitted_name) {
+    if (emit->local_binding_count >= 2048) return;
+    emit->local_bindings[emit->local_binding_count].source_name =
+        arena_strdup(emit->arena, source_name);
+    emit->local_bindings[emit->local_binding_count].emitted_name =
+        arena_strdup(emit->arena, emitted_name);
+    emit->local_binding_count++;
+}
+
+static bool qbe_has_local_binding(QbeEmitter *emit, const char *source_name) {
+    for (int i = emit->local_binding_count - 1; i >= 0; i--) {
+        if (strcmp(emit->local_bindings[i].source_name, source_name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char *qbe_lookup_local_name(QbeEmitter *emit,
+                                         const char *source_name) {
+    for (int i = emit->local_binding_count - 1; i >= 0; i--) {
+        if (strcmp(emit->local_bindings[i].source_name, source_name) == 0) {
+            return emit->local_bindings[i].emitted_name;
+        }
+    }
+    return source_name;
+}
+
+static void qbe_push_local_scope(QbeEmitter *emit) {
+    if (emit->local_scope_depth >= 256) return;
+    emit->local_scope_marks[emit->local_scope_depth++] =
+        emit->local_binding_count;
+}
+
+static void qbe_pop_local_scope(QbeEmitter *emit) {
+    if (emit->local_scope_depth <= 0) return;
+    emit->local_binding_count =
+        emit->local_scope_marks[--emit->local_scope_depth];
+}
+
 // Emit QBE dbgloc directive for source-level debugging (DWARF line info)
 static void emit_dbgloc(QbeEmitter *emit, SrcLoc loc) {
     if (!emit->emit_debug_info) return;
@@ -125,12 +199,11 @@ static const char *qbe_sig_type(MixType *type, Arena *arena) {
 
 // Forward decl — defined below; needed by rc_walk_collect_shape_locals.
 static bool is_owned_shape_source(AstNode *expr);
+static void emit_stmt(QbeEmitter *emit, AstNode *stmt);
 
-// Refcount Phase 3: emit `mix_release(v)` for every shape-typed local
-// tracked in `emit->rc_locals`. Call this just before any function-exit
-// `ret` to balance the retain implicit at construction time. Must be
-// emitted in the same basic block as the ret (so emit before each ret
-// site individually).
+// Refcount Phase 3: emit `mix_release(v)` for every owned shape local
+// tracked in `emit->rc_locals`. Entries are emitted QBE slot names, so
+// shadowed locals and foreach borrows don't collide on cleanup.
 //
 // mix_release is null-safe; the slot is pre-zeroed by
 // emit_rc_pre_init_locals so locals declared inside conditionals
@@ -143,7 +216,7 @@ static void emit_rc_release_locals(QbeEmitter *emit) {
     }
 }
 
-// Walk the AST collecting names of shape-typed var-decls so we can
+// Walk the AST collecting emitted slot names of shape-typed var-decls so we can
 // pre-allocate + zero-init their slots in the entry block. Without
 // this, a var-decl inside an `if` that never fires leaves an
 // uninitialized stack slot; the scope-exit release would load
@@ -154,15 +227,16 @@ static void rc_walk_collect_shape_locals(QbeEmitter *emit, AstNode *node) {
         case NODE_VAR_DECL:
             if (node->resolved_type && node->resolved_type->kind == TYPE_SHAPE &&
                 is_owned_shape_source(node->var_decl.init_expr)) {
+                const char *slot_name = qbe_var_decl_name(emit, node);
                 bool already = false;
                 for (int li = 0; li < emit->rc_local_count; li++) {
-                    if (strcmp(emit->rc_locals[li], node->var_decl.name) == 0) {
+                    if (strcmp(emit->rc_locals[li], slot_name) == 0) {
                         already = true; break;
                     }
                 }
                 if (!already && emit->rc_local_count < 256) {
                     emit->rc_locals[emit->rc_local_count++] =
-                        arena_strdup(emit->arena, node->var_decl.name);
+                        arena_strdup(emit->arena, slot_name);
                 }
             }
             break;
@@ -223,6 +297,23 @@ static bool is_owned_shape_source(AstNode *expr) {
         default:
             return false;
     }
+}
+
+static void emit_function_epilogue(QbeEmitter *emit) {
+    for (int i = emit->defer_count - 1; i >= 0; i--) {
+        emit_stmt(emit, emit->deferred[i]);
+    }
+    emit_rc_release_locals(emit);
+}
+
+static void emit_return_temp(QbeEmitter *emit, int temp) {
+    emit_function_epilogue(emit);
+    fprintf(emit->out, "\tret %%t%d\n", temp);
+}
+
+static void emit_return_void(QbeEmitter *emit) {
+    emit_function_epilogue(emit);
+    fprintf(emit->out, "\tret\n");
 }
 
 // Register a string literal and return its QBE data name
@@ -367,18 +458,6 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             return t;
         }
         case NODE_IDENT: {
-            // Check if it's a compile-time constant.
-            // We deliberately re-emit the literal at every use instead of
-            // caching the first temp. Caching looked attractive, but a temp
-            // defined inside one basic block (e.g. an `if` branch) does not
-            // dominate uses in sibling blocks — QBE then rejects the IR with
-            // "ssa temporary used undefined". Re-emitting `=l copy K` is
-            // cheap and lets QBE's own constant folding clean up later.
-            for (int i = 0; i < emit->const_count; i++) {
-                if (strcmp(emit->constants[i].name, expr->ident.name) == 0) {
-                    return emit_expr(emit, emit->constants[i].value);
-                }
-            }
             // Check if it's a field reference inside a method (translate to self.field)
             if (emit->current_shape) {
                 ShapeFieldInfo *fi = type_find_field(emit->current_shape, expr->ident.name);
@@ -408,10 +487,26 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     return t;
                 }
             }
+            bool has_local_binding = qbe_has_local_binding(emit, expr->ident.name);
+            const char *local_name = qbe_lookup_local_name(emit, expr->ident.name);
+            // Check if it's a compile-time constant.
+            // We deliberately re-emit the literal at every use instead of
+            // caching the first temp. Caching looked attractive, but a temp
+            // defined inside one basic block (e.g. an `if` branch) does not
+            // dominate uses in sibling blocks — QBE then rejects the IR with
+            // "ssa temporary used undefined". Re-emitting `=l copy K` is
+            // cheap and lets QBE's own constant folding clean up later.
+            if (!has_local_binding) {
+                for (int i = 0; i < emit->const_count; i++) {
+                    if (strcmp(emit->constants[i].name, expr->ident.name) == 0) {
+                        return emit_expr(emit, emit->constants[i].value);
+                    }
+                }
+            }
             int t = next_temp(emit);
             const char *ty = qbe_type(expr->resolved_type);
             Symbol *gsym = symtab_lookup(emit->symtab, expr->ident.name);
-            if (gsym && gsym->is_global) {
+            if (!has_local_binding && gsym && gsym->is_global) {
                 const char *load_ty = type_to_qbe_load(expr->resolved_type);
                 fprintf(emit->out, "\t%%t%d =%s load%s $g_%s\n",
                         t, ty, load_ty, expr->ident.name);
@@ -424,6 +519,7 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             // that happens to share a name with a builtin function isn't
             // mistakenly emitted as the function symbol.
             if (expr->resolved_type && expr->resolved_type->kind == TYPE_FUNC
+                && !has_local_binding
                 && gsym && gsym->type && gsym->type->kind == TYPE_FUNC) {
                 fprintf(emit->out, "\t%%t%d =l copy $%s\n", t, expr->ident.name);
                 return t;
@@ -435,15 +531,15 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             // the slot address.
             if (expr->resolved_type && expr->resolved_type->kind == TYPE_SHAPE) {
                 if (expr->ident.is_pointer_slot) {
-                    fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", t, expr->ident.name);
+                    fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", t, local_name);
                 } else {
-                    fprintf(emit->out, "\t%%t%d =l copy %%v.%s\n", t, expr->ident.name);
+                    fprintf(emit->out, "\t%%t%d =l copy %%v.%s\n", t, local_name);
                 }
             } else if (expr->ident.is_mutable) {
                 // Mutable variable — load from stack
-                fprintf(emit->out, "\t%%t%d =%s load%s %%v.%s\n", t, ty, ty, expr->ident.name);
+                fprintf(emit->out, "\t%%t%d =%s load%s %%v.%s\n", t, ty, ty, local_name);
             } else {
-                fprintf(emit->out, "\t%%t%d =%s copy %%v.%s\n", t, ty, expr->ident.name);
+                fprintf(emit->out, "\t%%t%d =%s copy %%v.%s\n", t, ty, local_name);
             }
             return t;
         }
@@ -534,7 +630,7 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             fprintf(emit->out, "@L%d\n", l_err);
             if (is_result) {
                 // Propagate the entire result (already an error)
-                fprintf(emit->out, "\tret %%t%d\n", val);
+                emit_return_temp(emit, val);
             } else {
                 // Optional: return none wrapped as result_err
                 int err_val = next_temp(emit);
@@ -542,7 +638,7 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 fprintf(emit->out, "\t%%t%d =l copy %s\n", err_val, msg);
                 int err = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l call $mix_result_err(l %%t%d)\n", err, err_val);
-                fprintf(emit->out, "\tret %%t%d\n", err);
+                emit_return_temp(emit, err);
             }
 
             // Ok: unwrap the value
@@ -787,7 +883,11 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             fprintf(emit->out, "\tstorel 0, %%v.%s\n", idx_name);
 
             // Loop variable
-            fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", expr->list_comp.var_name);
+            const char *var_name = qbe_list_comp_name(emit, expr, expr->list_comp.var_name);
+            qbe_push_local_scope(emit);
+            fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", var_name);
+            fprintf(emit->out, "\tstorel 0, %%v.%s\n", var_name);
+            qbe_bind_local_name(emit, expr->list_comp.var_name, var_name);
 
             int l_cond = next_label(emit);
             int l_body = next_label(emit);
@@ -805,7 +905,7 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", ci2, idx_name);
             int elem = next_temp(emit);
             fprintf(emit->out, "\t%%t%d =l call $mix_list_get(l %%t%d, l %%t%d)\n", elem, list_ptr, ci2);
-            fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", elem, expr->list_comp.var_name);
+            fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", elem, var_name);
 
             if (expr->list_comp.condition) {
                 int cond_val = emit_expr(emit, expr->list_comp.condition);
@@ -842,6 +942,7 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", ni, idx_name);
             fprintf(emit->out, "\tjmp @L%d\n", l_cond);
             fprintf(emit->out, "@L%d\n", l_end);
+            qbe_pop_local_scope(emit);
             return result_list;
         }
         case NODE_LAMBDA: {
@@ -1092,7 +1193,8 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                 AstNode *inner = expr->unary.operand;
                 if (inner->kind == NODE_IDENT && inner->ident.is_mutable) {
                     // Mutable variable: %v.x is already a pointer (from alloc)
-                    fprintf(emit->out, "\t%%t%d =l copy %%v.%s\n", t, inner->ident.name);
+                    fprintf(emit->out, "\t%%t%d =l copy %%v.%s\n",
+                            t, qbe_lookup_local_name(emit, inner->ident.name));
                 } else {
                     // Immutable variable or expression: spill to stack slot
                     fprintf(emit->out, "\t%%t%d =l alloc8 8\n", t);
@@ -1559,6 +1661,9 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
                     break;
                 }
             }
+            if (qbe_has_local_binding(emit, expr->call.name)) {
+                is_lambda_var = true;
+            }
             // Also treat as indirect if the symbol is not found in global scope
             // (parameters and local variables aren't in the symtab after sema)
             // or if found but not a function type
@@ -1586,7 +1691,8 @@ static int emit_expr(QbeEmitter *emit, AstNode *expr) {
             if (is_lambda_var) {
                 // Indirect call through variable holding function pointer
                 int fptr = next_temp(emit);
-                fprintf(emit->out, "\t%%t%d =l copy %%v.%s\n", fptr, expr->call.name);
+                fprintf(emit->out, "\t%%t%d =l copy %%v.%s\n",
+                        fptr, qbe_lookup_local_name(emit, expr->call.name));
                 if (has_return) {
                     fprintf(emit->out, "\t%%t%d =%s call %%t%d(", t, ret_sig, fptr);
                 } else {
@@ -2185,9 +2291,11 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt);
 
 static void emit_block(QbeEmitter *emit, AstNode *block) {
     if (!block || block->kind != NODE_BLOCK) return;
+    qbe_push_local_scope(emit);
     for (int i = 0; i < block->block.stmt_count; i++) {
         emit_stmt(emit, block->block.stmts[i]);
     }
+    qbe_pop_local_scope(emit);
 }
 
 static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
@@ -2206,6 +2314,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             }
 
             const char *ty = qbe_type(stmt->resolved_type);
+            const char *slot_name = qbe_var_decl_name(emit, stmt);
 
             // Shape variables hold a pointer to a heap-allocated shape (the
             // result of SHAPE_LIT / make_*). Use an 8-byte alloca slot rather
@@ -2223,14 +2332,14 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 bool pre_allocated = false;
                 if (is_owned_shape_source(stmt->var_decl.init_expr)) {
                     for (int li = 0; li < emit->rc_local_count; li++) {
-                        if (strcmp(emit->rc_locals[li], stmt->var_decl.name) == 0) {
+                        if (strcmp(emit->rc_locals[li], slot_name) == 0) {
                             pre_allocated = true;
                             break;
                         }
                     }
                 }
                 if (!pre_allocated) {
-                    fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", stmt->var_decl.name);
+                    fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", slot_name);
                 }
                 // Phase 3.5: if the slot already holds an owned value
                 // (we tracked it for scope-exit release), release the
@@ -2241,10 +2350,10 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 if (pre_allocated) {
                     int old_t = next_temp(emit);
                     fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n",
-                            old_t, stmt->var_decl.name);
+                            old_t, slot_name);
                     fprintf(emit->out, "\tcall $mix_release(l %%t%d)\n", old_t);
                 }
-                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", init, stmt->var_decl.name);
+                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", init, slot_name);
             } else if (stmt->var_decl.is_mutable) {
                 int init = emit_expr(emit, stmt->var_decl.init_expr);
                 // Allocate stack space for mutable variable
@@ -2258,35 +2367,36 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                     }
                 }
                 fprintf(emit->out, "\t%%v.%s =l alloc%d %d\n",
-                        stmt->var_decl.name, size >= 4 ? size : 4, size);
+                        slot_name, size >= 4 ? size : 4, size);
                 init = coerce_to_field_type(emit, init,
                         stmt->var_decl.init_expr->resolved_type, stmt->resolved_type);
-                fprintf(emit->out, "\tstore%s %%t%d, %%v.%s\n", ty, init, stmt->var_decl.name);
+                fprintf(emit->out, "\tstore%s %%t%d, %%v.%s\n", ty, init, slot_name);
             } else if (stmt->var_decl.init_expr &&
                        stmt->var_decl.init_expr->kind == NODE_INT_LIT) {
                 // Immutable int literal: emit value directly, skip intermediate temp
                 fprintf(emit->out, "\t%%v.%s =%s copy %" PRId64 "\n",
-                        stmt->var_decl.name, ty, stmt->var_decl.init_expr->int_lit.value);
+                        slot_name, ty, stmt->var_decl.init_expr->int_lit.value);
             } else if (stmt->var_decl.init_expr &&
                        stmt->var_decl.init_expr->kind == NODE_FLOAT_LIT) {
                 fprintf(emit->out, "\t%%v.%s =%s copy d_%a\n",
-                        stmt->var_decl.name, ty, stmt->var_decl.init_expr->float_lit.value);
+                        slot_name, ty, stmt->var_decl.init_expr->float_lit.value);
             } else if (stmt->var_decl.init_expr &&
                        stmt->var_decl.init_expr->kind == NODE_BOOL_LIT) {
                 fprintf(emit->out, "\t%%v.%s =%s copy %d\n",
-                        stmt->var_decl.name, ty, stmt->var_decl.init_expr->bool_lit.value ? 1 : 0);
+                        slot_name, ty, stmt->var_decl.init_expr->bool_lit.value ? 1 : 0);
             } else if (stmt->var_decl.init_expr &&
                        stmt->var_decl.init_expr->kind == NODE_STRING_LIT) {
                 const char *sname = emit_string_data(emit,
                     stmt->var_decl.init_expr->string_lit.value,
                     stmt->var_decl.init_expr->string_lit.length);
-                fprintf(emit->out, "\t%%v.%s =l copy %s\n", stmt->var_decl.name, sname);
+                fprintf(emit->out, "\t%%v.%s =l copy %s\n", slot_name, sname);
             } else {
                 // Immutable: SSA copy
                 int init = emit_expr(emit, stmt->var_decl.init_expr);
                 fprintf(emit->out, "\t%%v.%s =%s copy %%t%d\n",
-                        stmt->var_decl.name, ty, init);
+                        slot_name, ty, init);
             }
+            qbe_bind_local_name(emit, stmt->var_decl.name, slot_name);
             break;
         }
         case NODE_ASSIGN: {
@@ -2299,17 +2409,21 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             const char *mem_ty = type_to_qbe_mem(var_type ? var_type : val_type);
             const char *load_ty = type_to_qbe_load(var_type ? var_type : val_type);
             val = coerce_to_field_type(emit, val, val_type, var_type);
-            bool is_global = assign_sym && assign_sym->is_global;
+            bool is_global = !qbe_has_local_binding(emit, stmt->assign.name) &&
+                             assign_sym && assign_sym->is_global;
+            const char *slot_name = is_global
+                ? stmt->assign.name
+                : qbe_lookup_local_name(emit, stmt->assign.name);
             const char *slot_prefix = is_global ? "$g_" : "%v.";
 
             if (stmt->assign.op == TOK_EQ) {
                 fprintf(emit->out, "\tstore%s %%t%d, %s%s\n",
-                        mem_ty, val, slot_prefix, stmt->assign.name);
+                        mem_ty, val, slot_prefix, slot_name);
             } else {
                 // Compound assignment: load, op, store
                 int old = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =%s load%s %s%s\n",
-                        old, ty, load_ty, slot_prefix, stmt->assign.name);
+                        old, ty, load_ty, slot_prefix, slot_name);
                 int result = next_temp(emit);
                 const char *op;
                 switch (stmt->assign.op) {
@@ -2321,7 +2435,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 }
                 fprintf(emit->out, "\t%%t%d =%s %s %%t%d, %%t%d\n", result, ty, op, old, val);
                 fprintf(emit->out, "\tstore%s %%t%d, %s%s\n",
-                        mem_ty, result, slot_prefix, stmt->assign.name);
+                        mem_ty, result, slot_prefix, slot_name);
             }
             break;
         }
@@ -2346,7 +2460,9 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 if (stmt->if_stmt.else_block->kind == NODE_BLOCK) {
                     emit_block(emit, stmt->if_stmt.else_block);
                 } else {
+                    qbe_push_local_scope(emit);
                     emit_stmt(emit, stmt->if_stmt.else_block);
+                    qbe_pop_local_scope(emit);
                 }
                 fprintf(emit->out, "\tjmp @L%d\n", l_end);
             }
@@ -2404,14 +2520,6 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", idx_name);
                 fprintf(emit->out, "\tstorel 0, %%v.%s\n", idx_name);
 
-                // Key variable (index_name) and value variable (var_name)
-                if (stmt->for_stmt.index_name) {
-                    fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", stmt->for_stmt.index_name);
-                    fprintf(emit->out, "\tstorel 0, %%v.%s\n", stmt->for_stmt.index_name);
-                }
-                fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", stmt->for_stmt.var_name);
-                fprintf(emit->out, "\tstorel 0, %%v.%s\n", stmt->for_stmt.var_name);
-
                 int l_cond = next_label(emit);
                 int l_body = next_label(emit);
                 int l_end2 = next_label(emit);
@@ -2422,6 +2530,20 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                     mix_error(stmt->loc, "too many nested loops (max 32)");
                     break;
                 }
+                qbe_push_local_scope(emit);
+                const char *index_slot_name = NULL;
+                if (stmt->for_stmt.index_name) {
+                    index_slot_name = qbe_for_binding_name(
+                        emit, stmt, stmt->for_stmt.index_name, "for_idx");
+                    fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", index_slot_name);
+                    fprintf(emit->out, "\tstorel 0, %%v.%s\n", index_slot_name);
+                    qbe_bind_local_name(emit, stmt->for_stmt.index_name, index_slot_name);
+                }
+                const char *var_slot_name = qbe_for_binding_name(
+                    emit, stmt, stmt->for_stmt.var_name, "for_var");
+                fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", var_slot_name);
+                fprintf(emit->out, "\tstorel 0, %%v.%s\n", var_slot_name);
+                qbe_bind_local_name(emit, stmt->for_stmt.var_name, var_slot_name);
                 emit->break_labels[emit->loop_depth] = l_end2;
                 emit->continue_labels[emit->loop_depth] = l_inc;
                 emit->loop_depth++;
@@ -2439,13 +2561,13 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 // Get key from keys list
                 int key = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l call $mix_list_get(l %%t%d, l %%t%d)\n", key, keys_list, ci2);
-                if (stmt->for_stmt.index_name) {
-                    fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", key, stmt->for_stmt.index_name);
+                if (index_slot_name) {
+                    fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", key, index_slot_name);
                 }
                 // Get value from map using key
                 int val = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l call $mix_map_get(l %%t%d, l %%t%d)\n", val, map_ptr, key);
-                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", val, stmt->for_stmt.var_name);
+                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", val, var_slot_name);
 
                 emit_block(emit, stmt->for_stmt.body);
 
@@ -2458,6 +2580,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\tjmp @L%d\n", l_cond);
                 fprintf(emit->out, "@L%d\n", l_end2);
                 emit->loop_depth--;
+                qbe_pop_local_scope(emit);
             } else if (is_list) {
                 // for item in list → index loop with element load
                 int list_ptr = emit_expr(emit, iter);
@@ -2471,10 +2594,6 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", idx_name);
                 fprintf(emit->out, "\tstorel 0, %%v.%s\n", idx_name);
 
-                // Loop variable
-                fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", stmt->for_stmt.var_name);
-                fprintf(emit->out, "\tstorel 0, %%v.%s\n", stmt->for_stmt.var_name);
-
                 int l_cond = next_label(emit);
                 int l_body = next_label(emit);
                 int l_end2 = next_label(emit);
@@ -2485,6 +2604,12 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                     mix_error(stmt->loc, "too many nested loops (max 32)");
                     break;
                 }
+                qbe_push_local_scope(emit);
+                const char *var_slot_name = qbe_for_binding_name(
+                    emit, stmt, stmt->for_stmt.var_name, "for_var");
+                fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", var_slot_name);
+                fprintf(emit->out, "\tstorel 0, %%v.%s\n", var_slot_name);
+                qbe_bind_local_name(emit, stmt->for_stmt.var_name, var_slot_name);
                 emit->break_labels[emit->loop_depth] = l_end2;
                 emit->continue_labels[emit->loop_depth] = l_inc;
                 emit->loop_depth++;
@@ -2501,7 +2626,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", ci2, idx_name);
                 int elem = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l call $mix_list_get(l %%t%d, l %%t%d)\n", elem, list_ptr, ci2);
-                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", elem, stmt->for_stmt.var_name);
+                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", elem, var_slot_name);
 
                 emit_block(emit, stmt->for_stmt.body);
 
@@ -2514,6 +2639,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\tjmp @L%d\n", l_cond);
                 fprintf(emit->out, "@L%d\n", l_end2);
                 emit->loop_depth--;
+                qbe_pop_local_scope(emit);
             } else if (is_set) {
                 // for item in set → convert to list via mix_set_values, then list iterate
                 int set_ptr = emit_expr(emit, iter);
@@ -2534,9 +2660,6 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", idx_name);
                 fprintf(emit->out, "\tstorel 0, %%v.%s\n", idx_name);
 
-                fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", stmt->for_stmt.var_name);
-                fprintf(emit->out, "\tstorel 0, %%v.%s\n", stmt->for_stmt.var_name);
-
                 int l_cond = next_label(emit);
                 int l_body = next_label(emit);
                 int l_end2 = next_label(emit);
@@ -2547,6 +2670,12 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                     mix_error(stmt->loc, "too many nested loops (max 32)");
                     break;
                 }
+                qbe_push_local_scope(emit);
+                const char *var_slot_name = qbe_for_binding_name(
+                    emit, stmt, stmt->for_stmt.var_name, "for_var");
+                fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", var_slot_name);
+                fprintf(emit->out, "\tstorel 0, %%v.%s\n", var_slot_name);
+                qbe_bind_local_name(emit, stmt->for_stmt.var_name, var_slot_name);
                 emit->break_labels[emit->loop_depth] = l_end2;
                 emit->continue_labels[emit->loop_depth] = l_inc;
                 emit->loop_depth++;
@@ -2563,7 +2692,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", ci2, idx_name);
                 int elem = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l call $mix_list_get(l %%t%d, l %%t%d)\n", elem, list_ptr, ci2);
-                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", elem, stmt->for_stmt.var_name);
+                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", elem, var_slot_name);
 
                 emit_block(emit, stmt->for_stmt.body);
 
@@ -2576,6 +2705,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 fprintf(emit->out, "\tjmp @L%d\n", l_cond);
                 fprintf(emit->out, "@L%d\n", l_end2);
                 emit->loop_depth--;
+                qbe_pop_local_scope(emit);
             } else {
                 // For-range: for i in start..end
                 int start_val, end_val;
@@ -2590,9 +2720,6 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                     fprintf(emit->out, "\t%%t%d =l copy 0\n", end_val);
                 }
 
-                fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", stmt->for_stmt.var_name);
-                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", start_val, stmt->for_stmt.var_name);
-
                 int l_cond = next_label(emit);
                 int l_body = next_label(emit);
                 int l_end2 = next_label(emit);
@@ -2603,13 +2730,19 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                     mix_error(stmt->loc, "too many nested loops (max 32)");
                     break;
                 }
+                qbe_push_local_scope(emit);
+                const char *var_slot_name = qbe_for_binding_name(
+                    emit, stmt, stmt->for_stmt.var_name, "for_var");
+                fprintf(emit->out, "\t%%v.%s =l alloc8 8\n", var_slot_name);
+                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", start_val, var_slot_name);
+                qbe_bind_local_name(emit, stmt->for_stmt.var_name, var_slot_name);
                 emit->break_labels[emit->loop_depth] = l_end2;
                 emit->continue_labels[emit->loop_depth] = l_inc;
                 emit->loop_depth++;
 
                 fprintf(emit->out, "@L%d\n", l_cond);
                 int cur = next_temp(emit);
-                fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", cur, stmt->for_stmt.var_name);
+                fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", cur, var_slot_name);
                 int cmp = next_temp(emit);
                 if (inclusive)
                     fprintf(emit->out, "\t%%t%d =w cslel %%t%d, %%t%d\n", cmp, cur, end_val);
@@ -2622,13 +2755,14 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
 
                 fprintf(emit->out, "@L%d\n", l_inc);
                 int cur2 = next_temp(emit);
-                fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", cur2, stmt->for_stmt.var_name);
+                fprintf(emit->out, "\t%%t%d =l loadl %%v.%s\n", cur2, var_slot_name);
                 int next_v = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l add %%t%d, 1\n", next_v, cur2);
-                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", next_v, stmt->for_stmt.var_name);
+                fprintf(emit->out, "\tstorel %%t%d, %%v.%s\n", next_v, var_slot_name);
                 fprintf(emit->out, "\tjmp @L%d\n", l_cond);
                 fprintf(emit->out, "@L%d\n", l_end2);
                 emit->loop_depth--;
+                qbe_pop_local_scope(emit);
             }
             break;
         }
@@ -2726,12 +2860,16 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                         fprintf(emit->out, "\tjnz %%t%d, @L%d, @L%d\n", has_val, l_next, l_match);
 
                     fprintf(emit->out, "@L%d\n", l_match);
+                    qbe_push_local_scope(emit);
 
                     if (bind_name && accessor) {
+                        const char *bind_slot = qbe_match_binding_name(
+                            emit, pat->call.args[0], bind_name, "match");
                         int v = next_temp(emit);
                         fprintf(emit->out, "\t%%t%d =l call $%s(l %%t%d)\n",
                                 v, accessor, subject);
-                        fprintf(emit->out, "\t%%v.%s =l copy %%t%d\n", bind_name, v);
+                        fprintf(emit->out, "\t%%v.%s =l copy %%t%d\n", bind_slot, v);
+                        qbe_bind_local_name(emit, bind_name, bind_slot);
                     }
 
                     if (arm->body) {
@@ -2745,6 +2883,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                             }
                         }
                     }
+                    qbe_pop_local_scope(emit);
                     fprintf(emit->out, "\tjmp @L%d\n", l_end3);
                     fprintf(emit->out, "@L%d\n", l_next);
                 } else if (is_tagged && arm->pattern && arm->pattern->kind == NODE_CALL_EXPR) {
@@ -2764,6 +2903,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                         fprintf(emit->out, "\tjnz %%t%d, @L%d, @L%d\n", tag_cmp, l_match, l_next);
 
                         fprintf(emit->out, "@L%d\n", l_match);
+                        qbe_push_local_scope(emit);
 
                         // Extract variant fields into local variables
                         for (int k = 0; k < arm->pattern->call.arg_count && k < sv->field_count; k++) {
@@ -2775,8 +2915,11 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                                 fprintf(emit->out, "\t%%t%d =l add %%t%d, %d\n", addr, subject, foff);
                                 int fval = next_temp(emit);
                                 fprintf(emit->out, "\t%%t%d =%s load%s %%t%d\n", fval, fty, fty, addr);
+                                const char *bind_slot = qbe_match_binding_name(
+                                    emit, binding, binding->ident.name, "match");
                                 fprintf(emit->out, "\t%%v.%s =%s copy %%t%d\n",
-                                        binding->ident.name, fty, fval);
+                                        bind_slot, fty, fval);
+                                qbe_bind_local_name(emit, binding->ident.name, bind_slot);
                             }
                         }
 
@@ -2791,6 +2934,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                                 }
                             }
                         }
+                        qbe_pop_local_scope(emit);
                     }
                     fprintf(emit->out, "\tjmp @L%d\n", l_end3);
                     fprintf(emit->out, "@L%d\n", l_next);
@@ -2827,10 +2971,6 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             break;
         }
         case NODE_DONE_STMT: {
-            // Emit deferred statements in reverse order before returning
-            for (int i = emit->defer_count - 1; i >= 0; i--) {
-                emit_stmt(emit, emit->deferred[i]);
-            }
             if (stmt->done_stmt.value) {
                 int val = emit_expr(emit, stmt->done_stmt.value);
                 // If returning from result function, wrap value in result_ok()
@@ -2847,19 +2987,19 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                     }
                     int wrapped = next_temp(emit);
                     fprintf(emit->out, "\t%%t%d =l call $mix_result_ok(l %%t%d)\n", wrapped, wrap_val);
-                    fprintf(emit->out, "\tret %%t%d\n", wrapped);
+                    emit_return_temp(emit, wrapped);
                 // If returning from optional function and value isn't already none, wrap it
                 } else if (emit->current_return_type &&
                     emit->current_return_type->kind == TYPE_OPTIONAL &&
                     stmt->done_stmt.value->kind != NODE_NONE_LIT) {
                     int wrapped = next_temp(emit);
                     fprintf(emit->out, "\t%%t%d =l call $mix_optional_some(l %%t%d)\n", wrapped, val);
-                    fprintf(emit->out, "\tret %%t%d\n", wrapped);
+                    emit_return_temp(emit, wrapped);
                 } else {
-                    fprintf(emit->out, "\tret %%t%d\n", val);
+                    emit_return_temp(emit, val);
                 }
             } else {
-                fprintf(emit->out, "\tret\n");
+                emit_return_void(emit);
             }
             // Emit dead-code label so subsequent instructions are valid QBE
             fprintf(emit->out, "@dead%d\n", next_label(emit));
@@ -2934,11 +3074,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 emit->current_return_type->kind == TYPE_RESULT) {
                 int err = next_temp(emit);
                 fprintf(emit->out, "\t%%t%d =l call $mix_result_err(l %%t%d)\n", err, fval);
-                // Emit deferred statements before returning
-                for (int i = emit->defer_count - 1; i >= 0; i--) {
-                    emit_stmt(emit, emit->deferred[i]);
-                }
-                fprintf(emit->out, "\tret %%t%d\n", err);
+                emit_return_temp(emit, err);
             } else {
                 // Backward compat: void functions or non-result → panic
                 MixType *vtype = stmt->fail_stmt.value->resolved_type;
@@ -3090,6 +3226,13 @@ static void emit_fn_decl(QbeEmitter *emit, AstNode *fn) {
         fprintf(emit->out, ") {\n@start\n");
     }
 
+    // Reset per-function state before binding parameters or walking the body.
+    emit->defer_count = 0;
+    emit->fn_ptr_var_count = 0;
+    emit->rc_local_count = 0;
+    emit->dbg_line = 0;
+    qbe_local_names_reset(emit);
+
     // Copy parameters to variable names
     for (int i = 0; i < fn->fn_decl.param_count; i++) {
         Param *param = &fn->fn_decl.params[i];
@@ -3103,13 +3246,8 @@ static void emit_fn_decl(QbeEmitter *emit, AstNode *fn) {
         } else {
             fprintf(emit->out, "\t%%v.%s =%s copy %%p.%s\n", param->name, ty, param->name);
         }
+        qbe_bind_local_name(emit, param->name, param->name);
     }
-
-    // Reset defer stack and lambda var tracker for this function
-    emit->defer_count = 0;
-    emit->fn_ptr_var_count = 0;
-    emit->rc_local_count = 0;  // Phase 3: per-function shape-local tracking
-    emit->dbg_line = 0; // reset so first stmt always emits dbgloc
 
     // Phase 3: pre-walk the body to collect every owned-shape var-decl
     // (even those buried in conditionals) and zero-init their slots
@@ -3160,16 +3298,13 @@ static void emit_fn_decl(QbeEmitter *emit, AstNode *fn) {
         if (stmt_count > 0) {
             AstNode *last = body->block.stmts[stmt_count - 1];
             if (!is_main && fn->fn_decl.return_type && last->kind == NODE_EXPR_STMT) {
-                // Emit deferred stmts before implicit return
-                for (int i = emit->defer_count - 1; i >= 0; i--)
-                    emit_stmt(emit, emit->deferred[i]);
                 int val = emit_expr(emit, last->expr_stmt.expr);
                 // Wrap in optional if needed
                 if (ret_type_resolved && ret_type_resolved->kind == TYPE_OPTIONAL &&
                     last->expr_stmt.expr->kind != NODE_NONE_LIT) {
                     int wrapped = next_temp(emit);
                     fprintf(emit->out, "\t%%t%d =l call $mix_optional_some(l %%t%d)\n", wrapped, val);
-                    fprintf(emit->out, "\tret %%t%d\n", wrapped);
+                    emit_return_temp(emit, wrapped);
                 } else if (emit->current_return_type &&
                            emit->current_return_type->kind == TYPE_RESULT &&
                            last->expr_stmt.expr->kind != NODE_NONE_LIT) {
@@ -3186,9 +3321,9 @@ static void emit_fn_decl(QbeEmitter *emit, AstNode *fn) {
                     int wrapped = next_temp(emit);
                     fprintf(emit->out, "\t%%t%d =l call $mix_result_ok(l %%t%d)\n",
                             wrapped, wrap_val);
-                    fprintf(emit->out, "\tret %%t%d\n", wrapped);
+                    emit_return_temp(emit, wrapped);
                 } else {
-                    fprintf(emit->out, "\tret %%t%d\n", val);
+                    emit_return_temp(emit, val);
                 }
                 fprintf(emit->out, "}\n\n");
                 return;
@@ -3197,19 +3332,17 @@ static void emit_fn_decl(QbeEmitter *emit, AstNode *fn) {
                 emit->last_match_temp = -1;
                 emit_stmt(emit, last);
                 if (emit->last_match_temp >= 0) {
-                    for (int i = emit->defer_count - 1; i >= 0; i--)
-                        emit_stmt(emit, emit->deferred[i]);
                     int val = emit->last_match_temp;
                     if (ret_type_resolved && ret_type_resolved->kind == TYPE_OPTIONAL) {
                         int wrapped = next_temp(emit);
                         fprintf(emit->out, "\t%%t%d =l call $mix_optional_some(l %%t%d)\n", wrapped, val);
-                        fprintf(emit->out, "\tret %%t%d\n", wrapped);
+                        emit_return_temp(emit, wrapped);
                     } else if (emit->current_return_type && emit->current_return_type->kind == TYPE_RESULT) {
                         int wrapped = next_temp(emit);
                         fprintf(emit->out, "\t%%t%d =l call $mix_result_ok(l %%t%d)\n", wrapped, val);
-                        fprintf(emit->out, "\tret %%t%d\n", wrapped);
+                        emit_return_temp(emit, wrapped);
                     } else {
-                        fprintf(emit->out, "\tret %%t%d\n", val);
+                        emit_return_temp(emit, val);
                     }
                     fprintf(emit->out, "}\n\n");
                     return;
@@ -3220,15 +3353,7 @@ static void emit_fn_decl(QbeEmitter *emit, AstNode *fn) {
         }
     }
 
-    // Emit deferred stmts before default return
-    for (int i = emit->defer_count - 1; i >= 0; i--)
-        emit_stmt(emit, emit->deferred[i]);
-
-    // Phase 3: release shape-typed locals before the default exit.
-    // (Mid-function `return` statements are not yet instrumented and
-    // will leak any shape locals declared along the way — Phase 3.5
-    // will use a single exit label to cover them.)
-    emit_rc_release_locals(emit);
+    emit_function_epilogue(emit);
 
     // Default return
     if (is_main) {
@@ -3274,8 +3399,14 @@ static void emit_method(QbeEmitter *emit, AstNode *method, const char *shape_nam
 
     fprintf(emit->out, ") {\n@start\n");
 
+    emit->defer_count = 0;
+    emit->fn_ptr_var_count = 0;
+    emit->rc_local_count = 0;
+    qbe_local_names_reset(emit);
+
     // Copy self to variable
     fprintf(emit->out, "\t%%v.self =l copy %%p.self\n");
+    qbe_bind_local_name(emit, "self", "self");
 
     // Copy user params
     for (int i = 0; i < method->fn_decl.param_count; i++) {
@@ -3289,14 +3420,19 @@ static void emit_method(QbeEmitter *emit, AstNode *method, const char *shape_nam
         } else {
             fprintf(emit->out, "\t%%v.%s =%s copy %%p.%s\n", param->name, ty, param->name);
         }
+        qbe_bind_local_name(emit, param->name, param->name);
     }
 
     // Set current_shape for field resolution
     emit->current_shape = shape_type;
-    emit->defer_count = 0;
+    emit->current_return_type = ret_type;
     // Reset const memoization (temps are per-function in QBE)
     for (int ci = 0; ci < emit->const_count; ci++)
         emit->constants[ci].cached_temp = -1;
+    if (method->fn_decl.body) {
+        rc_walk_collect_shape_locals(emit, method->fn_decl.body);
+        emit_rc_pre_init_locals(emit);
+    }
 
     // Emit body with implicit return
     if (method->fn_decl.body) {
@@ -3310,11 +3446,10 @@ static void emit_method(QbeEmitter *emit, AstNode *method, const char *shape_nam
         if (stmt_count > 0) {
             AstNode *last = body->block.stmts[stmt_count - 1];
             if (ret_type && last->kind == NODE_EXPR_STMT) {
-                for (int i = emit->defer_count - 1; i >= 0; i--)
-                    emit_stmt(emit, emit->deferred[i]);
                 int val = emit_expr(emit, last->expr_stmt.expr);
-                fprintf(emit->out, "\tret %%t%d\n", val);
+                emit_return_temp(emit, val);
                 emit->current_shape = NULL;
+                emit->current_return_type = NULL;
                 fprintf(emit->out, "}\n\n");
                 return;
             } else {
@@ -3323,8 +3458,7 @@ static void emit_method(QbeEmitter *emit, AstNode *method, const char *shape_nam
         }
     }
 
-    for (int i = emit->defer_count - 1; i >= 0; i--)
-        emit_stmt(emit, emit->deferred[i]);
+    emit_function_epilogue(emit);
 
     if (ret_type) {
         fprintf(emit->out, "\tret 0\n");
@@ -3333,6 +3467,7 @@ static void emit_method(QbeEmitter *emit, AstNode *method, const char *shape_nam
     }
 
     emit->current_shape = NULL;
+    emit->current_return_type = NULL;
     fprintf(emit->out, "}\n\n");
 }
 
@@ -3582,11 +3717,16 @@ void qbe_emit_program(QbeEmitter *emit, AstNode *program) {
         fprintf(emit->out, ") {\n@start\n");
 
         emit->dbg_line = 0; // reset debug tracking for lambda
+        emit->defer_count = 0;
+        emit->rc_local_count = 0;
+        qbe_local_names_reset(emit);
 
         // Copy params to variable names
         for (int j = 0; j < lam->lambda.param_count; j++) {
             fprintf(emit->out, "\t%%v.%s =l copy %%p.%s\n",
                     lam->lambda.param_names[j], lam->lambda.param_names[j]);
+            qbe_bind_local_name(emit, lam->lambda.param_names[j],
+                                lam->lambda.param_names[j]);
         }
 
         // Emit body expression as return value

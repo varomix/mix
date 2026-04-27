@@ -43,10 +43,16 @@ typedef struct {
     int break_labels[32];
     int continue_labels[32];
     int loop_depth;
+    // Active local-name bindings for this function. Source identifiers map to
+    // the currently-visible QBE local name (used to keep shadowed locals and
+    // loop vars from colliding on the same `%v.*` slot).
+    struct { char *source_name; char *emitted_name; } local_bindings[2048];
+    int local_binding_count;
+    int local_scope_marks[256];
+    int local_scope_depth;
     // Refcount Phase 1: shape-typed locals to release at function exit.
-    // Names match the variable name used by `%v.<name>` stack slots.
-    // Reset at function entry, walked before each `ret` to emit
-    // mix_release calls.
+    // Entries store the emitted `%v.<name>` slot names, not source names.
+    // Reset at function entry, walked before each `ret` to emit mix_release.
     char *rc_locals[256];
     int   rc_local_count;
     // Names of shape types declared in THIS translation unit. SHAPE_LIT

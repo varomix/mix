@@ -1,0 +1,100 @@
+use c "SDL3/SDL.h" link "SDL3"
+
+main()
+    SDL_Log("start")
+    SDL_Init(SDL_INIT_VIDEO)
+    win = SDL_CreateWindow("Test", 800, 600, 0)
+    device = SDL_CreateGPUDevice(16, true, 0)
+    SDL_ClaimWindowForGPUDevice(device, win)
+    SDL_Log("claimed")
+
+    // Load vert shader manually (no helper function)
+    code_size_ptr = alloc(8)
+    code = SDL_LoadFile("triangle.vert.msl", code_size_ptr)
+    code_size = peek_ptr(code_size_ptr, 0)
+    free_mem(code_size_ptr)
+    SDL_Log("loaded vert")
+
+    info = bytes(56)
+    poke_ptr(info, 0, code_size)
+    poke_ptr(info, 8, code)
+    poke_ptr(info, 16, "main0")
+    poke_u32(info, 24, 16)
+    poke_u32(info, 28, 0)
+    poke_u32(info, 44, 1)
+    vert = SDL_CreateGPUShader(device, info)
+    SDL_free(code)
+    free_mem(info)
+    SDL_Log("vert shader created")
+
+    // Load frag shader
+    code_size_ptr = alloc(8)
+    code = SDL_LoadFile("triangle.frag.msl", code_size_ptr)
+    code_size = peek_ptr(code_size_ptr, 0)
+    free_mem(code_size_ptr)
+
+    info = bytes(56)
+    poke_ptr(info, 0, code_size)
+    poke_ptr(info, 8, code)
+    poke_ptr(info, 16, "main0")
+    poke_u32(info, 24, 16)
+    poke_u32(info, 28, 1)
+    frag = SDL_CreateGPUShader(device, info)
+    SDL_free(code)
+    free_mem(info)
+    SDL_Log("frag shader created")
+
+    // Pipeline
+    fmt = SDL_GetGPUSwapchainTextureFormat(device, win)
+    SDL_Log("format ok")
+
+    attrs = bytes(32)
+    poke_u32(attrs, 0, 0)
+    poke_u32(attrs, 4, 0)
+    poke_u32(attrs, 8, 11)
+    poke_u32(attrs, 12, 0)
+    poke_u32(attrs, 16, 1)
+    poke_u32(attrs, 20, 0)
+    poke_u32(attrs, 24, 12)
+    poke_u32(attrs, 28, 12)
+    SDL_Log("attrs ok")
+
+    vbuf_desc = bytes(16)
+    poke_u32(vbuf_desc, 0, 0)
+    poke_u32(vbuf_desc, 4, 28)
+    poke_u32(vbuf_desc, 8, 0)
+
+    color_desc = bytes(36)
+    poke_u32(color_desc, 0, fmt)
+
+    pip = bytes(168)
+    poke_ptr(pip, 0, vert)
+    poke_ptr(pip, 8, frag)
+    poke_ptr(pip, 16, vbuf_desc)
+    poke_u32(pip, 24, 1)
+    poke_ptr(pip, 32, attrs)
+    poke_u32(pip, 40, 2)
+    poke_u32(pip, 48, 0)
+    poke_ptr(pip, 136, color_desc)
+    poke_u32(pip, 144, 1)
+    SDL_Log("calling create pipeline")
+
+    pipeline = SDL_CreateGPUGraphicsPipeline(device, pip)
+    SDL_Log("pipeline done")
+
+    free_mem(attrs)
+    free_mem(vbuf_desc)
+    free_mem(color_desc)
+    free_mem(pip)
+
+    if pipeline == 0
+        SDL_Log("PIPELINE NULL")
+
+    SDL_ReleaseGPUShader(device, vert)
+    SDL_ReleaseGPUShader(device, frag)
+    if pipeline != 0
+        SDL_ReleaseGPUGraphicsPipeline(device, pipeline)
+    SDL_DestroyGPUDevice(device)
+    SDL_DestroyWindow(win)
+    SDL_Quit()
+    SDL_Log("done")

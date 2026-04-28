@@ -1,0 +1,19 @@
+shape Sprite
+    x: float
+    y: float
+
+mutate(a!: Sprite, b!: Sprite)
+    a.x = a.x + 1.0
+    b.y = b.y + 2.0
+
+apply(fn: int, a!: Sprite, b!: Sprite)
+    fn(a, b)
+
+main()
+    a! = Sprite(x: 1.0, y: 2.0)
+    b! = Sprite(x: 3.0, y: 4.0)
+    apply(mutate, a, b)
+    print(a.x)
+    print(a.y)
+    print(b.x)
+    print(b.y)

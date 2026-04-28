@@ -1,0 +1,40 @@
+shape Vec2
+    x: float
+    y: float
+
+shape Sprite
+    pos: Vec2
+    vel: Vec2
+    width: float
+    height: float
+
+    update(dt: float) !
+        pos.x += vel.x * dt
+        pos.y += vel.y * dt
+
+shape Group
+    sprites: [Sprite]
+
+    update(dt: float) !
+        for s! in self.sprites
+            s.update!(dt)
+
+main()
+    g! = Group(sprites: [])
+    g.sprites.push!(Sprite(
+        pos: Vec2(x: 0.0, y: 0.0),
+        vel: Vec2(x: 2.0, y: 1.0),
+        width: 8.0,
+        height: 8.0
+    ))
+
+    i! = 0
+    while i < 4
+        g.update!(0.5)
+        for s! in g.sprites
+            if s.pos.x > 1.0
+                s.vel.x = -s.vel.x
+        for s in g.sprites
+            print(s.pos.x)
+            print(s.vel.x)
+        i = i + 1

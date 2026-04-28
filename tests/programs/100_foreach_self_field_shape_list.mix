@@ -1,0 +1,36 @@
+// Regression: `for x in self.field` where `self.field` is an inline
+// shape list crashes with stack corruption / SEGFAULT.
+//
+// See FRAMERATE_BUG_REPORT.md. Mixel's Group.draw / Group.update is the
+// motivating real-world case; this test is the minimum that reproduces
+// the codegen miscompile.
+
+shape Big
+    a: float
+    b: float
+    c: float
+    d: float
+    e: float
+    f: float
+    g: float
+    h: float
+    width: float
+
+    show(prefix: str) ~
+        print(prefix + " width=" + to_string(to_int(self.width)))
+
+shape Container
+    items: [Big]
+
+    each(prefix: str) ~
+        for it in self.items
+            it.show(prefix)
+
+main()
+    c! = Container(items: [])
+    c.items.push!(Big(a: 1.0, b: 2.0, c: 3.0, d: 4.0,
+                      e: 5.0, f: 6.0, g: 7.0, h: 8.0, width: 999.0))
+
+    iter! = 42
+    c.each("loop")
+    print("after iter=" + to_string(iter))

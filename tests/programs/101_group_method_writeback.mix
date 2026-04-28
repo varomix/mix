@@ -1,0 +1,23 @@
+shape Sprite
+    pos: float
+    vel: float
+
+    update(dt: float) !
+        pos += vel * dt
+
+shape Group
+    sprites: [Sprite]
+
+    update(dt: float) !
+        for s! in self.sprites
+            s.update!(dt)
+
+main()
+    g! = Group(sprites: [])
+    g.sprites.push!(Sprite(pos: 0.0, vel: 2.0))
+
+    i! = 0
+    while i < 4
+        g.update!(0.5)
+        print(g.sprites.at(0).pos)
+        i = i + 1

@@ -1,0 +1,56 @@
+shape Vec2
+    x: float
+    y: float
+
+shape Sprite
+    pos: Vec2
+    vel: Vec2
+    width: float
+    height: float
+
+    update(dt: float) !
+        pos.x += vel.x * dt
+        pos.y += vel.y * dt
+
+shape Group
+    sprites: [Sprite]
+
+    update(dt: float) !
+        for s! in self.sprites
+            s.update!(dt)
+
+main()
+    g! = Group(sprites: [])
+
+    i! = 0
+    while i < 100
+        g.sprites.push!(Sprite(
+            pos: Vec2(x: to_float(i) * 3.0, y: to_float(i) * 2.0),
+            vel: Vec2(x: to_float((i % 9) + 1), y: to_float((i % 7) + 1)),
+            width: 8.0,
+            height: 8.0
+        ))
+        i = i + 1
+
+    frame! = 0
+    while frame < 200000
+        g.update!(1.0 / 60.0)
+
+        for s! in g.sprites
+            if s.pos.x < 0.0
+                s.pos.x = 0.0
+                s.vel.x = -s.vel.x
+            if s.pos.x + s.width > 320.0
+                s.pos.x = 320.0 - s.width
+                s.vel.x = -s.vel.x
+            if s.pos.y < 0.0
+                s.pos.y = 0.0
+                s.vel.y = -s.vel.y
+            if s.pos.y + s.height > 240.0
+                s.pos.y = 240.0 - s.height
+                s.vel.y = -s.vel.y
+
+        frame = frame + 1
+
+    print(g.sprites[0].pos.x)
+    print(g.sprites[0].pos.y)

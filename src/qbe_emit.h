@@ -55,6 +55,11 @@ typedef struct {
     char *mutable_param_names[256];
     MixType *mutable_param_types[256];
     int mutable_param_count;
+    // QBE's alloc* instructions behave like dynamic stack allocation if they
+    // are emitted inside loops/branches. Record stack slots per function and
+    // hoist them into the function prologue instead of emitting inline.
+    char *stack_allocs[4096];
+    int stack_alloc_count;
 } QbeEmitter;
 
 QbeEmitter qbe_emitter_create(FILE *out, Arena *arena, SymTab *symtab, bool debug);

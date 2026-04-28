@@ -164,6 +164,8 @@ struct AstNode {
             char *name;
             TokenKind op;       // TOK_EQ, TOK_PLUS_EQ, etc.
             AstNode *value;
+            bool target_is_global;
+            bool target_is_stack_slot;
         } assign;
 
         // NODE_IF_STMT

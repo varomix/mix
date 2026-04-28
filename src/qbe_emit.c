@@ -2814,11 +2814,12 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             int val = emit_expr(emit, stmt->assign.value);
             // Determine the target variable's type for proper coercion
             Symbol *assign_sym = symtab_lookup(emit->symtab, stmt->assign.name);
-            MixType *var_type = assign_sym ? assign_sym->type : NULL;
             MixType *val_type = stmt->assign.value->resolved_type;
+            MixType *var_type = stmt->resolved_type
+                ? stmt->resolved_type
+                : (assign_sym ? assign_sym->type : val_type);
             if (var_type && var_type->kind == TYPE_SHAPE) {
-                bool is_global = !qbe_has_local_binding(emit, stmt->assign.name) &&
-                                 assign_sym && assign_sym->is_global;
+                bool is_global = stmt->assign.target_is_global;
                 const char *slot_name = is_global
                     ? stmt->assign.name
                     : qbe_lookup_local_name(emit, stmt->assign.name);
@@ -2828,6 +2829,9 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
                 }
                 if (is_global) {
                     fprintf(emit->out, "\tcall $memcpy(l $g_%s, l %%t%d, l %d)\n",
+                            slot_name, val, var_type->shape.total_size);
+                } else if (stmt->assign.target_is_stack_slot) {
+                    fprintf(emit->out, "\tcall $memcpy(l %%v.%s, l %%t%d, l %d)\n",
                             slot_name, val, var_type->shape.total_size);
                 } else {
                     fprintf(emit->out, "\tcall $memcpy(l %%v.%s, l %%t%d, l %d)\n",
@@ -2839,8 +2843,7 @@ static void emit_stmt(QbeEmitter *emit, AstNode *stmt) {
             const char *mem_ty = type_to_qbe_mem(var_type ? var_type : val_type);
             const char *load_ty = type_to_qbe_load(var_type ? var_type : val_type);
             val = coerce_to_field_type(emit, val, val_type, var_type);
-            bool is_global = !qbe_has_local_binding(emit, stmt->assign.name) &&
-                             assign_sym && assign_sym->is_global;
+            bool is_global = stmt->assign.target_is_global;
             const char *slot_name = is_global
                 ? stmt->assign.name
                 : qbe_lookup_local_name(emit, stmt->assign.name);

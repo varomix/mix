@@ -1,0 +1,78 @@
+type :Sprite = { d }
+type :Project = { l, l, l, l, l, l, l, b }
+
+export function $release_Sprite(l %p) {
+@start
+	call $mix_shape_free(l %p)
+	ret
+}
+
+
+export function w $main(w %p.argc, l %p.argv) {
+@start
+	call $mix_set_args(w %p.argc, l %p.argv)
+	%v.a__v_9348003e8 =l alloc8 8
+	storel 0, %v.a__v_9348003e8
+	%v.b__v_934800610 =l alloc8 8
+	storel 0, %v.b__v_934800610
+	%t0 =l call $mix_shape_alloc(l 8, l $release_Sprite)
+	%t1 =d copy d_0x1p+0
+	stored %t1, %t0
+	%t2 =l loadl %v.a__v_9348003e8
+	call $mix_release(l %t2)
+	storel %t0, %v.a__v_9348003e8
+	%t3 =l call $mix_shape_alloc(l 8, l $release_Sprite)
+	%t4 =d copy d_0x1p+1
+	stored %t4, %t3
+	%t5 =l loadl %v.b__v_934800610
+	call $mix_release(l %t5)
+	storel %t3, %v.b__v_934800610
+	%t6 =l call $mix_list_new_shape(l $release_Sprite)
+	%t7 =l loadl %v.a__v_9348003e8
+	%t8 =l call $mix_list_push(l %t6, l %t7)
+	%t9 =l loadl %v.b__v_934800610
+	%t10 =l call $mix_list_push(l %t6, l %t9)
+	%v.sprites__v_9348007f8 =l copy %t6
+	%t11 =l copy %v.sprites__v_9348007f8
+	%t12 =l call $mix_list_len(l %t11)
+	%v._idx_0 =l alloc8 8
+	storel 0, %v._idx_0
+	%v.i__for_idx_934800a08 =l alloc8 8
+	storel 0, %v.i__for_idx_934800a08
+	%v.s__for_var_934800a08 =l alloc8 8
+	storel 0, %v.s__for_var_934800a08
+@L1
+	%t13 =l loadl %v._idx_0
+	%t14 =w csltl %t13, %t12
+	jnz %t14, @L2, @L3
+@L2
+	%t15 =l loadl %v._idx_0
+	storel %t15, %v.i__for_idx_934800a08
+	%t16 =l call $mix_list_get(l %t11, l %t15)
+	storel %t16, %v.s__for_var_934800a08
+	%t17 =l loadl %v.s__for_var_934800a08
+	%t18 =l loadl %v.s__for_var_934800a08
+	%t19 =d loadd %t18
+	%t20 =l copy %v.i__for_idx_934800a08
+	%t21 =d sltof %t20
+	%t22 =d add %t19, %t21
+	stored %t22, %t17
+@L4
+	%t23 =l loadl %v._idx_0
+	%t24 =l add %t23, 1
+	storel %t24, %v._idx_0
+	jmp @L1
+@L3
+	%t25 =l loadl %v.a__v_9348003e8
+	%t26 =d loadd %t25
+	%t27 =l call $mix_print_float(d %t26)
+	%t28 =l loadl %v.b__v_934800610
+	%t29 =d loadd %t28
+	%t30 =l call $mix_print_float(d %t29)
+	%t31 =l loadl %v.a__v_9348003e8
+	call $mix_release(l %t31)
+	%t32 =l loadl %v.b__v_934800610
+	call $mix_release(l %t32)
+	ret 0
+}
+

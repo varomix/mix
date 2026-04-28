@@ -2066,33 +2066,21 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
             // assignment — rewrite it. This makes `s! = 0; ...; s = s + 1`
             // work as expected and avoids spurious shadowing in both backends.
             // We also accept `s! = ...` when `s` already exists mutable
-            // (the user's intent is mutation, not shadowing). Skip the
-            // rewrite for shape/union variables — those use pointer-alias
-            // semantics and the emitters allocate no rebindable slot for
-            // them, so re-declaration (shadowing) is the correct behavior.
+            // (the user's intent is mutation, not shadowing). This applies
+            // to value shapes too: after the value-semantics shift, `text =
+            // make_text(...)` must update the existing slot instead of
+            // creating a fresh shadow local and leaving the old resource live.
             if (!stmt->var_decl.type_ann) {
                 Symbol *existing = symtab_lookup(&sema->symtab, stmt->var_decl.name);
-                bool target_is_shape = existing && existing->type &&
-                    existing->type->kind == TYPE_SHAPE;
-                // Inside a mutating method, a shape-typed name that matches a
-                // field of `current_shape` should mutate the field, not shadow
-                // it with a local. The NODE_ASSIGN path rewrites it to a
-                // FIELD_ASSIGN against `self`, which the emitter handles via
-                // memcpy. Without this, `pos! = Vec2(...)` would silently
-                // create a fresh local `pos` and leave self.pos untouched.
-                bool target_is_self_field = false;
-                if (target_is_shape && sema->current_shape &&
-                    type_find_field(sema->current_shape, stmt->var_decl.name)) {
-                    target_is_self_field = true;
-                }
-                if (existing && existing->is_mutable &&
-                    (!target_is_shape || target_is_self_field)) {
+                if (existing && existing->is_mutable) {
                     AstNode *init = stmt->var_decl.init_expr;
                     char *name = stmt->var_decl.name;
                     stmt->kind = NODE_ASSIGN;
                     stmt->assign.name = name;
                     stmt->assign.op = TOK_EQ;
                     stmt->assign.value = init;
+                    stmt->assign.target_is_global = false;
+                    stmt->assign.target_is_stack_slot = false;
                     analyze_stmt(sema, stmt);
                     break;
                 }
@@ -2175,6 +2163,9 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
             MixType *hint = (pre_sym && pre_sym->type) ? pre_sym->type : NULL;
             MixType *val_type = resolve_expr_hinted(sema, stmt->assign.value, hint);
             Symbol *var_sym = pre_sym;
+            stmt->resolved_type = var_sym && var_sym->type ? var_sym->type : val_type;
+            stmt->assign.target_is_global = var_sym && var_sym->is_global;
+            stmt->assign.target_is_stack_slot = var_sym && var_sym->is_stack_slot;
             if (var_sym && var_sym->type && val_type) {
                 if (!var_sym->is_mutable) {
                     mix_error(stmt->loc, "cannot assign to immutable variable '%s'",

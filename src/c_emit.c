@@ -2544,14 +2544,16 @@ static void emit_stmt(CEmitter *emit, AstNode *stmt) {
         case NODE_ASSIGN: {
             int val = emit_expr(emit, stmt->assign.value);
             Symbol *assign_sym = symtab_lookup(emit->symtab, stmt->assign.name);
-            MixType *var_type = assign_sym ? assign_sym->type : NULL;
+            MixType *var_type = stmt->resolved_type
+                ? stmt->resolved_type
+                : (assign_sym ? assign_sym->type : NULL);
             const char *cn = cname_ref(emit, stmt->assign.name);
             if (var_type && var_type->kind == TYPE_SHAPE) {
                 if (stmt->assign.op != TOK_EQ) {
                     mix_error(stmt->loc, "compound assignment is not supported on shape values");
                     break;
                 }
-                if (assign_sym && assign_sym->is_stack_slot) {
+                if (stmt->assign.target_is_global || stmt->assign.target_is_stack_slot) {
                     ind(emit); fprintf(emit->out, "memcpy(&v_%s, t%d, sizeof(%s));\n",
                             cn, val, var_type->shape.name);
                 } else {

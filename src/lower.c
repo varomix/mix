@@ -673,6 +673,27 @@ static ShapeFieldInfo *find_field(MixType *shape, const char *name) {
 static void lower_shape_lit_into(LowerCtx *ctx, LirOpnd dst,
                                   MixType *shape_type, AstNode *lit)
 {
+    // Zero the destination slot before storing user-supplied fields.
+    // MIX shape literals only mention the fields the user names; any
+    // omitted field must read back as zero — sema doesn't reject
+    // partial literals (SDL constructors like SDL_GPUShaderCreateInfo
+    // rely on this). Without this memset, unset fields like
+    // `num_samplers` read whatever happened to be on the stack and
+    // SDL asserts on the bogus value. QBE does the same via its
+    // emit_shape_temp(zero_init=true) on NODE_SHAPE_LIT.
+    if (shape_type && shape_type->kind == TYPE_SHAPE &&
+        shape_type->shape.total_size > 0) {
+        LirType mps[] = { LIR_TY_PTR, LIR_TY_I32, LIR_TY_I64 };
+        register_runtime(ctx->mod, lit->loc, "memset",
+                         LIR_TY_VOID, mps, 3);
+        LirOpnd margs[] = {
+            dst,
+            lir_opnd_int_typed(0, LIR_TY_I32),
+            lir_opnd_int_typed(shape_type->shape.total_size, LIR_TY_I64),
+        };
+        lir_emit_call(ctx->fn, lit->loc, "memset", LIR_TY_VOID, margs, 3);
+    }
+
     // Tagged union variant constructor (`Circle(radius: 5.0)` → store
     // tag=0 at offset 0, then variant fields at offset 8+).
     if (shape_type && shape_type->shape.is_tagged_union) {

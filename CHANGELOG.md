@@ -26,6 +26,23 @@
 
 ## Phase Log
 
+### Phase 7.1 — Zero-init shape literal slots
+
+- **2026-04-29** — Mixel runtime parity bug: `mix run` of any demo
+  hit `Assertion failure at SDL_CreateGPUShader_REAL ... 'Shader
+  sampler count cannot be higher than 16!'`. Cause: shape literals
+  like `SDL_GPUShaderCreateInfo(code_size: ..., entrypoint: ...)`
+  only set the user-named fields; omitted fields like `num_samplers`
+  read uninitialised stack memory from the `alloca [N x i8]` slot
+  and SDL asserted on the bogus value. QBE was zeroing the slot via
+  `emit_shape_temp(zero_init=true)`; LLVM was not.
+  Fix: `lower_shape_lit_into` now emits a `memset(slot, 0, total_size)`
+  call before storing user-supplied fields. Spot-checked on six
+  demos (01_hello, 03_collide, 15_particles, MixSnake, breakout,
+  MixInvaders) — LLVM and QBE now produce byte-equal SDL diagnostics
+  (both hit the same downstream `MTLFunction failed` Metal-side
+  issue, which is environmental, not backend-related).
+
 ### Phase 7 — 107/107 main: tagged unions, shared, go/wait
 
 - **2026-04-28** — Implemented the last three features so LLVM is

@@ -1007,6 +1007,45 @@ static LirOpnd lower_user_call_into(LowerCtx *ctx, LirOpnd dst,
             break;
         }
     }
+
+    // No registered callee yet — try the symtab for cbind-imported
+    // externs (e.g., TTF_OpenFont with `float` ptsize). Their AST never
+    // reaches lower_program, so without a registration we'd emit the
+    // call with caller-side arg types (mix `float` → f64) and the
+    // declare would disagree with the C ABI (which wants f32 in s0, not
+    // f64 in d0). Gated on sym->is_extern so MIX functions defined in
+    // sub-modules — also TYPE_FUNC in the symtab — keep MIX ABI.
+    if (!found && ctx->symtab) {
+        Symbol *sym = symtab_lookup(ctx->symtab, call->call.name);
+        if (sym && sym->is_extern && sym->type && sym->type->kind == TYPE_FUNC
+            && sym->type->func.param_count + extra == total_args) {
+            MixType *ft = sym->type;
+            int n_sym = ft->func.param_count;
+            LirType *psig = NULL;
+            if (total_args > 0)
+                psig = arena_alloc(ctx->mod->arena, total_args * sizeof(LirType));
+            int j = 0;
+            if (extra) psig[j++] = LIR_TY_PTR;     // sret hidden arg
+            for (int k = 0; k < n_sym; k++) {
+                MixType *pt = ft->func.param_types[k];
+                LirType ival = shape_int_value_lir(pt);
+                psig[j++] = (ival != LIR_TY_VOID) ? ival : mix_to_lir(pt);
+            }
+            MixType *rt_sym = ft->func.return_type;
+            bool sym_returns_shape = rt_sym && rt_sym->kind == TYPE_SHAPE;
+            LirType rt_lir = sym_returns_shape ? LIR_TY_VOID : mix_to_lir(rt_sym);
+            lir_register_callee(ctx->mod, call->loc, call->call.name,
+                                 rt_lir, psig, total_args);
+            for (int i = 0; i < ctx->mod->callee_count; i++) {
+                if (strcmp(ctx->mod->callees[i].name, call->call.name) == 0) {
+                    existing = &ctx->mod->callees[i];
+                    ret_type = existing->return_type;
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
     if (existing && existing->param_count == total_args) {
         // Coerce each arg to the registered param type to avoid IR
         // signature mismatches (commonly an extern's int32 vs MIX int's

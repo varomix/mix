@@ -21,6 +21,13 @@ typedef struct Symbol {
     // the QBE NODE_VAR_DECL `=l copy` aliasing pattern. The QBE NODE_IDENT
     // path uses this flag to choose between `loadl %v.x` and `copy %v.x`.
     bool is_pointer_slot;
+    // True for symbols introduced by `extern "lib" { ... }` blocks (in
+    // user source or from cbind output). Distinguishes C-ABI callees
+    // from MIX-defined functions that share the symbol-table TYPE_FUNC
+    // shape — the lowerer needs this to decide whether to apply
+    // small-struct-by-int / float32 coercions at call sites for callees
+    // it has not pre-registered.
+    bool is_extern;
     struct Symbol *next;
 } Symbol;
 

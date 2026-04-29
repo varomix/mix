@@ -2724,7 +2724,10 @@ static void register_extern_fn(Sema *sema, AstNode *fn) {
 
     symtab_insert(&sema->symtab, fn->extern_fn_decl.name, func_type, false);
     Symbol *ext_sym = symtab_lookup(&sema->symtab, fn->extern_fn_decl.name);
-    if (ext_sym) ext_sym->has_mutation = fn->extern_fn_decl.has_mutation;
+    if (ext_sym) {
+        ext_sym->has_mutation = fn->extern_fn_decl.has_mutation;
+        ext_sym->is_extern = true;
+    }
 
     // Store optional C symbol alias
     if (fn->extern_fn_decl.c_name) {

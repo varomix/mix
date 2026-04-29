@@ -26,6 +26,42 @@
 
 ## Phase Log
 
+### Phase 7.5 — Float32 ABI for cbind imports
+
+- **2026-04-29** — Phase 7.4 fixed the *shape* arg ABI for cbind
+  imports but missed the scalar-float case. `TTF_OpenFont(path,
+  ptsize: float)` is C `float` — cbind correctly maps it to MIX
+  `float32` in the extern decl. But Mixel's wrapper takes `size:
+  float` (MIX `float` = f64) and forwards it: `TTF_OpenFont(path,
+  size)`. The lowerer doesn't see the cbind extern signature
+  (its AST never reaches lower_program), so `existing` is NULL,
+  the call site infers types from the args (f64), registers the
+  callee as `(ptr, double)`, and emits a 64-bit double in `d0`.
+  TTF reads `s0` as a 32-bit float, gets garbage for ptsize, opens
+  the font with bogus metrics — glyph atlas comes out empty so
+  text renders invisibly.
+  Fix:
+  - Added `is_extern` flag on `Symbol`, set by sema in
+    `register_extern_fn` for any `NODE_EXTERN_FN_DECL`. cbind goes
+    through the same parser path, so its decls also light it up.
+  - In `lower_user_call_into`, when no callee is registered yet,
+    look up the symtab. If the symbol is `is_extern && TYPE_FUNC`
+    and the arg count matches, build an LIR signature from the
+    sym (using `mix_to_lir` per param, and `shape_int_value_lir`
+    for small int-only structs), pre-register it, then fall
+    through to the existing coercion loop.
+  - The existing loop already handles f64→f32 via `float_cast`
+    (LIR_CONV_FPTRUNC), so `TTF_OpenFont(path, size: float)` now
+    emits `fptrunc double %size to float` before the call and
+    declares the callee as `(ptr, float)`.
+  - Gated on `is_extern` so MIX functions in sub-modules — also
+    TYPE_FUNC in the symtab — keep MIX ABI (would otherwise
+    have broken `use std.collections` and other cross-module
+    method calls; caught by 8 regressions in the test suite
+    when the gate was missing).
+  Verified: 107/107 main tests on both LLVM and QBE; 30/30 mixel
+  demos build on both backends. `07_text` text renders correctly.
+
 ### Phase 7.4 — Apply small-struct ABI to cbind imports too
 
 - **2026-04-29** — Phase 7.3 fixed the small-struct-by-value lowering

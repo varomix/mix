@@ -26,6 +26,22 @@
 
 ## Phase Log
 
+### Phase 7.7 — list.pop!() / list.insert!() for shape lists
+
+- **2026-04-29** — Multiple arcade demos (MixInvaders, flappybalt,
+  MixPongApi, MixTeroids) panicked with `mix_list_pop requires a
+  scalar list` after a few frames. The LLVM lowering of
+  `list.pop!()` always emitted `mix_list_pop` (which expects boxed
+  scalar elements), even when the element type is a shape — so any
+  group/particle/sprite list that pops a slot crashed at runtime.
+  QBE's path correctly forks on `elem->kind == TYPE_SHAPE` and
+  emits `mix_list_pop_bytes` into a stack slot.
+  Fix: mirror the QBE fork in `lower_method_call` for both `pop`
+  and `insert` (which had the same scalar-only assumption).
+  Shape lists now use `mix_list_pop_bytes` / `mix_list_insert_bytes`
+  with a freshly alloca'd shape slot. 107/107 main + 30/30 mixel
+  demos build on both backends.
+
 ### Phase 7.6 — Gate small-struct C-ABI on `is_extern`
 
 - **2026-04-29** — Phase 7.4 used "callee not in `mod->funcs`" as the

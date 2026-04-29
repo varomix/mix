@@ -2263,6 +2263,19 @@ static LirOpnd lower_expr(LowerCtx *ctx, AstNode *expr) {
                 return lir_opnd_value(r, LIR_TY_PTR);
             }
             if (strcmp(mname, "pop") == 0) {
+                if (elem && elem->kind == TYPE_SHAPE) {
+                    int tmp = lir_emit_alloca_bytes(ctx->fn, expr->loc,
+                                                      elem->shape.total_size,
+                                                      elem->shape.alignment);
+                    LirOpnd tmp_p = lir_opnd_value(tmp, LIR_TY_PTR);
+                    LirType ps[] = { LIR_TY_PTR, LIR_TY_PTR };
+                    register_runtime(ctx->mod, expr->loc, "mix_list_pop_bytes",
+                                     LIR_TY_VOID, ps, 2);
+                    LirOpnd args[] = { list, tmp_p };
+                    lir_emit_call(ctx->fn, expr->loc, "mix_list_pop_bytes",
+                                    LIR_TY_VOID, args, 2);
+                    return tmp_p;
+                }
                 LirType ps[] = { LIR_TY_PTR };
                 register_runtime(ctx->mod, expr->loc, "mix_list_pop",
                                  LIR_TY_I64, ps, 1);
@@ -2603,9 +2616,24 @@ static LirOpnd lower_expr(LowerCtx *ctx, AstNode *expr) {
             }
             if (strcmp(mname, "insert") == 0 && expr->method_call.arg_count == 2) {
                 LirOpnd idx = to_i64(ctx, expr->loc, lower_expr(ctx, expr->method_call.args[0]));
-                LirOpnd v = lower_expr(ctx, expr->method_call.args[1]);
-                LirOpnd vi = to_storage_i64(ctx, expr->loc, v,
-                                               expr->method_call.args[1]->resolved_type);
+                AstNode *vnode = expr->method_call.args[1];
+                MixType *vt = vnode->resolved_type;
+                if (vt && vt->kind == TYPE_SHAPE) {
+                    int tmp = lir_emit_alloca_bytes(ctx->fn, vnode->loc,
+                                                      vt->shape.total_size,
+                                                      vt->shape.alignment);
+                    LirOpnd tmp_p = lir_opnd_value(tmp, LIR_TY_PTR);
+                    lower_init_into(ctx, tmp_p, vt, vnode);
+                    LirType ps[] = { LIR_TY_PTR, LIR_TY_I64, LIR_TY_PTR };
+                    register_runtime(ctx->mod, expr->loc, "mix_list_insert_bytes",
+                                     LIR_TY_VOID, ps, 3);
+                    LirOpnd args[] = { list, idx, tmp_p };
+                    lir_emit_call(ctx->fn, expr->loc, "mix_list_insert_bytes",
+                                    LIR_TY_VOID, args, 3);
+                    return lir_opnd_none();
+                }
+                LirOpnd v = lower_expr(ctx, vnode);
+                LirOpnd vi = to_storage_i64(ctx, expr->loc, v, vt);
                 LirType ps[] = { LIR_TY_PTR, LIR_TY_I64, LIR_TY_I64 };
                 register_runtime(ctx->mod, expr->loc, "mix_list_insert", LIR_TY_VOID, ps, 3);
                 LirOpnd args[] = { list, idx, vi };

@@ -410,8 +410,23 @@ static void emit_function(FILE *out, const LirFunc *fn) {
         fputs("  call void @mix_set_args(i32 %argc, ptr %argv)\n", out);
     }
 
+    // Hoist all allocas into the entry block. Without this, allocas
+    // emitted inside a loop body keep growing the stack frame on every
+    // iteration (the space is only reclaimed at function return), so
+    // long-running game loops eventually fault in `___chkstk_darwin`.
+    // QBE buffers all allocas into a single @start block for the same
+    // reason. Hoisting is safe: alloca operands are constants (type or
+    // byte size + alignment), so position doesn't change SSA semantics.
     for (int i = 0; i < fn->instr_count; i++) {
-        emit_instr(out, &fn->instrs[i]);
+        const LirInstr *ins = &fn->instrs[i];
+        if (ins->op == LIR_OP_ALLOCA)        emit_alloca      (out, ins);
+        else if (ins->op == LIR_OP_ALLOCA_BYTES) emit_alloca_bytes(out, ins);
+    }
+
+    for (int i = 0; i < fn->instr_count; i++) {
+        const LirInstr *ins = &fn->instrs[i];
+        if (ins->op == LIR_OP_ALLOCA || ins->op == LIR_OP_ALLOCA_BYTES) continue;
+        emit_instr(out, ins);
     }
 
     fputs("}\n", out);

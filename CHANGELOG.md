@@ -26,6 +26,29 @@
 
 ## Phase Log
 
+### Phase 7.8 — Hoist allocas to entry block
+
+- **2026-04-29** — Several arcade demos (MixSnake, Breakout, platformer)
+  ran fine for ~1 minute then died silently. lldb caught it as
+  EXC_BAD_ACCESS in `___chkstk_darwin` deep inside QuartzCore — the
+  callstack was only 21 frames, so not runaway recursion. Stack
+  pointer had walked into the guard page through gradual growth.
+  Cause: LLVM emitter wrote each `alloca` instruction inline at
+  the LIR position. LIR places allocas wherever they're requested,
+  including inside loop bodies. LLVM only reclaims alloca space
+  on function return — so a per-frame shape temp inside a `while`
+  loop reserved fresh stack every iteration. After thousands of
+  frames the stack frame grew until the next deep callstack
+  (here CA::Context::commit_transaction) faulted in `chkstk`.
+  Fix: emit_function now does two passes — first dumps every
+  ALLOCA / ALLOCA_BYTES into the entry block, then emits the
+  rest of the instructions in order, skipping allocas. Mirrors
+  what QBE has always done via its qbe_record_stack_allocf
+  buffer. Hoisting is safe — alloca operands are constants.
+  Verified via IR: all `%tN = alloca ...` lines now appear before
+  the first `L0:` label. 107/107 main + 30/30 mixel demos still
+  green on both backends.
+
 ### Phase 7.7 — list.pop!() / list.insert!() for shape lists
 
 - **2026-04-29** — Multiple arcade demos (MixInvaders, flappybalt,

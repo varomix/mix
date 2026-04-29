@@ -623,11 +623,10 @@ static MixType *resolve_type_node(Sema *sema, AstNode *type_node) {
                     if (inst) return inst;
                     // Fall through to opaque-named on error
                 }
-                // Look up in symbol table — could be a shape type
+                // Look up in symbol table — could be a shape type or
+                // a type-alias target (`type Score = int`).
                 Symbol *sym = symtab_lookup(&sema->symtab, type_node->type_name.name);
-                if (sym && sym->type &&
-                    (sym->type->kind == TYPE_SHAPE ||
-                     sym->type->kind == TYPE_ZONE)) {
+                if (sym && sym->type) {
                     return sym->type;
                 }
                 // Opaque named type (e.g., SDL_Window)
@@ -1132,12 +1131,15 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
         }
         case NODE_ELSE_EXPR: {
             MixType *val_type = resolve_expr(sema, expr->else_expr.value);
-            resolve_expr(sema, expr->else_expr.fallback);
+            MixType *fb_type  = resolve_expr(sema, expr->else_expr.fallback);
             // Result type is the inner type of the optional or result
             if (val_type && val_type->kind == TYPE_OPTIONAL) {
                 expr->resolved_type = val_type->optional.inner;
             } else if (val_type && val_type->kind == TYPE_RESULT) {
                 expr->resolved_type = val_type->result.ok_type;
+            } else if (val_type && val_type->kind == TYPE_VOID) {
+                // `none else x` — value is bare none; type comes from fallback.
+                expr->resolved_type = fb_type;
             } else {
                 // If not optional/result, just use the value type directly
                 expr->resolved_type = val_type;

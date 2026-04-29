@@ -1,10 +1,21 @@
 #!/bin/bash
-# MIX language end-to-end test runner
+# MIX language end-to-end test runner.
+#
+# Backend selection (LLVM is the default; the others stay while we wind
+# QBE down and keep C as a small-target fallback):
+#   ./tests/run_tests.sh                    # llvm (default)
+#   MIX_BACKEND=qbe ./tests/run_tests.sh    # legacy QBE, parity oracle
+#   MIX_BACKEND=c   ./tests/run_tests.sh    # C fallback
 
 MIXC="./build/mix"
 TEST_DIR="tests/programs"
 EXPECTED_DIR="tests/programs/expected"
 BUILD_DIR="build/test_output"
+
+backend_flag=""
+if [ -n "${MIX_BACKEND:-}" ]; then
+    backend_flag="--backend $MIX_BACKEND"
+fi
 
 mkdir -p "$BUILD_DIR"
 
@@ -38,7 +49,7 @@ for src in "$TEST_DIR"/*.mix; do
     fi
 
     # Compile (LDFLAGS passes extra object files to the linker)
-    compile_out=$(LDFLAGS="$extra_ldflags $LDFLAGS" "$MIXC" "$src" -o "$binary" $extra_flags 2>&1)
+    compile_out=$(LDFLAGS="$extra_ldflags $LDFLAGS" "$MIXC" $backend_flag "$src" -o "$binary" $extra_flags 2>&1)
     if [ $? -ne 0 ]; then
         echo "FAIL  $name  (compile error)"
         echo "      $compile_out"

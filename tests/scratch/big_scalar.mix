@@ -1,0 +1,40 @@
+// Synthetic Phase 3 compile-time stress test — scalar+CFG only.
+add(a: int, b: int) -> int
+    a + b
+sub(a: int, b: int) -> int
+    a - b
+mul(a: int, b: int) -> int
+    a * b
+divv(a: int, b: int) -> int
+    a / b
+fib(n: int) -> int
+    if n <= 1
+        done n
+    fib(n - 1) + fib(n - 2)
+sum_to(n: int) -> int
+    s! = 0
+    i! = 0
+    while i <= n
+        s! += i
+        i! += 1
+    s
+collatz(n: int) -> int
+    c! = 0
+    x! = n
+    while x > 1
+        if x % 2 == 0
+            x! = x / 2
+        else
+            x! = 3 * x + 1
+        c! += 1
+    c
+
+main()
+    print(add(1, 2))
+    print(sub(10, 3))
+    print(mul(4, 5))
+    print(divv(20, 4))
+    for i in 0..10
+        print(fib(i))
+    print(sum_to(100))
+    print(collatz(27))

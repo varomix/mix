@@ -187,7 +187,7 @@ make test-all    # runtime + error + error-message suites (run for current count
 
 ## Documentation
 
-See `docs/DOCS.md` for the full language reference, `MIX-spec_v01.md` for the language specification, and `ZONES_VALUE_FIRST_DESIGN_SKETCH.md` for the memory-model rationale.
+See `docs/DOCS.md` for the full language reference, `MIX-spec_v01.md` for the language specification, `ZONES_VALUE_FIRST_DESIGN_SKETCH.md` for the memory-model rationale, and `LLVM_MIGRATION_PLAN.md` for the backend migration roadmap.
 
 ## Building the LSP
 

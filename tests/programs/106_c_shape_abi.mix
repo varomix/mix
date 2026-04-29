@@ -1,0 +1,44 @@
+// Locks in the current ABI for passing small and large MIX shapes across
+// the C boundary by pointer. This is a Phase 0 guardrail for the LLVM
+// migration — the LLVM emitter must lay shapes out identically to the C
+// declarations in c_shape_helper.h or this regresses.
+
+shape Vec2
+    x, y: float
+
+shape Big
+    a, b, c, d, e, f, g, h: float
+
+extern "C"
+    cvec2_scale(v: *Vec2, k: float) ~
+    cvec2_dot(a: *Vec2, b: *Vec2) -> float
+    cbig_zero(b: *Big) ~
+    cbig_set_seq(b: *Big, start: float) ~
+    cbig_sum(b: *Big) -> float
+
+main()
+    // Small shape (16 bytes): mutate via pointer, then read fields back.
+    v! = Vec2(x: 1.0, y: 2.0)
+    cvec2_scale(&v, 10.0)
+    print(v.x)
+    print(v.y)
+
+    // Note: `a!` / `b!` (mutable bindings) are required to get a real
+    // address. Taking `&` of an immutable binding currently produces a
+    // dangling/garbage pointer — see CHANGELOG "Failed Approaches" entry
+    // dated 2026-04-28. The LLVM migration needs to either preserve or
+    // intentionally change this behavior.
+    a! = Vec2(x: 3.0, y: 4.0)
+    b! = Vec2(x: 5.0, y: 6.0)
+    print(cvec2_dot(&a, &b))
+
+    // Large shape (32 bytes): zero, then fill from C, then sum.
+    big! = Big(a: 99.0, b: 99.0, c: 99.0, d: 99.0,
+               e: 99.0, f: 99.0, g: 99.0, h: 99.0)
+    cbig_zero(&big)
+    print(cbig_sum(&big))
+
+    cbig_set_seq(&big, 1.0)
+    print(big.a)
+    print(big.h)
+    print(cbig_sum(&big))

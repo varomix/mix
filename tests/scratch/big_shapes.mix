@@ -1,0 +1,32 @@
+// Synthetic Phase 4A compile-time stress test — shapes/fields/calls.
+shape V3
+    x, y, z: float
+
+shape Box
+    min: V3
+    max: V3
+
+v3_add(a: V3, b: V3) -> V3
+    V3(x: a.x + b.x, y: a.y + b.y, z: a.z + b.z)
+
+v3_dot(a: V3, b: V3) -> float
+    a.x * b.x + a.y * b.y + a.z * b.z
+
+box_center(b: Box) -> V3
+    V3(x: (b.min.x + b.max.x) / 2.0,
+       y: (b.min.y + b.max.y) / 2.0,
+       z: (b.min.z + b.max.z) / 2.0)
+
+main()
+    a = V3(x: 1.0, y: 2.0, z: 3.0)
+    b = V3(x: 4.0, y: 5.0, z: 6.0)
+    c = v3_add(a, b)
+    print(c.x)
+    print(c.y)
+    print(c.z)
+    print(v3_dot(a, b))
+    bb = Box(min: a, max: b)
+    cc = box_center(bb)
+    print(cc.x)
+    print(cc.y)
+    print(cc.z)

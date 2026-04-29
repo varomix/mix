@@ -134,6 +134,43 @@ static int dbg_record_loc(LlvmEmitter *e, int line, int col, int scope_md_id) {
     return id;
 }
 
+// Intern a !DIBasicType (or shape blob) by (lir_type, shape_size). Scalars
+// share by lir_type; shape blobs share by size only since we don't yet
+// emit field-level debug info for them.
+static int dbg_basic_type_for(LlvmEmitter *e, LirType lt, int shape_size) {
+    for (int i = 0; i < e->basic_type_count; i++) {
+        const LlvmDbgBasicType *b = &e->basic_types[i];
+        if (b->lir_type == lt && b->shape_size_bytes == shape_size) return b->md_id;
+    }
+    if (e->basic_type_count >= e->basic_type_capacity) {
+        int cap = e->basic_type_capacity ? e->basic_type_capacity * 2 : 16;
+        e->basic_types = realloc(e->basic_types, cap * sizeof(*e->basic_types));
+        e->basic_type_capacity = cap;
+    }
+    int id = dbg_next_id(e);
+    e->basic_types[e->basic_type_count++] = (LlvmDbgBasicType){
+        .md_id = id, .lir_type = lt, .shape_size_bytes = shape_size,
+    };
+    return id;
+}
+
+static int dbg_record_var(LlvmEmitter *e, const char *name, int scope_md_id,
+                           int file_md_id, int line, int type_md_id, int arg_index) {
+    if (e->var_count >= e->var_capacity) {
+        int cap = e->var_capacity ? e->var_capacity * 2 : 64;
+        e->vars = realloc(e->vars, cap * sizeof(*e->vars));
+        e->var_capacity = cap;
+    }
+    int id = dbg_next_id(e);
+    e->vars[e->var_count++] = (LlvmDbgVar){
+        .md_id = id, .scope_md_id = scope_md_id, .file_md_id = file_md_id,
+        .line = line, .type_md_id = type_md_id,
+        .arg_index = arg_index,
+        .name = name,                  // arena-owned, stable for module lifetime
+    };
+    return id;
+}
+
 void llvm_emitter_enable_debug(LlvmEmitter *e, const char *source_path) {
     e->debug = true;
     // Keep the path as the LIR/loc records will use it. dbg_file_for will
@@ -586,10 +623,53 @@ static void emit_function(FILE *out, LlvmEmitter *emit, const LirFunc *fn) {
     // QBE buffers all allocas into a single @start block for the same
     // reason. Hoisting is safe: alloca operands are constants (type or
     // byte size + alignment), so position doesn't change SSA semantics.
+    //
+    // Phase 6+: in debug mode, emit `llvm.dbg.declare` after each alloca
+    // that has a registered LirDbgLocal — gives lldb's `frame variable`
+    // a name + type for the slot. The dbg.declare itself is decorated
+    // with the variable's source loc so it doesn't lose its scope.
+    int sp_file_md = 0;
+    int sp_line = 0;
+    if (emit->debug && emit->current_sp_md_id > 0) {
+        for (int i = 0; i < emit->fn_count; i++) {
+            if (emit->fns[i].sp_md_id == emit->current_sp_md_id) {
+                sp_file_md = emit->fns[i].file_md_id;
+                sp_line = emit->fns[i].line;
+                break;
+            }
+        }
+    }
+    int param_seen = 0;
     for (int i = 0; i < fn->instr_count; i++) {
         const LirInstr *ins = &fn->instrs[i];
-        if (ins->op == LIR_OP_ALLOCA)        emit_alloca      (out, ins);
-        else if (ins->op == LIR_OP_ALLOCA_BYTES) emit_alloca_bytes(out, ins);
+        if (ins->op == LIR_OP_ALLOCA)             emit_alloca      (out, ins);
+        else if (ins->op == LIR_OP_ALLOCA_BYTES)  emit_alloca_bytes(out, ins);
+        else continue;
+
+        if (!emit->debug || emit->current_sp_md_id <= 0) continue;
+        // Look up a LirDbgLocal for this alloca id.
+        const LirDbgLocal *dl = NULL;
+        for (int k = 0; k < fn->dbg_local_count; k++) {
+            if (fn->dbg_locals[k].alloca_value_id == ins->result) {
+                dl = &fn->dbg_locals[k];
+                break;
+            }
+        }
+        if (!dl) continue;
+        int type_md = dbg_basic_type_for(emit,
+            dl->scalar_type != LIR_TY_VOID ? dl->scalar_type : LIR_TY_VOID,
+            dl->shape_size_bytes);
+        int line = dl->loc.line > 0 ? dl->loc.line : sp_line;
+        int col  = dl->loc.col  > 0 ? dl->loc.col  : 1;
+        int arg_index = dl->is_param ? ++param_seen : 0;
+        int var_md = dbg_record_var(emit, dl->name, emit->current_sp_md_id,
+                                      sp_file_md, line, type_md, arg_index);
+        int loc_md = dbg_record_loc(emit, line, col, emit->current_sp_md_id);
+        fprintf(out,
+            "  call void @llvm.dbg.declare(metadata ptr %%t%d, metadata !%d, "
+            "metadata !DIExpression()), !dbg !%d\n",
+            ins->result, var_md, loc_md);
+        emit->needs_dbg_declare_decl = true;
     }
 
     for (int i = 0; i < fn->instr_count; i++) {
@@ -623,6 +703,14 @@ void llvm_emit_module(LlvmEmitter *emit, LirModule *mod) {
         // Standard LLVM memcpy intrinsic — declare once per module when
         // any LIR_OP_MEMCPY appears.
         fputs("declare void @llvm.memcpy.p0.p0.i64(ptr noalias nocapture writeonly, ptr noalias nocapture readonly, i64, i1 immarg)\n\n", out);
+    }
+
+    if (emit->debug) {
+        // Always declare the dbg intrinsic in --debug mode. It's free if
+        // unused — but the per-function alloca-walk decides emission, so
+        // declaring up front keeps the order at the top of the file.
+        fputs("declare void @llvm.dbg.declare(metadata, metadata, metadata) #0\n", out);
+        fputs("attributes #0 = { nocallback nofree nosync nounwind speculatable willreturn memory(none) }\n\n", out);
     }
 
     // Runtime / module-level callee declarations. Lowering registered
@@ -723,6 +811,54 @@ void llvm_emit_module(LlvmEmitter *emit, LirModule *mod) {
                 f->sp_md_id, f->name ? f->name : "?",
                 f->file_md_id, f->file_md_id, f->line,
                 f->subroutine_type_md_id, f->line, emit->unit_cu_md_id);
+        }
+
+        for (int i = 0; i < emit->basic_type_count; i++) {
+            const LlvmDbgBasicType *b = &emit->basic_types[i];
+            const char *name = "void"; int bits = 0; const char *enc = NULL;
+            switch (b->lir_type) {
+                case LIR_TY_I1:  name = "bool";    bits = 8;  enc = "DW_ATE_boolean";   break;
+                case LIR_TY_I8:  name = "byte";    bits = 8;  enc = "DW_ATE_unsigned";  break;
+                case LIR_TY_I32: name = "int32";   bits = 32; enc = "DW_ATE_signed";    break;
+                case LIR_TY_I64: name = "int";     bits = 64; enc = "DW_ATE_signed";    break;
+                case LIR_TY_F32: name = "float32"; bits = 32; enc = "DW_ATE_float";     break;
+                case LIR_TY_F64: name = "float";   bits = 64; enc = "DW_ATE_float";     break;
+                case LIR_TY_PTR: name = "ptr";     bits = 64; enc = "DW_ATE_address";   break;
+                default: break;
+            }
+            if (b->shape_size_bytes > 0) {
+                // Shape blob: opaque byte array of the right size. lldb
+                // shows the address; field-level decode is a future step.
+                fprintf(out,
+                    "!%d = !DIBasicType(name: \"shape\", size: %d, encoding: DW_ATE_unsigned)\n",
+                    b->md_id, b->shape_size_bytes * 8);
+            } else if (enc) {
+                fprintf(out,
+                    "!%d = !DIBasicType(name: \"%s\", size: %d, encoding: %s)\n",
+                    b->md_id, name, bits, enc);
+            } else {
+                // Fallback for unmapped types — emit a generic pointer.
+                fprintf(out,
+                    "!%d = !DIBasicType(name: \"ptr\", size: 64, encoding: DW_ATE_address)\n",
+                    b->md_id);
+            }
+        }
+
+        for (int i = 0; i < emit->var_count; i++) {
+            const LlvmDbgVar *v = &emit->vars[i];
+            if (v->arg_index > 0) {
+                fprintf(out,
+                    "!%d = !DILocalVariable(name: \"%s\", arg: %d, scope: !%d, "
+                    "file: !%d, line: %d, type: !%d)\n",
+                    v->md_id, v->name, v->arg_index, v->scope_md_id,
+                    v->file_md_id, v->line, v->type_md_id);
+            } else {
+                fprintf(out,
+                    "!%d = !DILocalVariable(name: \"%s\", scope: !%d, "
+                    "file: !%d, line: %d, type: !%d)\n",
+                    v->md_id, v->name, v->scope_md_id,
+                    v->file_md_id, v->line, v->type_md_id);
+            }
         }
 
         for (int i = 0; i < emit->loc_count; i++) {

@@ -142,6 +142,29 @@ void lir_func_add_param(LirFunc *fn, const char *name, LirType type,
 int lir_func_new_value(LirFunc *fn) { return fn->next_value_id++; }
 int lir_func_new_label(LirFunc *fn) { return fn->next_label_id++; }
 
+void lir_func_add_dbg_local(LirFunc *fn, int alloca_id, const char *name,
+                             SrcLoc loc, LirType scalar_type,
+                             int shape_size_bytes, bool is_param)
+{
+    Arena *arena = fn->mod->arena;
+    if (fn->dbg_local_count >= fn->dbg_local_capacity) {
+        int cap = fn->dbg_local_capacity ? fn->dbg_local_capacity * 2 : 16;
+        LirDbgLocal *fresh = arena_alloc(arena, cap * sizeof(LirDbgLocal));
+        if (fn->dbg_locals)
+            memcpy(fresh, fn->dbg_locals, fn->dbg_local_count * sizeof(LirDbgLocal));
+        fn->dbg_locals = fresh;
+        fn->dbg_local_capacity = cap;
+    }
+    fn->dbg_locals[fn->dbg_local_count++] = (LirDbgLocal){
+        .alloca_value_id = alloca_id,
+        .name = arena_strdup(arena, name ? name : "_"),
+        .loc = loc,
+        .scalar_type = scalar_type,
+        .shape_size_bytes = shape_size_bytes,
+        .is_param = is_param,
+    };
+}
+
 static LirInstr *append_instr(LirFunc *fn) {
     Arena *arena = fn->mod->arena;
     if (fn->instr_count >= fn->instr_capacity) {

@@ -3238,6 +3238,8 @@ static void lower_var_decl(LowerCtx *ctx, AstNode *vd) {
         int slot = lir_emit_alloca_bytes(ctx->fn, vd->loc,
                                            t->shape.total_size,
                                            t->shape.alignment);
+        lir_func_add_dbg_local(ctx->fn, slot, vd->var_decl.name, vd->loc,
+                                LIR_TY_VOID, t->shape.total_size, false);
         Local *l = scope_add(ctx, vd->var_decl.name);
         l->value_id = slot;
         l->shape_type = t;
@@ -3257,6 +3259,8 @@ static void lower_var_decl(LowerCtx *ctx, AstNode *vd) {
     // (including type-changing shadow like `y = 7; y! = "seven"`) — the
     // new binding must not stomp the old slot.
     int slot = lir_emit_alloca(ctx->fn, vd->loc, lt);
+    lir_func_add_dbg_local(ctx->fn, slot, vd->var_decl.name, vd->loc,
+                            lt, 0, false);
     Local *l = scope_add(ctx, vd->var_decl.name);
     l->value_id = slot;
     l->scalar_type = lt;
@@ -4479,11 +4483,15 @@ static void lower_function_inner(LirModule *mod, SymTab *symtab,
             l->value_id = v;
             if (is_shape_param) {
                 l->shape_type = pt;
+                lir_func_add_dbg_local(fn, slot, p->name, fn_decl->loc,
+                                        LIR_TY_VOID, pt->shape.total_size, true);
             } else {
                 // Mut scalar: scope sees this Local as a regular scalar
                 // local backed by the caller's storage. Reads = LOAD,
                 // writes = STORE.
                 l->scalar_type = mix_to_lir(pt);
+                lir_func_add_dbg_local(fn, slot, p->name, fn_decl->loc,
+                                        LIR_TY_PTR, 0, true);
             }
         } else {
             // Immutable scalar: spill value into alloca; treat as local.
@@ -4494,6 +4502,8 @@ static void lower_function_inner(LirModule *mod, SymTab *symtab,
             Local *l = scope_add(&ctx, p->name);
             l->value_id = slot;
             l->scalar_type = param_lir_ty;
+            lir_func_add_dbg_local(fn, slot, p->name, fn_decl->loc,
+                                    param_lir_ty, 0, true);
         }
         param_idx++;
     }

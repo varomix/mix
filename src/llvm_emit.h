@@ -37,6 +37,22 @@ typedef struct {
 } LlvmDbgLoc;
 
 typedef struct {
+    int     md_id;
+    LirType lir_type;          // for scalar locals; LIR_TY_VOID for shapes
+    int     shape_size_bytes;  // 0 for scalar
+} LlvmDbgBasicType;
+
+typedef struct {
+    int         md_id;
+    int         scope_md_id;   // !DISubprogram id of the enclosing fn
+    int         file_md_id;
+    int         line;
+    int         type_md_id;    // !DIBasicType
+    int         arg_index;     // 1-based for params; 0 for locals
+    const char *name;
+} LlvmDbgVar;
+
+typedef struct {
     FILE *out;
 
     // Debug info (Phase 6). Off by default.
@@ -58,6 +74,16 @@ typedef struct {
     LlvmDbgLoc  *locs;
     int          loc_count;
     int          loc_capacity;
+
+    LlvmDbgBasicType *basic_types;
+    int               basic_type_count;
+    int               basic_type_capacity;
+
+    LlvmDbgVar  *vars;
+    int          var_count;
+    int          var_capacity;
+
+    bool         needs_dbg_declare_decl;   // emit `declare void @llvm.dbg.declare(...)` once
 } LlvmEmitter;
 
 LlvmEmitter llvm_emitter_create(FILE *out);

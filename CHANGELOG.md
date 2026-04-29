@@ -17,6 +17,36 @@
 
 ## Phase Log
 
+### Phase 6+ — Local variables in lldb (DILocalVariable)
+
+- **2026-04-29** — Phase 6 gave lldb the line table; this gives it
+  named locals so `frame variable` shows MIX names + values instead
+  of just stack addresses.
+  - **LIR:** new `LirDbgLocal` side-table on `LirFunc`. Stores
+    `(alloca_value_id, name, loc, scalar_type, shape_size, is_param)`.
+    New API: `lir_func_add_dbg_local`. Carries no codegen weight when
+    --debug is off.
+  - **lower.c:** `lower_var_decl` registers a dbg_local for both
+    scalar and shape locals; the param-spill loop in
+    `lower_function_inner` registers one per MIX parameter
+    (immutable scalars, mutable scalars, and shape params).
+  - **llvm_emit.c:** in --debug mode, after each alloca in the
+    entry-block hoist, look up its `LirDbgLocal`. If found, intern
+    a `!DIBasicType` for the LIR type, allocate a
+    `!DILocalVariable` (with `arg:` for params), and emit
+    `call void @llvm.dbg.declare(...)` decorated with the var's
+    source loc. `llvm.dbg.declare` is declared once per module.
+  - **DI types:** scalar LirTypes map to `!DIBasicType` with sizes
+    + DWARF encoding (`DW_ATE_signed` / `_unsigned` / `_float` /
+    `_boolean` / `_address`). Shape locals map to a single
+    opaque `!DIBasicType(name: "shape", size: <bits>, encoding:
+    DW_ATE_unsigned)` — lldb shows the address; field-level
+    decode (proper `!DICompositeType` with `!DIDerivedType`
+    members) is a future step.
+  Verified: dwarfdump shows DW_TAG_formal_parameter / DW_TAG_variable
+  DIEs with the right DW_AT_name + DW_AT_type. 107/107 main + 31/31
+  mixel demos build with --debug.
+
 ### Phase 9 — QBE retired
 
 - **2026-04-29** — All retirement gates met (LLVM 107/107 main, mixel

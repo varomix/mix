@@ -187,6 +187,20 @@ typedef struct {
 
 typedef struct LirModule LirModule;
 
+// Debug-info entry for a named local. Created by lower.c whenever a
+// MIX-named alloca slot is created (var decls + function params). The
+// LLVM emitter consumes these in --debug mode to emit
+// llvm.dbg.declare + !DILocalVariable so lldb's `frame variable`
+// can name and decode locals.
+typedef struct {
+    int         alloca_value_id;   // result id of the LIR alloca instr
+    const char *name;              // MIX-level variable name
+    SrcLoc      loc;               // declaration loc
+    LirType     scalar_type;       // for scalar locals; LIR_TY_VOID if shape
+    int         shape_size_bytes;  // for shape locals; 0 if scalar
+    bool        is_param;          // true for function params (passed-in)
+} LirDbgLocal;
+
 typedef struct {
     LirModule  *mod;
     const char *name;
@@ -203,6 +217,10 @@ typedef struct {
     LirInstr   *instrs;
     int         instr_count;
     int         instr_capacity;
+
+    LirDbgLocal *dbg_locals;
+    int          dbg_local_count;
+    int          dbg_local_capacity;
 } LirFunc;
 
 // ---- Module ----------------------------------------------------------------
@@ -296,6 +314,14 @@ void lir_emit_ret_value(LirFunc *fn, SrcLoc loc, LirOpnd value);
 
 int  lir_emit_alloca   (LirFunc *fn, SrcLoc loc, LirType type);
 int  lir_emit_alloca_bytes(LirFunc *fn, SrcLoc loc, int byte_size, int byte_align);
+
+// Phase 6+: register a debug-info entry for a named local. `alloca_id`
+// is the result id of an earlier `lir_emit_alloca[_bytes]`. For shape
+// locals, set `scalar_type=LIR_TY_VOID` and pass the shape size; for
+// scalar locals, set `scalar_type` to the LirType and `shape_size=0`.
+void lir_func_add_dbg_local(LirFunc *fn, int alloca_id, const char *name,
+                             SrcLoc loc, LirType scalar_type,
+                             int shape_size_bytes, bool is_param);
 int  lir_emit_load     (LirFunc *fn, SrcLoc loc, LirType type, LirOpnd addr);
 void lir_emit_store    (LirFunc *fn, SrcLoc loc, LirType type,
                         LirOpnd value, LirOpnd addr);

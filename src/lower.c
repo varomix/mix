@@ -964,8 +964,28 @@ static LirOpnd lower_user_call_into(LowerCtx *ctx, LirOpnd dst,
                                               at->shape.alignment);
             LirOpnd tmp_p = lir_opnd_value(tmp, LIR_TY_PTR);
             lower_init_into(ctx, tmp_p, at, a);
-            lir_args[idx] = tmp_p;
-            param_types[idx] = LIR_TY_PTR;
+            // Pass-by-value to extern C: small int-only structs go in an
+            // integer register per the C ABI. We can only tell here if
+            // the callee is *not* a MIX-defined function in this module.
+            // cbind-imported C functions and prior pre-registered extern
+            // decls land in this branch.
+            bool callee_is_local = false;
+            for (int fi = 0; fi < ctx->mod->func_count; fi++) {
+                if (strcmp(ctx->mod->funcs[fi]->name, call->call.name) == 0) {
+                    callee_is_local = true;
+                    break;
+                }
+            }
+            LirType ival = callee_is_local ? LIR_TY_VOID
+                                            : shape_int_value_lir(at);
+            if (ival != LIR_TY_VOID) {
+                int v = lir_emit_load(ctx->fn, a->loc, ival, tmp_p);
+                lir_args[idx] = lir_opnd_value(v, ival);
+                param_types[idx] = ival;
+            } else {
+                lir_args[idx] = tmp_p;
+                param_types[idx] = LIR_TY_PTR;
+            }
         } else {
             lir_args[idx] = lower_expr(ctx, a);
             param_types[idx] = lir_args[idx].type;

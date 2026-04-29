@@ -26,6 +26,25 @@
 
 ## Phase Log
 
+### Phase 7.4 — Apply small-struct ABI to cbind imports too
+
+- **2026-04-29** — Phase 7.3 fixed the small-struct-by-value lowering
+  but only for `extern "lib"` block decls written explicitly in MIX
+  (the `case NODE_EXTERN_BLOCK` branch in lower_program). cbind goes
+  through a different path: `compile_module` calls
+  `cbind_generate_string` to produce a buffer of MIX source, which is
+  then lexed/parsed/sema-analyzed *separately* — the symbols land in
+  the user's symtab but the AST nodes are not in the user's program,
+  so lower_program never iterates them.
+  TTF_RenderText_Blended is a cbind import, not an `extern` block
+  decl. The previous fix didn't cover it, so text was still broken.
+  Fix: detect at the call site itself. When materializing a shape arg
+  for a callee that isn't a MIX-defined function in this module
+  (search `mod->funcs` by name; absent ⇒ extern), apply
+  `shape_int_value_lir` and load the slot as the matching int (i8 /
+  i32 / i64). The on-demand callee registration then records the int
+  type, and both the `declare` and the `call` line up.
+
 ### Phase 7.3 — Small-struct-by-value to extern C
 
 - **2026-04-29** — Mixel runtime parity bug: text didn't render in any

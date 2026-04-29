@@ -26,6 +26,32 @@
 
 ## Phase Log
 
+### Phase 7.3 — Small-struct-by-value to extern C
+
+- **2026-04-29** — Mixel runtime parity bug: text didn't render in any
+  demo. `make_text` calls `TTF_RenderText_Blended(font, s, len, sc)`
+  where `sc` is `SDL_Color { r, g, b, a: byte }` (4 bytes). The C ABI
+  on AArch64 / x86-64-SysV passes int-only structs ≤ 8 bytes in a
+  single integer register, but the LLVM lowerer (and the QBE one,
+  pre-existing) was passing the struct's *address* as a pointer.
+  The function read the lower 32 bits of the stack-slot pointer as
+  the struct, getting random color bytes — usually with a low alpha
+  byte, which made the rendered text completely transparent.
+  Fix:
+  - `shape_int_value_lir(MixType *t)` returns the int LIR type that
+    matches the C ABI for that struct (i8 for 1-byte, i32 for ≤4,
+    i64 for ≤8). Returns void for shapes that are too big or contain
+    floats (those need HFA / multi-register handling — none of the
+    currently-used SDL types hit that path).
+  - extern callee registration uses this for shape params.
+  - Call-site coercion already had a "ptr → int" path for
+    fn-pointer-as-int args; extended it to recognise that when the
+    AST arg is a TYPE_SHAPE (not a fn ptr), the right move is to
+    LOAD the slot as the target int type rather than ptrtoint the
+    address. SDL_Color now arrives as the correct 4 bytes.
+  - This is intentionally only applied to extern C calls. MIX-internal
+    calls keep the existing pointer-passing shape ABI.
+
 ### Phase 7.2 — float32 ABI
 
 - **2026-04-29** — Mixel runtime parity bug: `mixel/01_hello` rendered

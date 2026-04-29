@@ -188,6 +188,32 @@ static bool is_int_lir(LirType t) {
     return t == LIR_TY_I1 || t == LIR_TY_I8 || t == LIR_TY_I32 || t == LIR_TY_I64;
 }
 
+// AArch64 / x86-64 SysV C ABI: integer-only structs ≤ 8 bytes pass in
+// a single integer register, not as a pointer. cbind brings these in
+// as MIX shapes — we still treat them as shape values internally, but
+// at C-extern call boundaries we load the slot as a sized int and pass
+// that. Returns LIR_TY_VOID for shapes we don't want to pass-by-value
+// (too big, or contain floats — float structs need HFA handling).
+//
+// This is only invoked for `extern` C callees. MIX-internal calls keep
+// the existing pointer-passing ABI.
+static LirType shape_int_value_lir(MixType *t) {
+    if (!t || t->kind != TYPE_SHAPE) return LIR_TY_VOID;
+    if (t->shape.is_tagged_union) return LIR_TY_VOID;
+    int sz = t->shape.total_size;
+    if (sz <= 0 || sz > 8) return LIR_TY_VOID;
+    // Reject if any field is float — those need HFA (separate FP regs).
+    for (int i = 0; i < t->shape.field_count; i++) {
+        MixType *ft = t->shape.fields[i].type;
+        if (ft && (ft->kind == TYPE_FLOAT || ft->kind == TYPE_FLOAT32 ||
+                   ft->kind == TYPE_FLOAT64))
+            return LIR_TY_VOID;
+    }
+    if (sz == 1)               return LIR_TY_I8;
+    if (sz <= 4)               return LIR_TY_I32;
+    return LIR_TY_I64;
+}
+
 static bool is_float_lir(LirType t) {
     return t == LIR_TY_F32 || t == LIR_TY_F64;
 }
@@ -976,16 +1002,32 @@ static LirOpnd lower_user_call_into(LowerCtx *ctx, LirOpnd dst,
                                         lir_args[i].type, expected, lir_args[i]);
                 lir_args[i] = lir_opnd_value(r, expected);
             } else if (lir_args[i].type == LIR_TY_PTR && is_int_lir(expected)) {
-                // ptr → i64 → narrow if needed.
-                int r = lir_emit_conv(ctx->fn, call->loc, LIR_CONV_PTRTOINT,
-                                        LIR_TY_PTR, LIR_TY_I64, lir_args[i]);
-                LirOpnd as_i64 = lir_opnd_value(r, LIR_TY_I64);
-                if (expected == LIR_TY_I64) {
-                    lir_args[i] = as_i64;
+                // Two cases share this branch:
+                // (1) Small-struct-by-value to an extern C callee — the
+                //     arg is a shape ptr (alloca slot), the callee
+                //     declares the int type the C ABI uses for the
+                //     struct (i8/i32/i64). Load the slot as that int.
+                // (2) Function pointer (ptr) being squeezed into an int
+                //     param, e.g. `apply(dbl, 21)` where apply takes
+                //     `f: int`. Use ptrtoint.
+                MixType *arg_mix = (i >= extra && args[i - extra])
+                    ? args[i - extra]->resolved_type : NULL;
+                bool arg_is_shape = arg_mix && arg_mix->kind == TYPE_SHAPE;
+                if (arg_is_shape) {
+                    int v = lir_emit_load(ctx->fn, call->loc, expected, lir_args[i]);
+                    lir_args[i] = lir_opnd_value(v, expected);
                 } else {
-                    int r2 = lir_emit_conv(ctx->fn, call->loc, LIR_CONV_TRUNC,
-                                             LIR_TY_I64, expected, as_i64);
-                    lir_args[i] = lir_opnd_value(r2, expected);
+                    // ptr → i64 → narrow if needed.
+                    int r = lir_emit_conv(ctx->fn, call->loc, LIR_CONV_PTRTOINT,
+                                            LIR_TY_PTR, LIR_TY_I64, lir_args[i]);
+                    LirOpnd as_i64 = lir_opnd_value(r, LIR_TY_I64);
+                    if (expected == LIR_TY_I64) {
+                        lir_args[i] = as_i64;
+                    } else {
+                        int r2 = lir_emit_conv(ctx->fn, call->loc, LIR_CONV_TRUNC,
+                                                 LIR_TY_I64, expected, as_i64);
+                        lir_args[i] = lir_opnd_value(r2, expected);
+                    }
                 }
             } else if (is_int_lir(lir_args[i].type) && expected == LIR_TY_PTR) {
                 // int → i64 → ptr.
@@ -4613,8 +4655,13 @@ LirModule *lower_program(AstNode *program, Arena *arena, SymTab *symtab) {
                     LirType *params = NULL;
                     if (n > 0) {
                         params = arena_alloc(arena, n * sizeof(LirType));
-                        for (int k = 0; k < n; k++)
-                            params[k] = mix_to_lir(ft->func.param_types[k]);
+                        for (int k = 0; k < n; k++) {
+                            // Small int-only structs pass in an integer
+                            // register per the C ABI, not as a pointer.
+                            LirType ival = shape_int_value_lir(ft->func.param_types[k]);
+                            if (ival != LIR_TY_VOID) params[k] = ival;
+                            else params[k] = mix_to_lir(ft->func.param_types[k]);
+                        }
                     }
                     LirType ret = mix_to_lir(ft->func.return_type);
                     const char *symbol = e->extern_fn_decl.c_name

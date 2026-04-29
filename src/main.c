@@ -725,10 +725,15 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
         llvm_emit_module(&le, lmod);
         fclose(ll_out);
 
-        const char *clang_argv[8];
+        const char *clang_argv[10];
         int cai = 0;
         clang_argv[cai++] = "clang";
         clang_argv[cai++] = "-c";
+        // .ll deliberately has no `target triple = ...`. Clang warns
+        // "overriding the module target triple..." either way (with or
+        // without one); suppress it because we explicitly want the
+        // host triple.
+        clang_argv[cai++] = "-Wno-override-module";
         if (debug) clang_argv[cai++] = "-g";
         clang_argv[cai++] = "-o";
         clang_argv[cai++] = obj_path;
@@ -1299,10 +1304,13 @@ int main(int argc, char **argv) {
     // gets handed to the final cc link step below.
     if (use_llvm_backend) {
         snprintf(asm_path, sizeof(asm_path), "/tmp/mix_%d.o", getpid());
-        const char *clang_argv[8];
+        const char *clang_argv[10];
         int cai = 0;
         clang_argv[cai++] = "clang";
         clang_argv[cai++] = "-c";
+        // See comment on the per-module clang call: silence the
+        // override-module warning, host triple is the intended target.
+        clang_argv[cai++] = "-Wno-override-module";
         if (debug_mode) clang_argv[cai++] = "-g";
         clang_argv[cai++] = "-o";
         clang_argv[cai++] = asm_path;

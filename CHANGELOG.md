@@ -17,6 +17,25 @@
 
 ## Phase Log
 
+### Phase 7 — Host-portability cleanup (compiler core)
+
+- **2026-04-29** — First step toward Linux/Windows hosts: stop
+  pinning the IR target.
+  - **llvm_emit.c:** dropped the hardcoded
+    `target triple = "arm64-apple-darwin"`. clang -c now uses the
+    host triple. The previous line was both wrong on non-Apple
+    hosts and tripped clang's `-Woverride-module` on every
+    macOS build.
+  - **main.c:** added `-Wno-override-module` to both clang -c
+    invocations (top-level + per sub-module). Suppresses the
+    warning that would now fire because the IR has no triple at
+    all — this is the explicit policy, no need to nag every build.
+  - **LLVM_MIGRATION_PLAN.md:** Phase 7 section now documents the
+    actual portability state: compiler core is host-portable;
+    mixel + cbind + cross-compilation are not.
+  Verified: 107/107 main + 31/31 mixel demos still green; verbose
+  build no longer prints the override warning.
+
 ### Phase 6+ — Local variables in lldb (DILocalVariable)
 
 - **2026-04-29** — Phase 6 gave lldb the line table; this gives it

@@ -473,8 +473,9 @@ Do not start here. Get host parity first.
 
 Recommended order:
 
-1. macOS arm64 host parity
-2. Linux x86_64
+1. macOS arm64 host parity — ✅ done
+2. Linux x86_64 — partial (compiler core triple-portable; mixel and
+   cbind not yet)
 3. Linux aarch64
 4. Windows x64
 5. wasm32-wasi
@@ -487,6 +488,52 @@ Important caveat:
 LLVM can produce code for these targets. That does not automatically make the
 MIX runtime or `mixel` portable to them. Browser/mobile support still needs a
 platform/runtime layer and likely graphics/audio backend work.
+
+### What's portable today (2026-04-29)
+
+The compiler binary itself (`mix`) builds and produces correct
+host-targeted IR on any UNIX with `cc` + `clang` available:
+
+- **Codegen layer.** Removed the hardcoded `arm64-apple-darwin`
+  `target triple` from emitted IR; clang -c uses the host triple.
+  Suppressed clang's `-Woverride-module` warning at the compile
+  call site since "use host default" is now the explicit policy.
+- **Calling-convention coverage.** AArch64 PCS and x86_64 SysV
+  agree on the cases the lowerer currently emits: int-only
+  structs ≤ 8 bytes go in one int register (matches both ABIs),
+  scalar floats go in the first FP register (matches both),
+  shape returns use sret. No work needed for Linux x86_64 calls
+  to MIX-defined functions or to cbind-imported functions whose
+  signatures fit those rules.
+- **OS guards.** main.c and sema.c already split on
+  `__APPLE__` / `__linux__` for executable-path detection
+  (`_NSGetExecutablePath` vs `/proc/self/exe`) and the SDK
+  library directory.
+
+### What's NOT portable yet
+
+- **mixel**. Uses SDL3 + Metal (via SDL_GPU). Needs a Vulkan or
+  GL path on Linux, plus the Cocoa autorelease-pool helper in
+  `mixel.mix` is macOS-only.
+- **cbind**. The system-header filter is calibrated for macOS:
+  `/opt/homebrew/...` paths flag homebrew-vendored libs as
+  user code, while `/usr/include/` is filtered as system.
+  Linux puts user libs (SDL3) under `/usr/include/SDL3/`, so
+  the current filter would drop the bindings as "system". Fix
+  is to make the filter source-driven (only what `-I` paths
+  pulled in is "user code").
+- **Cross-compilation**. The codegen always targets the host
+  triple. A `--target` flag + per-target small-struct ABI
+  (ARM, AArch64, x86_64 SysV, x86_64 Win64, AArch64 Win64,
+  RISC-V, wasm32) would be needed before targeting non-host.
+- **Linker plumbing**. The cc link line embeds macOS SDK lib
+  paths (gated under `__APPLE__`). Linux works as-is for plain
+  programs; non-trivial deps would need pkg-config / library
+  detection.
+
+The realistic short-term Linux x86_64 milestone is "compiler
+self-builds and runs the regression suite on Linux". That's
+plumbing — not a code-redesign — and has no blocking unknowns.
 
 ## Phase 8 — Default Backend Flip
 

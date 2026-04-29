@@ -696,8 +696,11 @@ void llvm_emit_module(LlvmEmitter *emit, LirModule *mod) {
     if (!mod) return;
     FILE *out = emit->out;
 
-    fputs("; MIX LLVM backend — Phase 4A (scalar + control flow + shapes)\n", out);
-    fputs("target triple = \"arm64-apple-darwin\"\n\n", out);
+    fputs("; MIX LLVM backend\n", out);
+    // No `target triple = ...` line: clang -c will fill in the host
+    // triple. Hardcoding arm64-apple-darwin tripped clang's
+    // -Woverride-module on every macOS build, and was outright wrong
+    // for any non-Apple host (Linux x86_64 / aarch64 / Windows).
 
     if (mod->uses_memcpy) {
         // Standard LLVM memcpy intrinsic — declare once per module when

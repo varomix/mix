@@ -25,6 +25,7 @@ typedef enum {
     LIR_TY_I8,
     LIR_TY_I32,
     LIR_TY_I64,
+    LIR_TY_F32,    // Phase 7.2: 4-byte float for cbind C `float` fields
     LIR_TY_F64,
     LIR_TY_PTR,    // catch-all pointer (covers str, ref, box, zone, *T)
 } LirType;
@@ -103,6 +104,8 @@ typedef enum {
     LIR_CONV_TRUNC,    // truncate integer
     LIR_CONV_SITOFP,   // signed int → float
     LIR_CONV_FPTOSI,   // float → signed int
+    LIR_CONV_FPEXT,    // f32 → f64
+    LIR_CONV_FPTRUNC,  // f64 → f32
     LIR_CONV_BITCAST,  // reinterpret bits between same-size types (double ↔ i64)
     LIR_CONV_PTRTOINT, // pointer → integer
     LIR_CONV_INTTOPTR, // integer → pointer

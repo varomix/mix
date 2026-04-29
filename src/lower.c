@@ -156,7 +156,7 @@ static LirType mix_to_lir(MixType *t) {
         case TYPE_INT:     case TYPE_INT64:    case TYPE_UINT64:
         case TYPE_INT16:   case TYPE_UINT16:   return LIR_TY_I64;
         case TYPE_FLOAT:   case TYPE_FLOAT64:  return LIR_TY_F64;
-        case TYPE_FLOAT32: return LIR_TY_F64;
+        case TYPE_FLOAT32: return LIR_TY_F32;
         case TYPE_STR:
         case TYPE_PTR:
         case TYPE_REF:
@@ -186,6 +186,28 @@ static LirType mix_to_lir(MixType *t) {
 
 static bool is_int_lir(LirType t) {
     return t == LIR_TY_I1 || t == LIR_TY_I8 || t == LIR_TY_I32 || t == LIR_TY_I64;
+}
+
+static bool is_float_lir(LirType t) {
+    return t == LIR_TY_F32 || t == LIR_TY_F64;
+}
+
+// Convert a float operand between f32 and f64. Returns the operand
+// unchanged if its type already matches `dst`. Non-float operands are
+// returned as-is — callers should mix in int-side coercions separately.
+static LirOpnd float_cast(LowerCtx *ctx, SrcLoc loc, LirOpnd v, LirType dst) {
+    if (!is_float_lir(v.type) || v.type == dst) return v;
+    if (dst == LIR_TY_F32 && v.type == LIR_TY_F64) {
+        int r = lir_emit_conv(ctx->fn, loc, LIR_CONV_FPTRUNC,
+                                LIR_TY_F64, LIR_TY_F32, v);
+        return lir_opnd_value(r, LIR_TY_F32);
+    }
+    if (dst == LIR_TY_F64 && v.type == LIR_TY_F32) {
+        int r = lir_emit_conv(ctx->fn, loc, LIR_CONV_FPEXT,
+                                LIR_TY_F32, LIR_TY_F64, v);
+        return lir_opnd_value(r, LIR_TY_F64);
+    }
+    return v;
 }
 
 static bool mix_is_shape(MixType *t) {
@@ -330,6 +352,10 @@ static LirBinOp tok_to_bin(TokenKind op, bool *ok) {
 // because they're the same width); booleans and narrow ints use ZEXT/SEXT;
 // floats use bitcast.
 static LirOpnd to_storage_i64(LowerCtx *ctx, SrcLoc loc, LirOpnd v, MixType *src) {
+    if (v.type == LIR_TY_F32) {
+        // Promote to f64 first so the bitcast width matches.
+        v = float_cast(ctx, loc, v, LIR_TY_F64);
+    }
     if (v.type == LIR_TY_F64) {
         int r = lir_emit_conv(ctx->fn, loc, LIR_CONV_BITCAST,
                                 LIR_TY_F64, LIR_TY_I64, v);
@@ -352,6 +378,12 @@ static LirOpnd from_storage_i64(LowerCtx *ctx, SrcLoc loc, LirOpnd v_i64,
         int r = lir_emit_conv(ctx->fn, loc, LIR_CONV_BITCAST,
                                 LIR_TY_I64, LIR_TY_F64, v_i64);
         return lir_opnd_value(r, LIR_TY_F64);
+    }
+    if (lt == LIR_TY_F32) {
+        // i64 → f64 → fptrunc to f32 (storage was widened on the way in).
+        int r = lir_emit_conv(ctx->fn, loc, LIR_CONV_BITCAST,
+                                LIR_TY_I64, LIR_TY_F64, v_i64);
+        return float_cast(ctx, loc, lir_opnd_value(r, LIR_TY_F64), LIR_TY_F32);
     }
     if (lt == LIR_TY_PTR) {
         int r = lir_emit_conv(ctx->fn, loc, LIR_CONV_INTTOPTR,
@@ -564,7 +596,9 @@ static void lower_print(LowerCtx *ctx, AstNode *call) {
     // a bool, like file_exists) as bools so print emits "true"/"false".
     bool ast_is_bool = arg->resolved_type && arg->resolved_type->kind == TYPE_BOOL;
 
-    if (val.type == LIR_TY_F64) {
+    if (is_float_lir(val.type)) {
+        // print() always takes a double; promote f32 to f64 first.
+        if (val.type == LIR_TY_F32) val = float_cast(ctx, call->loc, val, LIR_TY_F64);
         register_print_float(ctx->mod, call->loc);
         LirOpnd args[] = { val };
         lir_emit_call(ctx->fn, call->loc, "mix_print_float", LIR_TY_VOID, args, 1);
@@ -726,11 +760,14 @@ static void lower_shape_lit_into(LowerCtx *ctx, LirOpnd dst,
                                            ft == LIR_TY_I64 ? LIR_CONV_SEXT : LIR_CONV_TRUNC,
                                            v.type, ft, v);
                     v = lir_opnd_value(r, ft);
-                } else if (is_int_lir(v.type) && ft == LIR_TY_F64) {
+                } else if (is_int_lir(v.type) && is_float_lir(ft)) {
                     LirOpnd w = widen_to_i64(ctx, fexpr->loc, v, fexpr->resolved_type);
                     int r = lir_emit_conv(ctx->fn, fexpr->loc, LIR_CONV_SITOFP,
                                            LIR_TY_I64, LIR_TY_F64, w);
-                    v = lir_opnd_value(r, LIR_TY_F64);
+                    v = float_cast(ctx, fexpr->loc,
+                                     lir_opnd_value(r, LIR_TY_F64), ft);
+                } else if (is_float_lir(v.type) && is_float_lir(ft)) {
+                    v = float_cast(ctx, fexpr->loc, v, ft);
                 } else if (v.type == LIR_TY_PTR && is_int_lir(ft)) {
                     int r = lir_emit_conv(ctx->fn, fexpr->loc, LIR_CONV_PTRTOINT,
                                            LIR_TY_PTR, ft, v);
@@ -787,11 +824,14 @@ static void lower_shape_lit_into(LowerCtx *ctx, LirOpnd dst,
                 int r = lir_emit_conv(ctx->fn, fexpr->loc, LIR_CONV_INTTOPTR,
                                        v.type, LIR_TY_PTR, v);
                 v = lir_opnd_value(r, LIR_TY_PTR);
-            } else if (is_int_lir(v.type) && ft == LIR_TY_F64) {
+            } else if (is_int_lir(v.type) && is_float_lir(ft)) {
                 LirOpnd w = widen_to_i64(ctx, fexpr->loc, v, fexpr->resolved_type);
                 int r = lir_emit_conv(ctx->fn, fexpr->loc, LIR_CONV_SITOFP,
                                        LIR_TY_I64, LIR_TY_F64, w);
-                v = lir_opnd_value(r, LIR_TY_F64);
+                v = float_cast(ctx, fexpr->loc,
+                                 lir_opnd_value(r, LIR_TY_F64), ft);
+            } else if (is_float_lir(v.type) && is_float_lir(ft)) {
+                v = float_cast(ctx, fexpr->loc, v, ft);
             }
         }
         lir_emit_store(ctx->fn, fexpr->loc, ft, v, field_addr);
@@ -958,17 +998,21 @@ static LirOpnd lower_user_call_into(LowerCtx *ctx, LirOpnd dst,
                 int r2 = lir_emit_conv(ctx->fn, call->loc, LIR_CONV_INTTOPTR,
                                          LIR_TY_I64, LIR_TY_PTR, v);
                 lir_args[i] = lir_opnd_value(r2, LIR_TY_PTR);
-            } else if (is_int_lir(lir_args[i].type) && expected == LIR_TY_F64) {
-                // int → f64 (sitofp via i64).
+            } else if (is_int_lir(lir_args[i].type) && is_float_lir(expected)) {
+                // int → f64 → maybe fptrunc to f32.
                 LirOpnd w = widen_to_i64(ctx, call->loc, lir_args[i],
                                             args[i - extra]->resolved_type);
                 int r = lir_emit_conv(ctx->fn, call->loc, LIR_CONV_SITOFP,
                                         LIR_TY_I64, LIR_TY_F64, w);
-                lir_args[i] = lir_opnd_value(r, LIR_TY_F64);
-            } else if (lir_args[i].type == LIR_TY_F64 && is_int_lir(expected)) {
-                // f64 → int (fptosi then narrow).
+                lir_args[i] = float_cast(ctx, call->loc,
+                                            lir_opnd_value(r, LIR_TY_F64),
+                                            expected);
+            } else if (is_float_lir(lir_args[i].type) && is_int_lir(expected)) {
+                // f → f64 → fptosi → maybe trunc.
+                LirOpnd as_f64 = float_cast(ctx, call->loc,
+                                              lir_args[i], LIR_TY_F64);
                 int r = lir_emit_conv(ctx->fn, call->loc, LIR_CONV_FPTOSI,
-                                        LIR_TY_F64, LIR_TY_I64, lir_args[i]);
+                                        LIR_TY_F64, LIR_TY_I64, as_f64);
                 LirOpnd as_i64 = lir_opnd_value(r, LIR_TY_I64);
                 if (expected == LIR_TY_I64) {
                     lir_args[i] = as_i64;
@@ -977,6 +1021,8 @@ static LirOpnd lower_user_call_into(LowerCtx *ctx, LirOpnd dst,
                                              LIR_TY_I64, expected, as_i64);
                     lir_args[i] = lir_opnd_value(r2, expected);
                 }
+            } else if (is_float_lir(lir_args[i].type) && is_float_lir(expected)) {
+                lir_args[i] = float_cast(ctx, call->loc, lir_args[i], expected);
             }
         }
     }
@@ -1529,7 +1575,11 @@ static LirOpnd lower_field_expr(LowerCtx *ctx, AstNode *fe) {
         if (mix_is_shape(f->type)) return addr;
         LirType ft = mix_to_lir(f->type);
         int loaded = lir_emit_load(ctx->fn, fe->loc, ft, addr);
-        return lir_opnd_value(loaded, ft);
+        LirOpnd v = lir_opnd_value(loaded, ft);
+        // Promote f32 fields to f64 for downstream arithmetic — MIX
+        // arithmetic uses double; f32 only exists at storage boundaries.
+        if (ft == LIR_TY_F32) v = float_cast(ctx, fe->loc, v, LIR_TY_F64);
+        return v;
     }
     // Computed field: name isn't a field but might be a 0-arg method.
     AstNode *obj = fe->field_expr.object;
@@ -3099,16 +3149,20 @@ static void lower_var_decl(LowerCtx *ctx, AstNode *vd) {
                 int r = lir_emit_conv(ctx->fn, vd->loc, LIR_CONV_INTTOPTR,
                                        val.type, LIR_TY_PTR, val);
                 val = lir_opnd_value(r, LIR_TY_PTR);
-            } else if (val.type == LIR_TY_F64 && is_int_lir(lt)) {
+            } else if (is_float_lir(val.type) && is_int_lir(lt)) {
+                LirOpnd as_f64 = float_cast(ctx, vd->loc, val, LIR_TY_F64);
                 int r = lir_emit_conv(ctx->fn, vd->loc, LIR_CONV_FPTOSI,
-                                       LIR_TY_F64, lt, val);
+                                       LIR_TY_F64, lt, as_f64);
                 val = lir_opnd_value(r, lt);
-            } else if (is_int_lir(val.type) && lt == LIR_TY_F64) {
+            } else if (is_int_lir(val.type) && is_float_lir(lt)) {
                 LirOpnd w = widen_to_i64(ctx, vd->loc, val,
                                             vd->var_decl.init_expr->resolved_type);
                 int r = lir_emit_conv(ctx->fn, vd->loc, LIR_CONV_SITOFP,
                                        LIR_TY_I64, LIR_TY_F64, w);
-                val = lir_opnd_value(r, LIR_TY_F64);
+                val = float_cast(ctx, vd->loc,
+                                   lir_opnd_value(r, LIR_TY_F64), lt);
+            } else if (is_float_lir(val.type) && is_float_lir(lt)) {
+                val = float_cast(ctx, vd->loc, val, lt);
             }
         }
         lir_emit_store(ctx->fn, vd->loc, lt, val,
@@ -3254,6 +3308,15 @@ static void lower_field_assign(LowerCtx *ctx, AstNode *fa) {
             int r = lir_emit_conv(ctx->fn, fa->loc, LIR_CONV_INTTOPTR,
                                    to_store.type, LIR_TY_PTR, to_store);
             to_store = lir_opnd_value(r, LIR_TY_PTR);
+        } else if (is_float_lir(to_store.type) && is_float_lir(ft)) {
+            to_store = float_cast(ctx, fa->loc, to_store, ft);
+        } else if (is_int_lir(to_store.type) && is_float_lir(ft)) {
+            LirOpnd w = widen_to_i64(ctx, fa->loc, to_store,
+                                        fa->field_assign.value->resolved_type);
+            int r = lir_emit_conv(ctx->fn, fa->loc, LIR_CONV_SITOFP,
+                                   LIR_TY_I64, LIR_TY_F64, w);
+            to_store = float_cast(ctx, fa->loc,
+                                    lir_opnd_value(r, LIR_TY_F64), ft);
         }
     }
     lir_emit_store(ctx->fn, fa->loc, ft, to_store, field_addr);

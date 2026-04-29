@@ -26,6 +26,38 @@
 
 ## Phase Log
 
+### Phase 7.2 — float32 ABI
+
+- **2026-04-29** — Mixel runtime parity bug: `mixel/01_hello` rendered
+  pure blue + bright green instead of cornflower-blue + soft green.
+  Root cause: `mix_to_lir(TYPE_FLOAT32) = LIR_TY_F64` mapped C-side
+  `float` (4-byte) cbind fields to MIX `double` (8-byte). Storing into
+  `SDL_FColor { r, g, b, a: float32 }` emitted four 8-byte stores into
+  a 16-byte slot, each store stomping the next field. Fields read back
+  as scrambled bit fragments (some channels hit 0 or 1 by coincidence).
+  Same bug for any cbind shape with C `float` fields (Vec3, color
+  buffers, GPU vertex layouts, …) but only colors were obviously
+  wrong — most other f32 fields are within tolerance even when bits
+  are mangled.
+  Fix:
+  - Added `LIR_TY_F32` (renders as `float`) plus `LIR_CONV_FPEXT` /
+    `LIR_CONV_FPTRUNC` to the LIR.
+  - `mix_to_lir(TYPE_FLOAT32) = LIR_TY_F32`.
+  - `float_cast(ctx, v, dst_ty)` helper inserts fpext/fptrunc when
+    crossing the f32↔f64 boundary.
+  - All field stores/loads (regular shape lit, tagged-union variant
+    payload, field reads, field assigns), call-arg coercion, var-decl
+    init, and list scalar storage (to/from i64 for boxing) now
+    promote/demote at the storage boundary. `print()` always passes
+    f64, so f32 values are promoted before the call.
+  - `render_float` rounds the immediate through `(double)(float)` when
+    the operand type is f32, so the emitted 64-bit hex is exactly
+    representable as a 32-bit float (LLVM rejects f64 hex with
+    nonzero low bits when assigned to a `float` slot).
+  - Makefile lacks header-deps tracking, so a stale build can mask
+    enum reordering bugs after adding LIR_TY_F32. `make clean &&
+    make` is required when changing lir.h.
+
 ### Phase 7.1 — Zero-init shape literal slots
 
 - **2026-04-29** — Mixel runtime parity bug: `mix run` of any demo

@@ -34,6 +34,7 @@ static const char *llvm_type(LirType t) {
         case LIR_TY_I8:   return "i8";
         case LIR_TY_I32:  return "i32";
         case LIR_TY_I64:  return "i64";
+        case LIR_TY_F32:  return "float";
         case LIR_TY_F64:  return "double";
         case LIR_TY_PTR:  return "ptr";
     }
@@ -50,8 +51,12 @@ static void render_param(FILE *out, int idx) {
 // Render a double constant. LLVM IR requires double constants in
 // hexadecimal IEEE-754 bit form (NOT C99 hex-float format) — the
 // expected syntax is `0x` followed by 16 hex digits encoding the
-// raw 64-bit pattern.
-static void render_float(FILE *out, double v) {
+// raw 64-bit pattern. `as_f32` rounds through float first so the
+// emitted hex represents an f32-representable double (LLVM rejects
+// any f64 hex that isn't exactly representable as f32 when it's
+// being assigned to a `float` slot).
+static void render_float(FILE *out, double v, bool as_f32) {
+    if (as_f32) v = (double)(float)v;
     union { double d; unsigned long long u; } pun;
     pun.d = v;
     fprintf(out, "0x%016llX", pun.u);
@@ -69,7 +74,7 @@ static void render_operand(FILE *out, LirOpnd op) {
             else fprintf(out, "%lld", op.imm);
             break;
         case LIR_OPND_BOOL:   fputs(op.imm ? "1" : "0", out);      break;
-        case LIR_OPND_F64:    render_float(out, op.fimm);          break;
+        case LIR_OPND_F64:    render_float(out, op.fimm, op.type == LIR_TY_F32); break;
         case LIR_OPND_NONE:   fputs("undef", out);                 break;
         case LIR_OPND_FN_REF: fprintf(out, "@%s", op.fn_name);     break;
     }
@@ -255,7 +260,7 @@ static bool ty_is_int(LirType t) {
 
 static void emit_bin(FILE *out, const LirInstr *ins) {
     bool is_cmp = (ins->bin_op >= LIR_BIN_EQ && ins->bin_op <= LIR_BIN_GE);
-    bool is_float = (ins->bin_type == LIR_TY_F64);
+    bool is_float = (ins->bin_type == LIR_TY_F64 || ins->bin_type == LIR_TY_F32);
 
     // Pointer comparisons are valid (e.g., compare two refs). Force
     // ptr-typed render so an i64 0 immediate prints as `null`.
@@ -301,7 +306,7 @@ static void emit_bin(FILE *out, const LirInstr *ins) {
 
 static void emit_un(FILE *out, const LirInstr *ins) {
     if (ins->un_op == LIR_UN_NEG) {
-        if (ins->un_type == LIR_TY_F64) {
+        if (ins->un_type == LIR_TY_F64 || ins->un_type == LIR_TY_F32) {
             // fneg
             fprintf(out, "  %%t%d = fneg %s ", ins->result, llvm_type(ins->un_type));
             render_operand(out, ins->un_a);
@@ -336,6 +341,8 @@ static void emit_conv(FILE *out, const LirInstr *ins) {
         case LIR_CONV_TRUNC:    op = "trunc";    break;
         case LIR_CONV_SITOFP:   op = "sitofp";   break;
         case LIR_CONV_FPTOSI:   op = "fptosi";   break;
+        case LIR_CONV_FPEXT:    op = "fpext";    break;
+        case LIR_CONV_FPTRUNC:  op = "fptrunc";  break;
         case LIR_CONV_BITCAST:  op = "bitcast";  break;
         case LIR_CONV_PTRTOINT: op = "ptrtoint"; break;
         case LIR_CONV_INTTOPTR: op = "inttoptr"; break;
@@ -463,6 +470,8 @@ void llvm_emit_module(LlvmEmitter *emit, LirModule *mod) {
             fprintf(out, "@%s = global ptr null\n", g->name);
         } else if (g->type == LIR_TY_F64) {
             fprintf(out, "@%s = global double 0.0\n", g->name);
+        } else if (g->type == LIR_TY_F32) {
+            fprintf(out, "@%s = global float 0.0\n", g->name);
         } else if (g->has_const_init) {
             fprintf(out, "@%s = global %s %lld\n", g->name, ty, g->const_init);
         } else {

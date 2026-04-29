@@ -26,6 +26,29 @@
 
 ## Phase Log
 
+### Phase 7.6 — Gate small-struct C-ABI on `is_extern`
+
+- **2026-04-29** — Phase 7.4 used "callee not in `mod->funcs`" as the
+  signal for "this is a C extern, apply small-struct-by-int ABI."
+  `mod->funcs` only contains the *current* compilation unit's
+  functions, so MIX functions defined in sub-modules tested "not
+  local" too and got C ABI applied. `Group` is exactly 8 bytes
+  (`sprites: [Sprite]` = one list pointer), so when 02_groups,
+  05_random, 18_mouse, etc. called `group_add(balls, s)` —
+  `group_add` lives in `mixel.mix`, a sub-module —
+  `shape_int_value_lir(Group)` returned `i64`, the lowerer loaded
+  the Group's first 8 bytes (the list ptr) and passed *that*
+  to `group_add` instead of the Group address. The callee then
+  read `gr.sprites` as field 0 of a bare list pointer, got
+  garbage, and either segfaulted or hit "list is null" panics.
+  Fix: switch the gate to `sym->is_extern` (the flag added in
+  Phase 7.5). Cross-module MIX callees keep MIX ABI; only
+  cbind / `extern "lib"` callees get C ABI.
+  Verified: 02_groups / 05_random / 18_mouse no longer crash;
+  `group_add` now declares as `(ptr, ptr)` and SDL externs still
+  declare correctly. 107/107 main + 30/30 mixel demos on both
+  backends.
+
 ### Phase 7.5 — Float32 ABI for cbind imports
 
 - **2026-04-29** — Phase 7.4 fixed the *shape* arg ABI for cbind

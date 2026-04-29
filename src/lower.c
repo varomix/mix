@@ -965,19 +965,20 @@ static LirOpnd lower_user_call_into(LowerCtx *ctx, LirOpnd dst,
             LirOpnd tmp_p = lir_opnd_value(tmp, LIR_TY_PTR);
             lower_init_into(ctx, tmp_p, at, a);
             // Pass-by-value to extern C: small int-only structs go in an
-            // integer register per the C ABI. We can only tell here if
-            // the callee is *not* a MIX-defined function in this module.
-            // cbind-imported C functions and prior pre-registered extern
-            // decls land in this branch.
-            bool callee_is_local = false;
-            for (int fi = 0; fi < ctx->mod->func_count; fi++) {
-                if (strcmp(ctx->mod->funcs[fi]->name, call->call.name) == 0) {
-                    callee_is_local = true;
-                    break;
-                }
+            // integer register per the C ABI. Gate on the symtab's
+            // is_extern flag — "not in this module's mod->funcs" used
+            // to drive this, but it incorrectly fired for MIX functions
+            // defined in sub-modules (e.g. `group_add` in mixel.mix
+            // when compiling 02_groups), causing the Group ptr to be
+            // loaded as i64 and the callee to receive a list pointer
+            // where it expected the Group address.
+            bool callee_is_extern = false;
+            if (ctx->symtab) {
+                Symbol *cs = symtab_lookup(ctx->symtab, call->call.name);
+                if (cs && cs->is_extern) callee_is_extern = true;
             }
-            LirType ival = callee_is_local ? LIR_TY_VOID
-                                            : shape_int_value_lir(at);
+            LirType ival = callee_is_extern ? shape_int_value_lir(at)
+                                             : LIR_TY_VOID;
             if (ival != LIR_TY_VOID) {
                 int v = lir_emit_load(ctx->fn, a->loc, ival, tmp_p);
                 lir_args[idx] = lir_opnd_value(v, ival);

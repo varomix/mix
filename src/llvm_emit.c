@@ -2,7 +2,9 @@
 #include "errors.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 // ============================================================================
 // Phase 3 LLVM emitter
@@ -23,6 +25,122 @@ LlvmEmitter llvm_emitter_create(FILE *out) {
     LlvmEmitter e = {0};
     e.out = out;
     return e;
+}
+
+// ---- Debug-info bookkeeping (Phase 6) -------------------------------------
+
+static char *dbg_strdup(const char *s) {
+    if (!s) return NULL;
+    size_t n = strlen(s);
+    char *p = malloc(n + 1);
+    if (!p) return NULL;
+    memcpy(p, s, n + 1);
+    return p;
+}
+
+// Split `path` into (dir, base) using the last '/' or '\\'. If `path` has
+// no separator, returns dir="." and base=path. Both halves are
+// freshly-allocated; caller frees.
+static void dbg_split_path(const char *path, char **dir_out, char **base_out) {
+    if (!path || !*path) { *dir_out = dbg_strdup("."); *base_out = dbg_strdup("?"); return; }
+    const char *slash = NULL;
+    for (const char *p = path; *p; p++) if (*p == '/' || *p == '\\') slash = p;
+    if (!slash) {
+        *dir_out = dbg_strdup(".");
+        *base_out = dbg_strdup(path);
+        return;
+    }
+    int dir_len = (int)(slash - path);
+    char *dir = malloc(dir_len + 1);
+    memcpy(dir, path, dir_len);
+    dir[dir_len] = '\0';
+    *dir_out = dir;
+    *base_out = dbg_strdup(slash + 1);
+}
+
+// Make `path` absolute. If it's already absolute, return a copy. If not,
+// prepend cwd. Caller frees.
+static char *dbg_absolute(const char *path) {
+    if (!path || !*path) return dbg_strdup(".");
+    if (path[0] == '/') return dbg_strdup(path);
+    char cwd[4096];
+    if (!getcwd(cwd, sizeof(cwd))) return dbg_strdup(path);
+    size_t need = strlen(cwd) + 1 + strlen(path) + 1;
+    char *p = malloc(need);
+    snprintf(p, need, "%s/%s", cwd, path);
+    return p;
+}
+
+static int dbg_next_id(LlvmEmitter *e) { return e->next_md_id++; }
+
+// Intern a !DIFile entry by the (filename, directory) pair derived from
+// `source_path`. Returns the metadata id. New entry on first occurrence.
+static int dbg_file_for(LlvmEmitter *e, const char *source_path) {
+    if (!source_path) source_path = e->unit_filename ? e->unit_filename : "<unknown>";
+    char *dir = NULL; char *base = NULL;
+    if (source_path[0] == '/') {
+        dbg_split_path(source_path, &dir, &base);
+    } else {
+        char *abs = dbg_absolute(source_path);
+        dbg_split_path(abs, &dir, &base);
+        free(abs);
+    }
+    for (int i = 0; i < e->file_count; i++) {
+        if (strcmp(e->files[i].filename, base) == 0 &&
+            strcmp(e->files[i].directory, dir) == 0) {
+            free(dir); free(base);
+            return e->files[i].file_md_id;
+        }
+    }
+    if (e->file_count >= e->file_capacity) {
+        int cap = e->file_capacity ? e->file_capacity * 2 : 8;
+        e->files = realloc(e->files, cap * sizeof(*e->files));
+        e->file_capacity = cap;
+    }
+    int id = dbg_next_id(e);
+    e->files[e->file_count++] = (LlvmDbgFile){
+        .file_md_id = id, .filename = base, .directory = dir,
+    };
+    return id;
+}
+
+static int dbg_record_subprogram(LlvmEmitter *e, const char *fn_name,
+                                  int file_md_id, int line) {
+    if (e->fn_count >= e->fn_capacity) {
+        int cap = e->fn_capacity ? e->fn_capacity * 2 : 16;
+        e->fns = realloc(e->fns, cap * sizeof(*e->fns));
+        e->fn_capacity = cap;
+    }
+    int sp = dbg_next_id(e);
+    int sty = dbg_next_id(e);
+    e->fns[e->fn_count++] = (LlvmDbgFn){
+        .sp_md_id = sp, .subroutine_type_md_id = sty,
+        .file_md_id = file_md_id, .line = line,
+        .name = dbg_strdup(fn_name),
+    };
+    return sp;
+}
+
+static int dbg_record_loc(LlvmEmitter *e, int line, int col, int scope_md_id) {
+    if (e->loc_count >= e->loc_capacity) {
+        int cap = e->loc_capacity ? e->loc_capacity * 2 : 256;
+        e->locs = realloc(e->locs, cap * sizeof(*e->locs));
+        e->loc_capacity = cap;
+    }
+    int id = dbg_next_id(e);
+    e->locs[e->loc_count++] = (LlvmDbgLoc){
+        .md_id = id, .line = line, .col = col, .scope_md_id = scope_md_id,
+    };
+    return id;
+}
+
+void llvm_emitter_enable_debug(LlvmEmitter *e, const char *source_path) {
+    e->debug = true;
+    // Keep the path as the LIR/loc records will use it. dbg_file_for will
+    // intern it; both the !DICompileUnit and per-instruction !DILocations
+    // share the same !DIFile that way.
+    e->unit_filename = source_path ? source_path : "<unknown>";
+    e->next_md_id = 0;
 }
 
 // ---- Type and operand rendering -------------------------------------------
@@ -366,7 +484,35 @@ static void emit_label(FILE *out, const LirInstr *ins) {
     fprintf(out, "L%d:\n", ins->label_id);
 }
 
-static void emit_instr(FILE *out, const LirInstr *ins) {
+static void emit_instr_raw(FILE *out, const LirInstr *ins);
+
+// Emit one instruction to `out`. In debug mode, attach `, !dbg !N` to
+// instructions that take a debug location (skip labels, which are block
+// headers, and skip allocas that have no source loc — typically the
+// entry-block hoisted ones from compiler-synthesized temps).
+static void emit_instr(FILE *out, LlvmEmitter *emit, const LirInstr *ins) {
+    if (!emit || !emit->debug || ins->op == LIR_OP_LABEL ||
+        emit->current_sp_md_id <= 0 || ins->loc.line <= 0) {
+        emit_instr_raw(out, ins);
+        return;
+    }
+    // Capture the inner emit, then splice in the dbg suffix before the
+    // trailing newline.
+    char *buf = NULL; size_t bufsize = 0;
+    FILE *mem = open_memstream(&buf, &bufsize);
+    if (!mem) { emit_instr_raw(out, ins); return; }
+    emit_instr_raw(mem, ins);
+    fclose(mem);
+    int n = (int)bufsize;
+    while (n > 0 && buf[n - 1] == '\n') n--;
+    int loc_id = dbg_record_loc(emit, ins->loc.line, ins->loc.col,
+                                  emit->current_sp_md_id);
+    fwrite(buf, 1, n, out);
+    fprintf(out, ", !dbg !%d\n", loc_id);
+    free(buf);
+}
+
+static void emit_instr_raw(FILE *out, const LirInstr *ins) {
     switch (ins->op) {
         case LIR_OP_CALL:         emit_call        (out, ins); break;
         case LIR_OP_RET:          emit_ret         (out, ins); break;
@@ -400,9 +546,32 @@ static void emit_function_signature(FILE *out, const LirFunc *fn) {
     fputc(')', out);
 }
 
-static void emit_function(FILE *out, const LirFunc *fn) {
+static void emit_function(FILE *out, LlvmEmitter *emit, const LirFunc *fn) {
     fputs("\n", out);
     emit_function_signature(out, fn);
+
+    // Phase 6: register a !DISubprogram for this function. Use the
+    // first instruction with a non-zero loc to pick the file and line.
+    // (LIR ops carry source loc; the entry/setup ops sometimes have a
+    // zero loc, so scan forward for the first real one.)
+    if (emit->debug) {
+        int line = 0;
+        const char *file = NULL;
+        for (int i = 0; i < fn->instr_count; i++) {
+            if (fn->instrs[i].loc.line > 0) {
+                line = fn->instrs[i].loc.line;
+                file = fn->instrs[i].loc.filename;
+                break;
+            }
+        }
+        if (line == 0) line = 1;
+        int file_md = dbg_file_for(emit, file);
+        const char *fname = fn->is_main ? "main" : fn->name;
+        emit->current_sp_md_id = dbg_record_subprogram(emit, fname, file_md, line);
+        fprintf(out, " !dbg !%d", emit->current_sp_md_id);
+    } else {
+        emit->current_sp_md_id = 0;
+    }
     fputs(" {\n", out);
     fputs("entry:\n", out);
 
@@ -426,7 +595,7 @@ static void emit_function(FILE *out, const LirFunc *fn) {
     for (int i = 0; i < fn->instr_count; i++) {
         const LirInstr *ins = &fn->instrs[i];
         if (ins->op == LIR_OP_ALLOCA || ins->op == LIR_OP_ALLOCA_BYTES) continue;
-        emit_instr(out, ins);
+        emit_instr(out, emit, ins);
     }
 
     fputs("}\n", out);
@@ -502,6 +671,65 @@ void llvm_emit_module(LlvmEmitter *emit, LirModule *mod) {
 
     // Function definitions.
     for (int i = 0; i < mod->func_count; i++) {
-        emit_function(out, mod->funcs[i]);
+        emit_function(out, emit, mod->funcs[i]);
+    }
+
+    // Phase 6: debug-info metadata footer. Emit !llvm.module.flags,
+    // !llvm.dbg.cu, the !DICompileUnit, !DIFile entries, !DISubroutineType
+    // entries, !DISubprogram entries, and !DILocation entries. lldb only
+    // needs files + subprograms + locations to step by line; we don't yet
+    // emit !DILocalVariable / llvm.dbg.declare for individual locals.
+    if (emit->debug) {
+        // Reserve module-flag ids and CU id at the top of the namespace.
+        int dwarf_ver_id  = dbg_next_id(emit);
+        int debug_ver_id  = dbg_next_id(emit);
+        int wchar_id      = dbg_next_id(emit);
+        int flags_list_id = dbg_next_id(emit);
+        int cu_list_id    = dbg_next_id(emit);
+        emit->unit_cu_md_id = dbg_next_id(emit);
+        int unit_file_id   = dbg_file_for(emit, emit->unit_filename);
+
+        fputs("\n", out);
+        fprintf(out, "!llvm.module.flags = !{!%d, !%d, !%d}\n",
+                dwarf_ver_id, debug_ver_id, wchar_id);
+        fprintf(out, "!llvm.dbg.cu = !{!%d}\n\n", emit->unit_cu_md_id);
+
+        fprintf(out, "!%d = !{i32 7, !\"Dwarf Version\", i32 4}\n", dwarf_ver_id);
+        fprintf(out, "!%d = !{i32 2, !\"Debug Info Version\", i32 3}\n", debug_ver_id);
+        fprintf(out, "!%d = !{i32 1, !\"wchar_size\", i32 4}\n", wchar_id);
+        (void)flags_list_id; (void)cu_list_id;
+
+        fprintf(out,
+            "!%d = distinct !DICompileUnit("
+            "language: DW_LANG_C99, file: !%d, "
+            "producer: \"mix\", isOptimized: false, runtimeVersion: 0, "
+            "emissionKind: FullDebug)\n",
+            emit->unit_cu_md_id, unit_file_id);
+
+        for (int i = 0; i < emit->file_count; i++) {
+            const LlvmDbgFile *f = &emit->files[i];
+            fprintf(out, "!%d = !DIFile(filename: \"%s\", directory: \"%s\")\n",
+                    f->file_md_id, f->filename, f->directory);
+        }
+
+        for (int i = 0; i < emit->fn_count; i++) {
+            const LlvmDbgFn *f = &emit->fns[i];
+            fprintf(out, "!%d = !DISubroutineType(types: !{null})\n",
+                    f->subroutine_type_md_id);
+            fprintf(out,
+                "!%d = distinct !DISubprogram(name: \"%s\", scope: !%d, "
+                "file: !%d, line: %d, type: !%d, scopeLine: %d, "
+                "spFlags: DISPFlagDefinition, unit: !%d)\n",
+                f->sp_md_id, f->name ? f->name : "?",
+                f->file_md_id, f->file_md_id, f->line,
+                f->subroutine_type_md_id, f->line, emit->unit_cu_md_id);
+        }
+
+        for (int i = 0; i < emit->loc_count; i++) {
+            const LlvmDbgLoc *l = &emit->locs[i];
+            fprintf(out,
+                "!%d = !DILocation(line: %d, column: %d, scope: !%d)\n",
+                l->md_id, l->line, l->col > 0 ? l->col : 1, l->scope_md_id);
+        }
     }
 }

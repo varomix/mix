@@ -723,10 +723,19 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
             return NULL;
         }
         LlvmEmitter le = llvm_emitter_create(ll_out);
+        if (debug) llvm_emitter_enable_debug(&le, source_path);
         llvm_emit_module(&le, lmod);
         fclose(ll_out);
 
-        const char *clang_argv[] = {"clang", "-c", "-o", obj_path, ll_path, NULL};
+        const char *clang_argv[8];
+        int cai = 0;
+        clang_argv[cai++] = "clang";
+        clang_argv[cai++] = "-c";
+        if (debug) clang_argv[cai++] = "-g";
+        clang_argv[cai++] = "-o";
+        clang_argv[cai++] = obj_path;
+        clang_argv[cai++] = ll_path;
+        clang_argv[cai++] = NULL;
         if (verbose) { fprintf(stderr, "mix: "); print_argv(clang_argv); }
         char *clang_stderr = NULL;
         int ret = run_process(clang_argv, verbose ? NULL : &clang_stderr);
@@ -1303,6 +1312,7 @@ int main(int argc, char **argv) {
         TIMER_START(emit);
         LirModule *lmod = lower_program(program, &arena, &sema.symtab);
         LlvmEmitter le = llvm_emitter_create(ll_out);
+        if (debug_mode) llvm_emitter_enable_debug(&le, input_file);
         if (lmod) llvm_emit_module(&le, lmod);
         TIMER_END(emit);
         fclose(ll_out);
@@ -1363,7 +1373,15 @@ int main(int argc, char **argv) {
     // the final cc link step below.
     if (use_llvm_backend) {
         snprintf(asm_path, sizeof(asm_path), "/tmp/mix_%d.o", getpid());
-        const char *clang_argv[] = {"clang", "-c", "-o", asm_path, gen_path, NULL};
+        const char *clang_argv[8];
+        int cai = 0;
+        clang_argv[cai++] = "clang";
+        clang_argv[cai++] = "-c";
+        if (debug_mode) clang_argv[cai++] = "-g";
+        clang_argv[cai++] = "-o";
+        clang_argv[cai++] = asm_path;
+        clang_argv[cai++] = gen_path;
+        clang_argv[cai++] = NULL;
         if (verbose) { fprintf(stderr, "mix: "); print_argv(clang_argv); }
         TIMER_START(qbe);
         char *clang_stderr = NULL;

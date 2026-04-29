@@ -7,24 +7,44 @@
 
 ## Current Status
 
-- **Active phase:** Phase 6 done. **LLVM at 107/107 main + 31/31
-  mixel.** Full parity with QBE on every test. The three remaining
-  features that previously gated QBE removal (025 tagged unions,
-  035 shared, 036 go/wait) all now lower correctly under LLVM.
+- **Active phase:** Phase 6 done (debug info). **LLVM at 107/107 main +
+  30/30 mixel** (features + arcade). Full parity with QBE on every test.
+  `--debug` now emits DWARF line tables from the LLVM path and lldb
+  resolves source-line breakpoints into MIX files (`b foo.mix:12`).
 - **Default backend:** LLVM. QBE is still selectable via
   `--backend qbe` and stays as a parity oracle until you decide
-  to delete it. All three deletion criteria are now met:
-    1. ✅ 025 / 035 / 036 implemented and passing on LLVM
-    2. ✅ Mixel still 31/31 on LLVM
-    3. ✅ No QBE-only bug surfaced
-  Pulling the trigger is a one-commit change: delete
-  `src/qbe_emit.{c,h}`, drop the QBE arm from `src/main.c`, drop
-  the QBE option from scripts, drop `QBE = qbe` and the `qbe`
-  invocation from the Makefile.
-- **Last updated:** 2026-04-28
-- **Last updated:** 2026-04-28
+  to delete it. All deletion criteria are met.
+- **Last updated:** 2026-04-29
 
 ## Phase Log
+
+### Phase 6 — DWARF debug info on the LLVM path
+
+- **2026-04-29** — `--debug` now emits LLVM debug-info metadata so
+  lldb can step through MIX source files. Self-contained one-shot:
+  - `LlvmEmitter` carries `debug` flag + interned `!DIFile`,
+    `!DISubprogram`, and `!DILocation` tables. New entry point
+    `llvm_emitter_enable_debug(emit, source_path)`.
+  - `emit_function` allocates a `!DISubprogram` per function (using
+    the first non-zero LIR loc as scopeLine + file) and tags the
+    `define` line with `!dbg !N`.
+  - `emit_instr` wraps every instruction (except labels and ops
+    with no source loc) — captures the inner emit via
+    `open_memstream`, splices `, !dbg !M` before the trailing
+    newline, and records a `!DILocation(line, column, scope)`.
+  - Module footer dumps `!llvm.module.flags`, `!llvm.dbg.cu`,
+    `!DICompileUnit`, all `!DIFile` / `!DISubroutineType` /
+    `!DISubprogram` / `!DILocation` nodes.
+  - main.c plumbs `debug_mode` into the LLVM emitter (top-level
+    + sub-modules) and adds `-g` to each `clang -c` invocation
+    (DWARF lives in the .o; macOS uses an OSO debug map so the
+    final binary doesn't carry it directly — lldb still finds it).
+  Verified: `b dbg.mix:6` resolves to `dbg`main + 36 at
+  dbg.mix:6:28`. `dwarfdump` shows the `!DICompileUnit` with
+  `producer = "mix"`. 107/107 tests + 30/30 mixel demos build
+  with and without `--debug`. Locals (`!DILocalVariable` +
+  `llvm.dbg.declare`) are still TODO if richer lldb introspection
+  is wanted later.
 
 ### Phase 7.8 — Hoist allocas to entry block
 

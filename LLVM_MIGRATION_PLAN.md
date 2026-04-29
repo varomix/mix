@@ -503,25 +503,31 @@ Acceptance:
 - `mixel` examples compile with default backend
 - at least a smoke subset of `mixel` runs correctly
 
-## Phase 9 — QBE Retirement
+## Phase 9 — QBE Retirement — DONE (2026-04-29)
 
-Retire QBE only after LLVM has proven stable.
+All gates were met and the retirement landed in a single commit:
 
-Suggested retirement gate:
+- ✅ LLVM passes all compiler tests (107/107) and the mixel sweep (31/31)
+- ✅ Mixel arcade demos run correctly under LLVM
+- ✅ C backend still works as fallback for the subset it covers
 
-- LLVM passes all compiler tests
-- LLVM compiles the full `mixel` example tree
-- at least the commonly used `mixel` demos run correctly
-- the C backend still works as fallback
+Removed:
 
-After that:
+- `src/qbe_emit.{c,h}`
+- QBE branches in `src/main.c` (compile_module, top-level emit/compile,
+  flag parsing, help text)
+- `QBE = qbe`, `qbe_emit.c`, and the `qbe` rule from `Makefile`
+- `type_to_qbe` / `type_to_qbe_mem` / `type_to_qbe_load` from
+  `src/types.{h,c}` (only qbe_emit.c referenced them)
+- `tests/measure_compile_time.sh` (Phase 3 gate against QBE — obsolete)
+- `tests/errors/err_too_many_nested_loops.mix` (asserted QBE's
+  32-loop label-stack limit; LLVM's limit is 64)
+- QBE-mode flags from `tests/run_tests.sh`, `tests/run_mixel_sweep.sh`,
+  `tests/run_error_message_tests.sh`
+- QBE references from README
 
-- remove `qbe_emit.c`
-- remove QBE-specific docs and install steps
-- remove QBE-specific backend conditionals from `main.c`
-
-This is an intentional product decision, not an accident. MIX is choosing one
-primary native backend over a permanently split "fast dev backend" and
+This is an intentional product decision. MIX is choosing one primary
+native backend over a permanently split "fast dev backend" and
 "shipping backend" model.
 
 ## What Gets Reused

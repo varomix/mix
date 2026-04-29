@@ -7,16 +7,48 @@
 
 ## Current Status
 
-- **Active phase:** Phase 6 done (debug info). **LLVM at 107/107 main +
-  30/30 mixel** (features + arcade). Full parity with QBE on every test.
-  `--debug` now emits DWARF line tables from the LLVM path and lldb
-  resolves source-line breakpoints into MIX files (`b foo.mix:12`).
-- **Default backend:** LLVM. QBE is still selectable via
-  `--backend qbe` and stays as a parity oracle until you decide
-  to delete it. All deletion criteria are met.
+- **Active phase:** Phase 9 done (QBE retired). **LLVM at 107/107 main
+  + 31/31 mixel.** `--debug` emits DWARF; lldb resolves source-line
+  breakpoints into MIX files.
+- **Backends:** `llvm` (default native) and `c` (fallback for
+  subset coverage). QBE is gone — `src/qbe_emit.{c,h}`, the QBE
+  branches in `src/main.c`, and the QBE Makefile wiring all removed.
 - **Last updated:** 2026-04-29
 
 ## Phase Log
+
+### Phase 9 — QBE retired
+
+- **2026-04-29** — All retirement gates met (LLVM 107/107 main, mixel
+  31/31, no QBE-only bug surfaced over a week of cleanup). Pulled the
+  trigger:
+  - Deleted `src/qbe_emit.{c,h}` and dropped its include from `main.c`.
+  - Removed the QBE arms in `compile_module` and the top-level
+    emit/compile pipeline. Single backend dispatch is now `c` vs
+    `llvm`; unknown backend names error.
+  - Dropped `--backend qbe` from `--help` and the env-var path.
+  - Renamed the leftover `TIMER_*(qbe)` hook in the LLVM compile
+    path to `TIMER_*(clang)` for clarity.
+  - `Makefile`: dropped `QBE = qbe`, removed `qbe_emit.c` from
+    `COMPILER_SRCS`, retargeted the `make run` rule at `mix run`
+    instead of the old QBE pipeline.
+  - `src/types.{h,c}`: removed `type_to_qbe`, `type_to_qbe_mem`,
+    `type_to_qbe_load` — only `qbe_emit.c` referenced them.
+  - Updated comments in `src/sema.c`, `src/symtab.h`, `src/c_emit.c`,
+    `lib/runtime.c` that referenced QBE behavior.
+  - Test scripts: dropped QBE selectors from `tests/run_tests.sh`,
+    `tests/run_mixel_sweep.sh`, and the qbe-stderr capture check in
+    `tests/run_error_message_tests.sh`.
+  - Removed `tests/measure_compile_time.sh` (Phase 3 LLVM-vs-QBE
+    ratio gate — obsolete).
+  - Removed `tests/errors/err_too_many_nested_loops.mix` (asserted a
+    QBE-specific 32-loop label-stack limit; LLVM's limit is 64).
+  - README: switched the lead sentence and tooling/backend lines to
+    LLVM; updated `--emit-ir` and `--backend` help.
+  Verified: 107/107 main tests, 35/35 error tests, 19/19 error-message
+  tests, 29/29 fmt tests, 31/31 mixel sweep all green on LLVM. The
+  C fallback still has its long-standing partial-coverage gaps but
+  is unaffected by this retirement.
 
 ### Phase 6 — DWARF debug info on the LLVM path
 

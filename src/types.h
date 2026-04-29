@@ -87,9 +87,6 @@ struct MixType {
 };
 
 const char *type_kind_name(TypeKind kind);
-const char *type_to_qbe(MixType *type);  // "w", "l", "s", "d" — register type
-const char *type_to_qbe_mem(MixType *type);  // "b", "h", "w", "l", "s", "d" — memory store/load type
-const char *type_to_qbe_load(MixType *type); // "ub", "uh", "w", "l", "s", "d" — load type (unsigned extend)
 bool type_is_integer(MixType *type);
 bool type_is_float(MixType *type);
 bool type_is_numeric(MixType *type);

@@ -1,10 +1,8 @@
 #!/bin/bash
 # MIX language end-to-end test runner.
 #
-# Backend selection (LLVM is the default; the others stay while we wind
-# QBE down and keep C as a small-target fallback):
+# Backend selection:
 #   ./tests/run_tests.sh                    # llvm (default)
-#   MIX_BACKEND=qbe ./tests/run_tests.sh    # legacy QBE, parity oracle
 #   MIX_BACKEND=c   ./tests/run_tests.sh    # C fallback
 
 MIXC="./build/mix"

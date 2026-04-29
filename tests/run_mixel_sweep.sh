@@ -5,7 +5,6 @@
 #
 # Usage:
 #   tests/run_mixel_sweep.sh            # default backend (llvm)
-#   tests/run_mixel_sweep.sh qbe        # legacy QBE, parity oracle
 #   tests/run_mixel_sweep.sh c          # C backend
 #
 # Exit code: 0 if all demos compile, 1 otherwise.

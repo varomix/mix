@@ -38,25 +38,6 @@ const char *type_kind_name(TypeKind kind) {
     return "unknown";
 }
 
-const char *type_to_qbe(MixType *type) {
-    if (!type) return "l";
-    switch (type->kind) {
-        case TYPE_INT: case TYPE_INT64: case TYPE_UINT64: return "l";
-        case TYPE_INT32: case TYPE_UINT32: return "w";
-        case TYPE_INT16: case TYPE_UINT16: return "w";
-        case TYPE_INT8: case TYPE_UINT8: case TYPE_BYTE: return "w";
-        case TYPE_BOOL: return "w";
-        case TYPE_FLOAT: case TYPE_FLOAT64: return "d";
-        case TYPE_FLOAT32: return "s";
-        case TYPE_PTR: case TYPE_REF: case TYPE_BOX:
-        case TYPE_STR: case TYPE_ZONE: return "l";
-        case TYPE_LIST: return "l"; // lists are pointers to heap-allocated structs
-        case TYPE_OPTIONAL: return "l"; // optionals are pointers to {has_value, value}
-        case TYPE_SHAPE: return "l"; // aggregate types use :Name in QBE, but pointer representation is l
-        default: return "l";
-    }
-}
-
 bool type_is_integer(MixType *type) {
     if (!type) return false;
     switch (type->kind) {
@@ -75,40 +56,6 @@ bool type_is_float(MixType *type) {
 
 bool type_is_numeric(MixType *type) {
     return type_is_integer(type) || type_is_float(type);
-}
-
-const char *type_to_qbe_mem(MixType *type) {
-    if (!type) return "l";
-    switch (type->kind) {
-        case TYPE_INT8: case TYPE_UINT8: case TYPE_BYTE: return "b";
-        // Booleans take 1 byte in memory (matches type_size/type_alignment).
-        // Using "w" here would write 4 bytes per bool field and stomp on the
-        // following field's first 3 bytes — see test 083 for the reproducer.
-        case TYPE_BOOL: return "b";
-        case TYPE_INT16: case TYPE_UINT16: return "h";
-        case TYPE_INT32: case TYPE_UINT32: return "w";
-        case TYPE_FLOAT32: return "s";
-        case TYPE_FLOAT64: case TYPE_FLOAT: return "d";
-        default: return "l";
-    }
-}
-
-const char *type_to_qbe_load(MixType *type) {
-    if (!type) return "l";
-    switch (type->kind) {
-        case TYPE_INT8: return "sb";
-        case TYPE_UINT8: case TYPE_BYTE: return "ub";
-        // Bool is stored as a single byte; load it unsigned so 0/1 are the
-        // only possible values in the resulting w temp.
-        case TYPE_BOOL: return "ub";
-        case TYPE_INT16: return "sh";
-        case TYPE_UINT16: return "uh";
-        case TYPE_INT32: return "sw";
-        case TYPE_UINT32: return "uw";
-        case TYPE_FLOAT32: return "s";
-        case TYPE_FLOAT64: case TYPE_FLOAT: return "d";
-        default: return "l";
-    }
 }
 
 int type_size(MixType *type) {

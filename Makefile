@@ -1,6 +1,5 @@
 CC = cc
 CFLAGS = -Wall -Wextra -std=c11 -g -O0
-QBE = qbe
 
 # Stamped into the binary so `mix --help` / `mix --version` shows the build date.
 BUILD_DATE := $(shell date +%Y-%m-%d)
@@ -15,7 +14,7 @@ FRONTEND_SRCS = $(SRC_DIR)/arena.c $(SRC_DIR)/ast.c $(SRC_DIR)/errors.c \
 FRONTEND_OBJS = $(FRONTEND_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # Compiler-only objects
-COMPILER_SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/qbe_emit.c $(SRC_DIR)/c_emit.c $(SRC_DIR)/lir.c $(SRC_DIR)/lower.c $(SRC_DIR)/llvm_emit.c $(SRC_DIR)/cbind.c $(SRC_DIR)/fmt.c
+COMPILER_SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/c_emit.c $(SRC_DIR)/lir.c $(SRC_DIR)/lower.c $(SRC_DIR)/llvm_emit.c $(SRC_DIR)/cbind.c $(SRC_DIR)/fmt.c
 COMPILER_OBJS = $(COMPILER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # LSP objects
@@ -60,10 +59,7 @@ clean:
 # Compile a .mix file to a binary
 # Usage: make run SRC=examples/hello.mix
 run: $(BIN)
-	$(BIN) $(SRC) -o $(BUILD_DIR)/output.ssa
-	$(QBE) $(BUILD_DIR)/output.ssa -o $(BUILD_DIR)/output.s
-	$(CC) $(BUILD_DIR)/output.s lib/runtime.c -o $(BUILD_DIR)/output
-	$(BUILD_DIR)/output
+	$(BIN) run $(SRC)
 
 test: $(BIN)
 	bash tests/run_tests.sh

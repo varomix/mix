@@ -5,7 +5,6 @@
 #include "parser.h"
 #include "ast.h"
 #include "sema.h"
-#include "qbe_emit.h"
 #include "c_emit.h"
 #include "llvm_emit.h"
 #include "lower.h"
@@ -177,12 +176,12 @@ static void usage(void) {
     fprintf(stderr, "  'build' or 'run' without a file auto-discovers main().\n\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  -o <file>           Output file (default: derived from input)\n");
-    fprintf(stderr, "  --emit-ir           Output backend IR only (.ssa for qbe, .c for c, .ll for llvm)\n");
+    fprintf(stderr, "  --emit-ir           Output backend IR only (.ll for llvm, .c for c)\n");
     fprintf(stderr, "  --emit-tokens       Print token stream\n");
     fprintf(stderr, "  --emit-ast          Print AST\n");
     fprintf(stderr, "  --debug             Enable debug mode (DWARF info + @debug)\n");
     fprintf(stderr, "  --bind <path>       Generate .mix bindings from C header(s)\n");
-    fprintf(stderr, "  --backend <name>    Backend: llvm (default), qbe (legacy/parity oracle), c (fallback)\n");
+    fprintf(stderr, "  --backend <name>    Backend: llvm (default), c (fallback)\n");
     fprintf(stderr, "  --lib <name>        Library name for --bind (e.g., SDL3)\n");
     fprintf(stderr, "  --version           Show version\n");
     fprintf(stderr, "  -v                  Verbose\n\n");
@@ -554,9 +553,8 @@ static void filter_imported_symbols(SymTab *symtab, Symbol *snapshot,
 
 // Compile a single module, return its output file path (or NULL on failure).
 // Recursively compiles any modules this module imports via 'use'.
-// For QBE backend:  returns .s file path
 // For C backend:    returns .c file path
-// For LLVM backend: returns .o file path (Phase 1: text IR + clang -c)
+// For LLVM backend: returns .o file path (text IR + clang -c)
 static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
                             const char *base_dir, bool verbose,
                             bool debug, bool use_c_backend, bool use_llvm_backend,
@@ -757,44 +755,11 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
         compiling_module_count--;
         return arena_strdup(arena, obj_path);
     } else {
-        // QBE backend: emit .ssa, compile to .s
-        char ssa_path[256], asm_path[256];
-        snprintf(ssa_path, sizeof(ssa_path), "/tmp/mod_%d_%d.ssa", getpid(), mod_id);
-        snprintf(asm_path, sizeof(asm_path), "/tmp/mod_%d_%d.s", getpid(), mod_id);
-
-        FILE *ssa_out = fopen(ssa_path, "w");
-        if (!ssa_out) {
-            free(source); free(lexer.tokens); compiling_module_count--;
-            return NULL;
-        }
-
-        QbeEmitter emitter = qbe_emitter_create(ssa_out, arena, &sema->symtab, debug);
-        qbe_emit_program(&emitter, program);
-        fclose(ssa_out);
-
-        // QBE compile
-        const char *qbe_argv[] = {"qbe", "-o", asm_path, ssa_path, NULL};
-        if (verbose) { fprintf(stderr, "mix: "); print_argv(qbe_argv); }
-
-        char *qbe_stderr = NULL;
-        int ret = run_process(qbe_argv, verbose ? NULL : &qbe_stderr);
-        if (ret != 0) {
-            if (verbose) {
-                fprintf(stderr, "mix: qbe failed for module '%s'\n", source_path);
-            } else {
-                fprintf(stderr, "mix: internal compiler error while compiling '%s'. Run with -v for details.\n", source_path);
-            }
-            free(qbe_stderr);
-            free(source); free(lexer.tokens); compiling_module_count--;
-            return NULL;
-        }
-        free(qbe_stderr);
-
-        if (!verbose) remove(ssa_path);
-        free(source);
-        free(lexer.tokens);
-        compiling_module_count--;
-        return arena_strdup(arena, asm_path);
+        // No remaining backend (QBE retired in Phase 9). Sema/lower
+        // route through the C and LLVM branches above.
+        fprintf(stderr, "mix: internal: unknown backend\n");
+        free(source); free(lexer.tokens); compiling_module_count--;
+        return NULL;
     }
 }
 
@@ -810,7 +775,7 @@ int main(int argc, char **argv) {
     bool emit_ast = false;
     bool verbose = false;
     bool debug_mode = false;
-    const char *backend = "llvm";  /* "llvm" (default), "qbe", or "c" */
+    const char *backend = "llvm";  /* "llvm" (default) or "c" */
     RunMode mode = MODE_NONE;
     bool output_set = false;
     bool fmt_write_in_place = false;
@@ -920,8 +885,8 @@ int main(int argc, char **argv) {
     }
     bool use_c_backend = (strcmp(backend, "c") == 0);
     bool use_llvm_backend = (strcmp(backend, "llvm") == 0);
-    if (!use_c_backend && !use_llvm_backend && strcmp(backend, "qbe") != 0) {
-        fprintf(stderr, "mix: unknown --backend '%s' (expected: qbe, c, llvm)\n", backend);
+    if (!use_c_backend && !use_llvm_backend) {
+        fprintf(stderr, "mix: unknown --backend '%s' (expected: c, llvm)\n", backend);
         return 1;
     }
 
@@ -1278,7 +1243,7 @@ int main(int argc, char **argv) {
 
     // Emit code for main file
     char gen_path[256];  // generated .ssa, .c, or .ll
-    char asm_path[256];  // .s from QBE, or .o from clang -c (LLVM)
+    char asm_path[256];  // .o from clang -c (LLVM backend)
 
     if (use_c_backend) {
         // C backend: emit .c file
@@ -1316,23 +1281,6 @@ int main(int argc, char **argv) {
         if (lmod) llvm_emit_module(&le, lmod);
         TIMER_END(emit);
         fclose(ll_out);
-    } else {
-        // QBE backend: emit .ssa file
-        if (emit_ir_only) {
-            snprintf(gen_path, sizeof(gen_path), "%s", output_file);
-        } else {
-            snprintf(gen_path, sizeof(gen_path), "/tmp/mix_%d.ssa", getpid());
-        }
-        FILE *ssa_out = fopen(gen_path, "w");
-        if (!ssa_out) {
-            fprintf(stderr, "mix: cannot create '%s': %s\n", gen_path, strerror(errno));
-            return 1;
-        }
-        QbeEmitter emitter = qbe_emitter_create(ssa_out, &arena, &sema.symtab, debug_mode);
-        TIMER_START(emit);
-        qbe_emit_program(&emitter, program);
-        TIMER_END(emit);
-        fclose(ssa_out);
     }
 
     if (mix_error_count() > 0) {
@@ -1347,30 +1295,8 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    // QBE backend: compile .ssa -> .s
-    if (!use_c_backend && !use_llvm_backend) {
-        snprintf(asm_path, sizeof(asm_path), "/tmp/mix_%d.s", getpid());
-        const char *qbe_argv[] = {"qbe", "-o", asm_path, gen_path, NULL};
-        if (verbose) { fprintf(stderr, "mix: "); print_argv(qbe_argv); }
-        TIMER_START(qbe);
-        char *qbe_stderr = NULL;
-        int ret = run_process(qbe_argv, verbose ? NULL : &qbe_stderr);
-        TIMER_END(qbe);
-        if (ret != 0) {
-            if (verbose) {
-                fprintf(stderr, "mix: qbe failed (exit %d)\n", ret);
-            } else {
-                fprintf(stderr, "mix: internal compiler error while compiling '%s'. Run with -v for details.\n", input_file);
-            }
-            free(qbe_stderr);
-            return 1;
-        }
-        free(qbe_stderr);
-    }
-
-    // LLVM backend: compile .ll -> .o via clang.
-    // The resulting .o slots into the same place QBE's .s slots into for
-    // the final cc link step below.
+    // LLVM backend: compile .ll -> .o via clang. The resulting .o is what
+    // gets handed to the final cc link step below.
     if (use_llvm_backend) {
         snprintf(asm_path, sizeof(asm_path), "/tmp/mix_%d.o", getpid());
         const char *clang_argv[8];
@@ -1383,10 +1309,10 @@ int main(int argc, char **argv) {
         clang_argv[cai++] = gen_path;
         clang_argv[cai++] = NULL;
         if (verbose) { fprintf(stderr, "mix: "); print_argv(clang_argv); }
-        TIMER_START(qbe);
+        TIMER_START(clang);
         char *clang_stderr = NULL;
         int ret = run_process(clang_argv, verbose ? NULL : &clang_stderr);
-        TIMER_END(qbe);
+        TIMER_END(clang);
         if (ret != 0) {
             if (verbose) {
                 fprintf(stderr, "mix: clang -c failed (exit %d)\n", ret);

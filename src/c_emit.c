@@ -822,8 +822,8 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
             MixType *itype = expr->resolved_type;
             const char *cn = cname_ref(emit, expr->ident.name);
             // Top-level function used as a value (callback): emit the function
-            // symbol address. Mirrors the QBE backend; gate on resolved_type to
-            // respect local/param shadowing of builtin function names.
+            // symbol address. Gate on resolved_type to respect local/param
+            // shadowing of builtin function names.
             if (itype && itype->kind == TYPE_FUNC) {
                 Symbol *fsym = symtab_lookup(emit->symtab, expr->ident.name);
                 if (fsym && fsym->type && fsym->type->kind == TYPE_FUNC) {
@@ -3433,7 +3433,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                 for (int j = 0; j < decl->shape_decl.field_count; j++) {
                     ShapeField *sf = &decl->shape_decl.fields[j];
                     MixType *ftype = sf->type ? sf->type->resolved_type : NULL;
-                    // Inline sub-shapes (no pointer): matches the QBE backend's
+                    // Inline sub-shapes (no pointer): matches the LIR
                     // memory layout and lets `s.pos.x = v` write into the parent.
                     if (ftype && ftype->kind == TYPE_SHAPE)
                         fprintf(emit->out, "    %s %s;\n", ftype->shape.name, sf->name);
@@ -3466,7 +3466,7 @@ void c_emit_program(CEmitter *emit, AstNode *program) {
                         fprintf(emit->out, "typedef %s {\n", kw);
                         for (int j = 0; j < sym->type->shape.field_count; j++) {
                             MixType *fty = sym->type->shape.fields[j].type;
-                            // Inline sub-shapes (matches QBE layout).
+                            // Inline sub-shapes (matches LIR layout).
                             if (fty && fty->kind == TYPE_SHAPE)
                                 fprintf(emit->out, "    %s %s;\n",
                                         fty->shape.name,

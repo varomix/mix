@@ -92,7 +92,7 @@ uint32_t mix_peek_u32(const void *ptr) {
 
 // Read a uint32 at byte offset, widened to int64. Backs the `peek_u32`
 // builtin — returning int64 lets it participate in normal int arithmetic
-// without QBE w/l-mismatch errors.
+// without backend-side w/l-mismatch issues.
 int64_t mix_peek_u32_at(const void *ptr, int64_t offset) {
     uint32_t v;
     memcpy(&v, (const char *)ptr + offset, sizeof(uint32_t));

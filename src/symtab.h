@@ -11,15 +11,13 @@ typedef struct Symbol {
     bool is_mutable;
     bool is_global;     // module-level mutable; emit/read as global storage
     bool has_mutation;  // fn/method declared with trailing `!`
-    // When true, `%v.<name>` names an alloca-backed storage slot rather than
-    // an SSA value. QBE uses this to choose a load even for read-only loop
-    // bindings whose language-level mutability is false.
+    // When true, the binding lives in an alloca-backed storage slot
+    // rather than an SSA value — read sites must load. C backend uses
+    // this to choose load vs copy even for read-only loop bindings.
     bool is_stack_slot;
-    // For SHAPE-typed variables only: when true, %v.<name> is an alloca slot
-    // holding a pointer to the shape (e.g. a for-each loop var over a shape
-    // list). When false (the default), %v.<name> is the pointer itself —
-    // the QBE NODE_VAR_DECL `=l copy` aliasing pattern. The QBE NODE_IDENT
-    // path uses this flag to choose between `loadl %v.x` and `copy %v.x`.
+    // For SHAPE-typed variables only: when true, the slot holds a
+    // pointer to the shape (e.g. a for-each loop var over a shape
+    // list); when false the binding IS the shape pointer.
     bool is_pointer_slot;
     // True for symbols introduced by `extern "lib" { ... }` blocks (in
     // user source or from cbind output). Distinguishes C-ABI callees

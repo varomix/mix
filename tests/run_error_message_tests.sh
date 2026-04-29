@@ -92,7 +92,7 @@ else
     ok "no-suggest: no suggestion for very different name"
 fi
 
-# --- QBE stderr captured (non-verbose, valid program) ---
+# --- Toolchain stderr suppressed in non-verbose mode (valid program) ---
 cat > /tmp/mix_valid.mix << 'MIXEOF'
 main()
     print("ok")
@@ -100,9 +100,9 @@ MIXEOF
 output=$("$MIXC" /tmp/mix_valid.mix -o /tmp/mix_errtest_bin 2>&1)
 
 if echo "$output" | grep -q '/tmp/mix_'; then
-    ng "qbe-capture: no /tmp paths in normal output"
+    ng "tool-capture: no /tmp paths in normal output"
 else
-    ok "qbe-capture: no /tmp paths in normal output"
+    ok "tool-capture: no /tmp paths in normal output"
 fi
 
 # --- Match exhaustiveness warning ---
@@ -201,10 +201,10 @@ fi
 rm -f /tmp/mix_exh_opt.mix /tmp/mix_exh_res.mix /tmp/mix_exh_opt_wc.mix
 
 # --- Both backends produce same error for type mismatch ---
-output_qbe=$("$MIXC" tests/errors/err_str_to_int_param.mix -o /tmp/mix_errtest_bin 2>&1)
+output_llvm=$("$MIXC" tests/errors/err_str_to_int_param.mix -o /tmp/mix_errtest_bin 2>&1)
 output_c=$(MIX_BACKEND=c "$MIXC" tests/errors/err_str_to_int_param.mix -o /tmp/mix_errtest_bin 2>&1)
 
-[ "$output_qbe" = "$output_c" ] \
+[ "$output_llvm" = "$output_c" ] \
     && ok "both-backends: identical error output for type mismatch" \
     || ng "both-backends: identical error output for type mismatch"
 

@@ -1025,9 +1025,9 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                 // (needed by emitter to know if load or copy)
                 expr->ident.is_mutable = sym->is_mutable;
                 // Sema's scopes are gone by emit time; capture this flag
-                // here so QBE knows whether `%v.<name>` is the pointer
-                // (the usual shape var) or a slot holding the pointer
-                // (a for-each loop var over a shape list).
+                // here so the C backend knows whether the binding is the
+                // pointer (the usual shape var) or a slot holding the
+                // pointer (a for-each loop var over a shape list).
                 expr->ident.is_pointer_slot = sym->is_pointer_slot;
                 expr->ident.is_stack_slot = sym->is_stack_slot;
             }
@@ -3816,7 +3816,7 @@ void sema_analyze(Sema *sema, AstNode *program) {
 
     // Module-level mutable globals are NOT spliced. Each owning module
     // emits its storage exactly once; consumers reference the symbol via
-    // extern (C backend) or by-name link (QBE). See c_emit/qbe_emit.
+    // extern (C backend) or by-name link (LLVM backend).
 
     // Pass (e): splice cross-module `@const` decls into this program.
     // The emitter inlines const values at use sites; without this, an

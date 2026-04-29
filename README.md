@@ -1,6 +1,6 @@
 # MIX Language
 
-MIX is a compiled, statically typed language that emphasizes clarity and safety. It compiles to native code via QBE.
+MIX is a compiled, statically typed language that emphasizes clarity and safety. It compiles to native code via LLVM.
 
 ## Quick Start
 
@@ -50,7 +50,7 @@ make
 - **`std.collections`** — `Stack[T]`, `Queue[T]` (generic)
 
 ### Tooling
-- **Two backends** — QBE (default native) and C (`--backend c`, useful on platforms without QBE)
+- **Two backends** — LLVM (default native) and C (`--backend c`, fallback for targets without LLVM)
 - **`mix fmt`** — token-based formatter with comment preservation; supports `--check`, `--diff`, `-w`, recursive directory walk
 - **LSP server** (`mix-lsp`) — diagnostics, hover, go-to-definition, find references, document/workspace symbols, rename, inlay hints, code actions, signature help, completion
 - **Error messages** — colored output, line gutters, "did you mean?" suggestions, error limit
@@ -75,7 +75,7 @@ Commands:
 
 Options:
   -o <file>        Output binary (default: derived from input)
-  --emit-ir        Output QBE IR only
+  --emit-ir        Output backend IR only (.ll for llvm, .c for c)
   --emit-tokens    Print token stream
   --emit-ast       Print AST
   --debug          Enable DWARF debug info
@@ -83,7 +83,7 @@ Options:
   --lib <name>     Library name for --bind
   -l<lib>          Link library (passed to cc)
   -v               Verbose
-  --backend <name> Code backend (qbe or c)
+  --backend <name> Code backend (llvm [default] or c)
 ```
 
 ## Build System

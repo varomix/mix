@@ -17,4 +17,8 @@ int cbind_generate(const char *header_path, const char *out_path,
 char *cbind_generate_string(const char *header_path, const char *lib_name,
                             bool verbose);
 
+// Resolve a C header path using CPPFLAGS -I directories and vendor paths.
+// Returns a malloc'd absolute path string, or NULL if not found.
+char *resolve_header_path(const char *path);
+
 #endif // CBIND_H

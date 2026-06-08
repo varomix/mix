@@ -273,7 +273,7 @@ static char *run_command(const char *cmd, bool verbose) {
 // If the file exists as-is, returns a copy. Otherwise tries each -I<dir>/<path>,
 // then searches lib/vendor/*/include/<path>.
 // Returns a malloc'd string or NULL if not found.
-static char *resolve_header_path(const char *path) {
+char *resolve_header_path(const char *path) {
     // If file exists directly, use it as-is
     struct stat st;
     if (stat(path, &st) == 0) return strdup(path);

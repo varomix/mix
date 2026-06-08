@@ -709,24 +709,29 @@ static void index_module_file(SymbolIndex *idx, const char *module_path) {
 // Uses the module cache to avoid re-running cc -E on every keystroke.
 static void index_c_header(SymbolIndex *idx, const char *header_path,
                            const char *lib_name) {
+    // Resolve header path so def_loc.filename is an absolute path
+    char *resolved = resolve_header_path(header_path);
+    const char *bind_path = resolved ? resolved : header_path;
+
     // Check cache — use header_path as the key.
     // We can't stat arbitrary system headers reliably, so use a sentinel mtime
     // of 1 to indicate "C header cached". The cache is cleared on full rebuild.
     ModuleCache *cached = module_cache_find(header_path);
     if (cached) {
         module_cache_replay(cached, idx);
+        free(resolved);
         return;
     }
 
     // Generate MIX binding text from the C header
     char *bind_src = cbind_generate_string(header_path, lib_name, false);
-    if (!bind_src) return;
+    if (!bind_src) { free(resolved); return; }
 
     Arena arena = arena_create(256 * 1024);
-    Lexer lexer = lexer_create(bind_src, header_path, &arena);
+    Lexer lexer = lexer_create(bind_src, bind_path, &arena);
     lexer_tokenize(&lexer);
 
-    Parser parser = parser_create(lexer.tokens, lexer.token_count, &arena, header_path);
+    Parser parser = parser_create(lexer.tokens, lexer.token_count, &arena, bind_path);
     AstNode *prog = parser_parse(&parser);
 
     // Allocate a cache slot
@@ -822,6 +827,8 @@ static void index_c_header(SymbolIndex *idx, const char *header_path,
     free(lexer.tokens);
     arena_destroy(&arena);
     free(bind_src);
+    // resolved intentionally not freed — it lives in SymbolEntry.def_loc
+    // and cache entry loc pointers.
 }
 
 // Build "<dir>/<module-with-slashes>.mix" into out_buf. Returns out_buf.

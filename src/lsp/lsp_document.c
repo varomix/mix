@@ -162,16 +162,22 @@ static void load_module_imports(AstNode *program, const char *filepath,
                                                     decl->use_c_decl.lib_name, false);
             if (!bind_src) continue;
 
-            errors_set_source(bind_src, decl->use_c_decl.header_path);
-            Lexer bl = lexer_create(bind_src, decl->use_c_decl.header_path, arena);
+            // Resolve header path so def_loc.filename is an absolute path
+            // usable in Go to Definition responses.
+            char *resolved = resolve_header_path(decl->use_c_decl.header_path);
+            const char *bind_filename = resolved ? resolved : decl->use_c_decl.header_path;
+
+            errors_set_source(bind_src, bind_filename);
+            Lexer bl = lexer_create(bind_src, bind_filename, arena);
             lexer_tokenize(&bl);
-            Parser bp = parser_create(bl.tokens, bl.token_count, arena, decl->use_c_decl.header_path);
+            Parser bp = parser_create(bl.tokens, bl.token_count, arena, bind_filename);
             AstNode *bprog = parser_parse(&bp);
             if (bprog && bprog->kind == NODE_PROGRAM) {
                 sema_analyze(sema, bprog);
             }
             free(bind_src);
             free(bl.tokens);
+            free(resolved);
             continue;
         }
 

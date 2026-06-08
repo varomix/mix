@@ -1,4 +1,5 @@
 #include "lsp_server.h"
+#include "lsp_document.h"
 #include "lsp_transport.h"
 #include "lsp_position.h"
 #include "lsp_hover.h"
@@ -6,6 +7,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <libgen.h>
+#include <stdio.h>
 #include <sys/stat.h>
 
 void lsp_server_init(LspServer *server) {
@@ -297,27 +299,98 @@ static void handle_goto_definition(LspServer *server, int64_t id, JsonValue *par
         return;
     }
 
+    // Use the symbol's defining file as the target URI — it may differ
+    // from the current document for imported modules and C header bindings.
+    const char *def_uri = uri;
+    char *def_uri_alloc = NULL;
+    if (entry->def_loc.filename && strcmp(entry->def_loc.filename, doc->filepath) != 0) {
+        def_uri_alloc = lsp_path_to_uri(entry->def_loc.filename);
+        if (def_uri_alloc) def_uri = def_uri_alloc;
+    }
+
+    // For C header symbols, the line/col from the generated binding text
+    // doesn't correspond to the real C source. Search the header for the
+    // actual function declaration to get the correct line.
+    int def_line = entry->def_loc.line;
+    int def_col = entry->def_loc.col;
+    if (entry->def_loc.filename
+        && strcmp(entry->def_loc.filename, doc->filepath) != 0) {
+        const char *ext = strrchr(entry->def_loc.filename, '.');
+        if (ext && strcmp(ext, ".h") == 0) {
+            FILE *f = fopen(entry->def_loc.filename, "r");
+            if (f) {
+                char *lbuf = NULL;
+                size_t lcap = 0;
+                int lnum = 0;
+                while (getline(&lbuf, &lcap, f) > 0) {
+                    lnum++;
+                    // Skip purely comment lines (// and /* */ style)
+                    const char *trimmed = lbuf;
+                    while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
+                    if (strncmp(trimmed, "//", 2) == 0
+                     || strncmp(trimmed, "/*", 2) == 0
+                     || *trimmed == '*') continue;
+                    char *p = lbuf;
+                    while ((p = strstr(p, name)) != NULL) {
+                        if (p > lbuf && (isalnum((unsigned char)p[-1]) || p[-1] == '_')) {
+                            p++;
+                            continue;
+                        }
+                        char *after = p + strlen(name);
+                        while (*after == ' ' || *after == '\t') after++;
+                        // Accept:
+                        //   name(...)   — function declarations
+                        //   #define name — macro constants
+                        //   typedef ... name — type/shape definitions
+                        //   struct name  — struct/shape definitions
+                        char *hash_def = strstr(lbuf, "#define");
+                        char *typedef_kw = strstr(lbuf, "typedef");
+                        char *struct_kw = strstr(lbuf, "struct");
+                        bool is_func = (*after == '(');
+                        bool is_macro = (hash_def && hash_def < p);
+                        bool is_type = (typedef_kw && typedef_kw < p)
+                                    || (struct_kw && struct_kw < p);
+                        bool is_enum_val = (*after == '=' || *after == ',');
+                        if (is_func || is_macro || is_type || is_enum_val) {
+                            char *comment = strstr(lbuf, "//");
+                            if (!comment || p < comment) {
+                                def_line = lnum;
+                                def_col = 1;
+                                goto found_def;
+                            }
+                        }
+                        p++;
+                    }
+                }
+                found_def:
+                free(lbuf);
+                fclose(f);
+            }
+        }
+    }
+
     JsonWriter w;
     jw_init(&w);
     jw_object_start(&w);
-      jw_key(&w, "uri"); jw_string(&w, uri);
+      jw_key(&w, "uri"); jw_string(&w, def_uri);
       jw_key(&w, "range");
       jw_object_start(&w);
         jw_key(&w, "start");
         jw_object_start(&w);
-          jw_key(&w, "line"); jw_int(&w, entry->def_loc.line - 1);
-          jw_key(&w, "character"); jw_int(&w, entry->def_loc.col - 1);
+          jw_key(&w, "line"); jw_int(&w, def_line - 1);
+          jw_key(&w, "character"); jw_int(&w, def_col - 1);
         jw_object_end(&w);
         jw_key(&w, "end");
         jw_object_start(&w);
-          jw_key(&w, "line"); jw_int(&w, entry->def_loc.line - 1);
-          jw_key(&w, "character"); jw_int(&w, entry->def_loc.col - 1 + (int)strlen(name));
+          jw_key(&w, "line"); jw_int(&w, def_line - 1);
+          jw_key(&w, "character"); jw_int(&w, def_col - 1 + (int)strlen(name));
         jw_object_end(&w);
       jw_object_end(&w);
     jw_object_end(&w);
 
     lsp_send_response(id, w.buf);
     jw_free(&w);
+    free(def_uri_alloc);
 }
 
 // --- Completion ---

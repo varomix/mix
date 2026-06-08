@@ -1,4 +1,5 @@
 #include "lsp_document.h"
+#include "../cbind.h"
 #include "../errors.h"
 
 #define DOC_BUCKETS 64
@@ -156,6 +157,24 @@ static void load_module_imports(AstNode *program, const char *filepath,
 
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
+        if (decl->kind == NODE_USE_C_DECL) {
+            char *bind_src = cbind_generate_string(decl->use_c_decl.header_path,
+                                                    decl->use_c_decl.lib_name, false);
+            if (!bind_src) continue;
+
+            errors_set_source(bind_src, decl->use_c_decl.header_path);
+            Lexer bl = lexer_create(bind_src, decl->use_c_decl.header_path, arena);
+            lexer_tokenize(&bl);
+            Parser bp = parser_create(bl.tokens, bl.token_count, arena, decl->use_c_decl.header_path);
+            AstNode *bprog = parser_parse(&bp);
+            if (bprog && bprog->kind == NODE_PROGRAM) {
+                sema_analyze(sema, bprog);
+            }
+            free(bind_src);
+            free(bl.tokens);
+            continue;
+        }
+
         if (decl->kind != NODE_USE_DECL) continue;
 
         char *mod_path = lsp_resolve_use_path(filepath, decl->use_decl.module_path);

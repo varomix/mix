@@ -26,9 +26,13 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }
 
+    const lspEnv = config.get<Record<string, string>>('lsp.env', {});
     const serverOptions: ServerOptions = {
         command: lspPath,
         args: [],
+        options: {
+            env: { ...process.env, ...lspEnv },
+        },
     };
 
     const clientOptions: LanguageClientOptions = {

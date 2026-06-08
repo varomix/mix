@@ -42,6 +42,14 @@
           "type": "string",
           "default": "",
           "description": "Absolute path to the mix-lsp binary. Leave empty to use mix-lsp from PATH."
+        },
+        "mix.lsp.env": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Additional environment variables to pass to mix-lsp. Merged with (and overriding) the system environment. Example: {\"CPPFLAGS\": \"-I/opt/homebrew/include\"}"
         }
       }
     },

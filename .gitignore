@@ -10,7 +10,6 @@ out/
 
 # Built example binaries (sources are *.mix; binaries are produced by `mix build`)
 /a.out
-/056_unions
 /opengl_triangle
 /raylib_C_example
 /sdl3_use_c
@@ -19,11 +18,26 @@ out/
 /test_shape_layout
 /test_union
 
+# Numbered test binaries (compiled from tests/*.mix)
+/[0-9][0-9][0-9]_*
+
 # Ad-hoc binaries from local testing
+/big_scalar
+/dot_test
+/dot_test2
+/dot_test3
 /exhaust_test*
+/fibonacci
 /float_index_test
-/redecl
 /ftest
+/hello
+/imm_test
+/list_full
+/mix_fmt_test
+/one_shape
+/redecl
+/scale_test
+/two_args
 
 # examples/ — the .mix sources are tracked; their compiled output is not
 examples/hello

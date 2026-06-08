@@ -270,10 +270,17 @@ static void handle_hover_request(LspServer *server, int64_t id, JsonValue *param
         }
         hlen += snprintf(hover_md + hlen, sizeof(hover_md) - hlen, "```");
     } else {
-        char type_str[512];
-        mix_type_to_string(type, type_str, sizeof(type_str));
-        hlen += snprintf(hover_md + hlen, sizeof(hover_md) - hlen,
-                         "```mix\n%s: %s\n```", name, type_str);
+        // Call expressions have resolved_type = return type, not TYPE_FUNC.
+        // Try SymbolEntry for a rich function signature when possible.
+        SymbolEntry *fe = symbol_index_lookup(&doc->symbols, name);
+        if (fe && fe->param_name_count > 0) {
+            emit_hover_signature(name, fe, hover_md, sizeof(hover_md), &hlen);
+        } else {
+            char type_str[512];
+            mix_type_to_string(type, type_str, sizeof(type_str));
+            hlen += snprintf(hover_md + hlen, sizeof(hover_md) - hlen,
+                             "```mix\n%s: %s\n```", name, type_str);
+        }
     }
 
     JsonWriter w;

@@ -1,6 +1,7 @@
 #include "lsp_document.h"
 #include "../cbind.h"
 #include "../errors.h"
+#include <libgen.h>
 
 #define DOC_BUCKETS 64
 #define ARENA_DEFAULT_CAP (1024 * 1024)
@@ -158,13 +159,19 @@ static void load_module_imports(AstNode *program, const char *filepath,
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
         if (decl->kind == NODE_USE_C_DECL) {
+            // Resolve relative headers against the .mix file's directory
+            char *doc_dir = strdup(filepath);
+            char *source_dir = dirname(doc_dir);
+
             char *bind_src = cbind_generate_string(decl->use_c_decl.header_path,
-                                                    decl->use_c_decl.lib_name, false);
-            if (!bind_src) continue;
+                                                    decl->use_c_decl.lib_name,
+                                                    false, source_dir);
+            if (!bind_src) { free(doc_dir); continue; }
 
             // Resolve header path so def_loc.filename is an absolute path
             // usable in Go to Definition responses.
-            char *resolved = resolve_header_path(decl->use_c_decl.header_path);
+            char *resolved = resolve_header_path(decl->use_c_decl.header_path,
+                                                  source_dir);
             const char *bind_filename = resolved ? resolved : decl->use_c_decl.header_path;
 
             errors_set_source(bind_src, bind_filename);
@@ -178,6 +185,7 @@ static void load_module_imports(AstNode *program, const char *filepath,
             free(bind_src);
             free(bl.tokens);
             free(resolved);
+            free(doc_dir);
             continue;
         }
 

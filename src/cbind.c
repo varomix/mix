@@ -269,13 +269,24 @@ static char *run_command(const char *cmd, bool verbose) {
     return buf;
 }
 
-// Resolve a header path by searching CPPFLAGS -I directories and vendor dirs.
-// If the file exists as-is, returns a copy. Otherwise tries each -I<dir>/<path>,
-// then searches lib/vendor/*/include/<path>.
+// Resolve a header path by searching the source directory, CPPFLAGS -I
+// directories, and vendor dirs.
+// source_dir: directory of the .mix file (NULL to skip), tries <dir>/<path> first.
+// If no source_dir and path exists as-is, returns a copy. Otherwise tries each
+// -I<dir>/<path>, then searches lib/vendor/*/include/<path>.
 // Returns a malloc'd string or NULL if not found.
-char *resolve_header_path(const char *path) {
-    // If file exists directly, use it as-is
+char *resolve_header_path(const char *path, const char *source_dir) {
     struct stat st;
+
+    // Try relative to source directory first (handles use c "local.h" in a .mix file
+    // whose directory differs from the LSP/compiler CWD).
+    if (source_dir) {
+        char full[2048];
+        snprintf(full, sizeof(full), "%s/%s", source_dir, path);
+        if (stat(full, &st) == 0) return strdup(full);
+    }
+
+    // If file exists directly, use it as-is
     if (stat(path, &st) == 0) return strdup(path);
 
     // Parse -I flags from CPPFLAGS
@@ -1985,16 +1996,19 @@ int cbind_generate(const char *header_path, const char *out_path,
 }
 
 // Generate MIX binding source as an in-memory string.
+// source_dir: directory of the .mix file (NULL to skip), forwarded to
+// resolve_header_path.
 // Returns a malloc'd string (caller must free), or NULL on failure.
-char *cbind_generate_string(const char *header_path, const char *lib_name, bool verbose) {
+char *cbind_generate_string(const char *header_path, const char *lib_name,
+                            bool verbose, const char *source_dir) {
     // Reset globals
     func_count = 0;
     const_count = 0;
     shape_count = 0;
     typedef_count = 0;
 
-    // Try to resolve header path via CPPFLAGS -I directories
-    char *resolved = resolve_header_path(header_path);
+    // Try to resolve header path via source dir, CPPFLAGS -I directories
+    char *resolved = resolve_header_path(header_path, source_dir);
     if (resolved) {
         header_path = resolved;
     }

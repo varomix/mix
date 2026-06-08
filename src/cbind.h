@@ -13,12 +13,15 @@ int cbind_generate(const char *header_path, const char *out_path,
                    const char *lib_name, bool verbose);
 
 // Generate MIX binding source as an in-memory string.
+// source_dir: directory of the .mix file (NULL to skip), forwarded to
+// resolve_header_path.
 // Returns a malloc'd string (caller must free), or NULL on failure.
 char *cbind_generate_string(const char *header_path, const char *lib_name,
-                            bool verbose);
+                            bool verbose, const char *source_dir);
 
-// Resolve a C header path using CPPFLAGS -I directories and vendor paths.
+// Resolve a C header path using source directory, CPPFLAGS -I directories,
+// and vendor paths. source_dir: directory of the .mix file (NULL to skip).
 // Returns a malloc'd absolute path string, or NULL if not found.
-char *resolve_header_path(const char *path);
+char *resolve_header_path(const char *path, const char *source_dir);
 
 #endif // CBIND_H

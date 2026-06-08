@@ -601,7 +601,8 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
         if (decl->kind == NODE_USE_C_DECL) {
             // use c "header.h" in a module — generate bindings and analyze
             char *bind_src = cbind_generate_string(decl->use_c_decl.header_path,
-                                                    decl->use_c_decl.lib_name, verbose);
+                                                     decl->use_c_decl.lib_name,
+                                                     verbose, NULL);
             if (!bind_src) {
                 fprintf(stderr, "mix: failed to generate bindings for '%s'\n",
                         decl->use_c_decl.header_path);
@@ -1064,7 +1065,7 @@ int main(int argc, char **argv) {
             if (verbose) fprintf(stderr, "mix: use c \"%s\"%s%s%s\n",
                                  header, lib ? " link \"" : "", lib ? lib : "", lib ? "\"" : "");
 
-            char *bind_src = cbind_generate_string(header, lib, verbose);
+            char *bind_src = cbind_generate_string(header, lib, verbose, NULL);
             if (!bind_src) {
                 fprintf(stderr, "mix: failed to generate bindings for '%s'\n", header);
                 return 1;

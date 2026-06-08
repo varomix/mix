@@ -708,9 +708,9 @@ static void index_module_file(SymbolIndex *idx, const char *module_path) {
 // Index symbols from a C header via cbind_generate_string()
 // Uses the module cache to avoid re-running cc -E on every keystroke.
 static void index_c_header(SymbolIndex *idx, const char *header_path,
-                           const char *lib_name) {
+                           const char *lib_name, const char *source_dir) {
     // Resolve header path so def_loc.filename is an absolute path
-    char *resolved = resolve_header_path(header_path);
+    char *resolved = resolve_header_path(header_path, source_dir);
     const char *bind_path = resolved ? resolved : header_path;
 
     // Check cache — use header_path as the key.
@@ -724,7 +724,7 @@ static void index_c_header(SymbolIndex *idx, const char *header_path,
     }
 
     // Generate MIX binding text from the C header
-    char *bind_src = cbind_generate_string(header_path, lib_name, false);
+    char *bind_src = cbind_generate_string(header_path, lib_name, false, source_dir);
     if (!bind_src) { free(resolved); return; }
 
     Arena arena = arena_create(256 * 1024);
@@ -909,8 +909,11 @@ void symbol_index_build_with_imports(SymbolIndex *idx, AstNode *program,
                 free(mod_path);
             }
         } else if (decl->kind == NODE_USE_C_DECL) {
+            char *dir_copy = strdup(filepath);
+            char *source_dir = dirname(dir_copy);
             index_c_header(idx, decl->use_c_decl.header_path,
-                           decl->use_c_decl.lib_name);
+                           decl->use_c_decl.lib_name, source_dir);
+            free(dir_copy);
         }
     }
 }

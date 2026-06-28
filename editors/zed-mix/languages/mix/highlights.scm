@@ -1,5 +1,9 @@
 ; tree-sitter-mix highlight queries for Zed.
 
+; --- Identifiers (catch-all, lowest priority — must come first) ---
+(identifier) @variable.builtin
+(identifier_mut) @variable.builtin
+
 ; --- Comments ---
 (line_comment) @comment
 
@@ -77,8 +81,5 @@
 (use_decl path: (dotted_path (identifier) @namespace))
 (use_decl alias: (identifier) @namespace)
 
-; --- Identifiers (catch-all) ---
-(identifier) @variable.builtin
-(identifier_mut) @variable.builtin
 
 

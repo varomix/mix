@@ -8,7 +8,7 @@ repository = "https://github.com/varomix/mix-lang"
 
 [grammars.mix]
 repository = "file:///Users/varomix/dev/MIX_DEV/mix_lang/editors/zed-mix/tree-sitter-mix"
-rev = "5aaab235a2e3cd1cab077095e809a20131f0d4b6"
+rev = "a5299c11e82c6f368e7ec3f27bff5ac3be5d9168"
 
 [language_servers.mix-lsp]
 name = "mix-lsp"

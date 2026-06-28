@@ -77,4 +77,8 @@
 (use_decl path: (dotted_path (identifier) @namespace))
 (use_decl alias: (identifier) @namespace)
 
+; --- Identifiers (catch-all) ---
+(identifier) @variable.builtin
+(identifier_mut) @variable.builtin
+
 

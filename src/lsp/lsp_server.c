@@ -69,6 +69,10 @@ static void handle_initialize(LspServer *server, int64_t id, JsonValue *params) 
           jw_array_start(&w);
             jw_string(&w, ".");
           jw_array_end(&w);
+          jw_key(&w, "completionItem");
+          jw_object_start(&w);
+            jw_key(&w, "snippetSupport"); jw_bool(&w, true);
+          jw_object_end(&w);
         jw_object_end(&w);
 
         // Signature Help
@@ -438,6 +442,12 @@ static void emit_completion(JsonWriter *w, const char *label, int kind,
       if (detail) {
           jw_key(w, "detail"); jw_string(w, detail);
       }
+      if (kind == 2 || kind == 3) {
+          char insert_text[512];
+          snprintf(insert_text, sizeof(insert_text), "%s(${0})", label);
+          jw_key(w, "insertText"); jw_string(w, insert_text);
+          jw_key(w, "insertTextFormat"); jw_int(w, 2);
+      }
     jw_object_end(w);
 }
 
@@ -449,9 +459,9 @@ static void add_builtin_methods(JsonWriter *w, MixType *type) {
     }
     switch (type->kind) {
         case TYPE_LIST:
-            emit_completion(w, "push", 2, "push!(value)");
+            emit_completion(w, "push!", 2, "push!(value)");
             emit_completion(w, "at", 2, "at(index: int) -> ref value");
-            emit_completion(w, "at_mut", 2, "at_mut!(index: int) -> ref! value");
+            emit_completion(w, "at_mut!", 2, "at_mut!(index: int) -> ref! value");
             emit_completion(w, "len", 5, "int");
             break;
         case TYPE_STR:

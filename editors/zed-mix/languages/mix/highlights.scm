@@ -20,7 +20,6 @@
 ; --- Declaration / scoping keywords ---
 [
   "pub" "use" "extern" "defer" "zone"
-  "go" "wait" "run" "shared"
   "type" "shape" "union" "has" "fail"
   "set" "stack" "heap"
 ] @keyword
@@ -69,10 +68,6 @@
 (method_call method: (identifier) @function.method)
 (method_call method: (identifier_mut) @function.method)
 
-; --- Shape fields & constructors ---
-(shape_field name: (identifier) @property)
-(shape_ctor_decl name: (identifier) @type)
-
 ; --- Fields / Shapes ---
 (field_access field: (identifier) @property)
 (shape_lit shape: (identifier) @type)
@@ -82,5 +77,4 @@
 (use_decl path: (dotted_path (identifier) @namespace))
 (use_decl alias: (identifier) @namespace)
 
-; No catch-all `(identifier) @variable` — it overlaps every specific capture
-; and causes functions/methods/types to render as plain variables instead.
+

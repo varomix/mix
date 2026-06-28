@@ -1245,8 +1245,10 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
             MixType *obj_type = resolve_expr(sema, expr->slice_expr.object);
             if (expr->slice_expr.start) resolve_expr(sema, expr->slice_expr.start);
             if (expr->slice_expr.end) resolve_expr(sema, expr->slice_expr.end);
-            // Slice of a list returns same list type
+            // Slice of a list returns same list type; slice of str returns str
             if (obj_type && obj_type->kind == TYPE_LIST) {
+                expr->resolved_type = obj_type;
+            } else if (obj_type && obj_type->kind == TYPE_STR) {
                 expr->resolved_type = obj_type;
             } else {
                 expr->resolved_type = make_type(sema->arena, TYPE_VOID);
@@ -1835,6 +1837,8 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                 } else if (strcmp(m, "remove") == 0 || strcmp(m, "insert") == 0 ||
                            strcmp(m, "sort") == 0 || strcmp(m, "reverse") == 0) {
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
+                } else if (strcmp(m, "slice") == 0) {
+                    expr->resolved_type = obj_base;
                 } else if (strcmp(m, "contains") == 0) {
                     expr->resolved_type = make_type(sema->arena, TYPE_BOOL);
                 } else if (strcmp(m, "index_of") == 0) {

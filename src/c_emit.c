@@ -1042,6 +1042,8 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
         }
         case NODE_SLICE_EXPR: {
             int obj = emit_expr(emit, expr->slice_expr.object);
+            MixType *obj_type = expr->slice_expr.object->resolved_type;
+            
             int start_v, end_v;
             if (expr->slice_expr.start) {
                 start_v = emit_expr(emit, expr->slice_expr.start);
@@ -1053,11 +1055,21 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 end_v = emit_expr(emit, expr->slice_expr.end);
             } else {
                 end_v = next_temp(emit);
-                ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_len(t%d);\n", end_v, obj);
+                if (obj_type && obj_type->kind == TYPE_STR) {
+                    ind(emit); fprintf(emit->out, "int64_t t%d = mix_str_len(t%d);\n", end_v, obj);
+                } else {
+                    ind(emit); fprintf(emit->out, "int64_t t%d = mix_list_len(t%d);\n", end_v, obj);
+                }
             }
+            
             int t = next_temp(emit);
-            ind(emit); fprintf(emit->out, "void *t%d = mix_list_slice(t%d, (int64_t)t%d, (int64_t)t%d, %d);\n",
-                    t, obj, start_v, end_v, expr->slice_expr.inclusive ? 1 : 0);
+            if (obj_type && obj_type->kind == TYPE_STR) {
+                ind(emit); fprintf(emit->out, "const char *t%d = mix_str_slice((const char *)t%d, (int64_t)t%d, (int64_t)t%d);\n",
+                        t, obj, start_v, end_v);
+            } else {
+                ind(emit); fprintf(emit->out, "void *t%d = mix_list_slice(t%d, (int64_t)t%d, (int64_t)t%d, %d);\n",
+                        t, obj, start_v, end_v, expr->slice_expr.inclusive ? 1 : 0);
+            }
             return t;
         }
         case NODE_LIST_COMP: {
@@ -2104,6 +2116,9 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 } else if (strcmp(m, "join") == 0 && expr->method_call.arg_count == 1) {
                     ind(emit); fprintf(emit->out, "const char *t%d = mix_str_join(t%d, (const char *)t%d);\n",
                             t, obj_temp, arg_temps2[0]);
+                } else if (strcmp(m, "slice") == 0 && expr->method_call.arg_count == 2) {
+                    ind(emit); fprintf(emit->out, "void *t%d = mix_list_slice(t%d, (int64_t)t%d, (int64_t)t%d, 0);\n",
+                            t, obj_temp, arg_temps2[0], arg_temps2[1]);
                 } else {
                     ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 }

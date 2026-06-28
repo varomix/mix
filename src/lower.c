@@ -2031,9 +2031,10 @@ static LirOpnd lower_expr(LowerCtx *ctx, AstNode *expr) {
     case NODE_INDEX_EXPR: return lower_index_expr(ctx, expr);
     case NODE_LAMBDA:     return lower_lambda(ctx, expr);
 
-    case NODE_SLICE_EXPR: {
-        // list[start..end] / list[start..=end] → mix_list_slice runtime.
-        LirOpnd lst = lower_expr(ctx, expr->slice_expr.object);
+case NODE_SLICE_EXPR: {
+        LirOpnd obj = lower_expr(ctx, expr->slice_expr.object);
+        MixType *obj_type = expr->slice_expr.object->resolved_type;
+        
         LirOpnd start, end;
         if (expr->slice_expr.start) {
             start = to_i64(ctx, expr->loc, lower_expr(ctx, expr->slice_expr.start));
@@ -2043,24 +2044,46 @@ static LirOpnd lower_expr(LowerCtx *ctx, AstNode *expr) {
         if (expr->slice_expr.end) {
             end = to_i64(ctx, expr->loc, lower_expr(ctx, expr->slice_expr.end));
         } else {
-            // Default end = list length.
-            LirType lps[] = { LIR_TY_PTR };
-            register_runtime(ctx->mod, expr->loc, "mix_list_len",
-                             LIR_TY_I64, lps, 1);
-            LirOpnd largs[] = { lst };
-            int r = lir_emit_call(ctx->fn, expr->loc, "mix_list_len",
-                                    LIR_TY_I64, largs, 1);
-            end = lir_opnd_value(r, LIR_TY_I64);
+            // Default end = length of object
+            if (obj_type && obj_type->kind == TYPE_STR) {
+                LirType lps[] = { LIR_TY_PTR };
+                register_runtime(ctx->mod, expr->loc, "mix_str_len",
+                                 LIR_TY_I64, lps, 1);
+                LirOpnd largs[] = { obj };
+                int r = lir_emit_call(ctx->fn, expr->loc, "mix_str_len",
+                                      LIR_TY_I64, largs, 1);
+                end = lir_opnd_value(r, LIR_TY_I64);
+            } else {
+                LirType lps[] = { LIR_TY_PTR };
+                register_runtime(ctx->mod, expr->loc, "mix_list_len",
+                                 LIR_TY_I64, lps, 1);
+                LirOpnd largs[] = { obj };
+                int r = lir_emit_call(ctx->fn, expr->loc, "mix_list_len",
+                                      LIR_TY_I64, largs, 1);
+                end = lir_opnd_value(r, LIR_TY_I64);
+            }
         }
-        LirOpnd inclusive = lir_opnd_int_typed(expr->slice_expr.inclusive ? 1 : 0,
-                                                  LIR_TY_I32);
-        LirType ps[] = { LIR_TY_PTR, LIR_TY_I64, LIR_TY_I64, LIR_TY_I32 };
-        register_runtime(ctx->mod, expr->loc, "mix_list_slice",
-                         LIR_TY_PTR, ps, 4);
-        LirOpnd args[] = { lst, start, end, inclusive };
-        int r = lir_emit_call(ctx->fn, expr->loc, "mix_list_slice",
-                                LIR_TY_PTR, args, 4);
-        return lir_opnd_value(r, LIR_TY_PTR);
+        
+        if (obj_type && obj_type->kind == TYPE_STR) {
+            LirType ps[] = { LIR_TY_PTR, LIR_TY_I64, LIR_TY_I64 };
+            register_runtime(ctx->mod, expr->loc, "mix_str_slice",
+                             LIR_TY_PTR, ps, 3);
+            LirOpnd args[] = { obj, start, end };
+            int r = lir_emit_call(ctx->fn, expr->loc, "mix_str_slice",
+                                  LIR_TY_PTR, args, 3);
+            return lir_opnd_value(r, LIR_TY_PTR);
+        } else {
+            // list slice
+            LirOpnd inclusive = lir_opnd_int_typed(expr->slice_expr.inclusive ? 1 : 0,
+                                                   LIR_TY_I32);
+            LirType ps[] = { LIR_TY_PTR, LIR_TY_I64, LIR_TY_I64, LIR_TY_I32 };
+            register_runtime(ctx->mod, expr->loc, "mix_list_slice",
+                             LIR_TY_PTR, ps, 4);
+            LirOpnd args[] = { obj, start, end, inclusive };
+            int r = lir_emit_call(ctx->fn, expr->loc, "mix_list_slice",
+                                  LIR_TY_PTR, args, 4);
+            return lir_opnd_value(r, LIR_TY_PTR);
+        }
     }
 
     case NODE_SHARED_EXPR: {
@@ -2659,6 +2682,16 @@ static LirOpnd lower_expr(LowerCtx *ctx, AstNode *expr) {
                 register_runtime(ctx->mod, expr->loc, "mix_str_join", LIR_TY_PTR, ps, 2);
                 LirOpnd args[] = { list, sep };
                 int r = lir_emit_call(ctx->fn, expr->loc, "mix_str_join", LIR_TY_PTR, args, 2);
+                return lir_opnd_value(r, LIR_TY_PTR);
+            }
+            if (strcmp(mname, "slice") == 0 && expr->method_call.arg_count == 2) {
+                LirOpnd a = to_i64(ctx, expr->loc, lower_expr(ctx, expr->method_call.args[0]));
+                LirOpnd b = to_i64(ctx, expr->loc, lower_expr(ctx, expr->method_call.args[1]));
+                LirType ps[] = { LIR_TY_PTR, LIR_TY_I64, LIR_TY_I64, LIR_TY_I32 };
+                register_runtime(ctx->mod, expr->loc, "mix_list_slice", LIR_TY_PTR, ps, 4);
+                LirOpnd args[] = { list, a, b, lir_opnd_int_typed(0, LIR_TY_I32) };
+                int r = lir_emit_call(ctx->fn, expr->loc, "mix_list_slice",
+                                      LIR_TY_PTR, args, 4);
                 return lir_opnd_value(r, LIR_TY_PTR);
             }
         }

@@ -7,7 +7,6 @@
 (integer) @number
 (float) @number
 (string) @string
-(string_interp) @string
 (bool) @boolean
 (none_lit) @constant.builtin
 

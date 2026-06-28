@@ -1055,8 +1055,8 @@ static AstNode *parse_stmt(Parser *p) {
         return node;
     }
 
-    // done [expr]
-    if (check(p, TOK_DONE)) {
+    // done [expr]  or  => [expr]
+    if (check(p, TOK_DONE) || check(p, TOK_FAT_ARROW)) {
         advance_tok(p);
         AstNode *node = ast_new(p->arena, NODE_DONE_STMT, loc);
         if (!check(p, TOK_NEWLINE) && !check(p, TOK_DEDENT) && !at_end(p)) {

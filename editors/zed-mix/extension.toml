@@ -13,7 +13,7 @@ version = "0.1.0"
 
 [grammars.mix]
 repository = "file:///Users/varomix/dev/MIX_DEV/mix_lang/editors/zed-mix/tree-sitter-mix"
-rev = "a5299c1baf3e9734f0d53ffe69f890d375e20527"
+rev = "bd6dec59b8ab4ee4023fc8bb32e356a3e6511f3a"
 
 [language_servers.mix-lsp]
 language = "MIX"

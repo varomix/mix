@@ -336,6 +336,13 @@ static LirOpnd to_i64(LowerCtx *ctx, SrcLoc loc, LirOpnd v) {
     return lir_opnd_value(r, LIR_TY_I64);
 }
 
+static LirOpnd to_bool(LowerCtx *ctx, SrcLoc loc, LirOpnd v) {
+    if (v.type == LIR_TY_I1) return v;
+    LirOpnd zero = lir_opnd_int_typed(0, v.type);
+    int r = lir_emit_bin(ctx->fn, loc, LIR_BIN_NE, v.type, v, zero);
+    return lir_opnd_value(r, LIR_TY_I1);
+}
+
 // Widen any narrow int operand to i64. Picks ZEXT for unsigned source
 // types and SEXT for signed types, using the AST node's resolved_type as
 // the source of truth.
@@ -1947,8 +1954,14 @@ static LirOpnd lower_expr(LowerCtx *ctx, AstNode *expr) {
                 operand_type = LIR_TY_I64;
             }
         }
+        if (op == LIR_BIN_AND || op == LIR_BIN_OR) {
+            a = to_bool(ctx, expr->loc, a);
+            b = to_bool(ctx, expr->loc, b);
+            operand_type = LIR_TY_I1;
+        }
         int r = lir_emit_bin(ctx->fn, expr->loc, op, operand_type, a, b);
-        LirType result_type = (op >= LIR_BIN_EQ && op <= LIR_BIN_GE)
+        LirType result_type = ((op >= LIR_BIN_EQ && op <= LIR_BIN_GE) ||
+                               op == LIR_BIN_AND || op == LIR_BIN_OR)
             ? LIR_TY_I1 : operand_type;
         return lir_opnd_value(r, result_type);
     }

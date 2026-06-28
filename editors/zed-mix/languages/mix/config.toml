@@ -1,0 +1,8 @@
+name = "MIX"
+grammar = "mix"
+path_suffixes = ["mix"]
+line_comments = ["// "]
+tab_size = 4
+hard_tabs = false
+autoclose_before = ")]}:;,. \n\t"
+completion_query_characters = [".", "_", "!"]

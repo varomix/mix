@@ -1,0 +1,13 @@
+// Logical operators: and, or, not, and precedence.
+main()
+    a = true
+    b = false
+
+    print(a and b)
+    print(a or b)
+    print(not a)
+    print(not b)
+    print(a or b and false)
+    print((a or b) and false)
+    print(1 and 2)
+    print(0 or 3)

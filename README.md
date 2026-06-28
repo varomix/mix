@@ -56,7 +56,7 @@ make
 - **Error messages** — colored output, line gutters, "did you mean?" suggestions, error limit
 - **Debug info** — DWARF line numbers for `lldb` source-level debugging
 - **Build system** — `build.mix` with built-in `Project` shape for declarative builds
-- **Editor support** — Neovim plugin (`editors/nvim/`), VSCode extension (`editors/vscode-mix/`), tree-sitter grammar (`editors/tree-sitter-mix/`, v0)
+- **Editor support** — Neovim plugin (`editors/nvim/`), VSCode extension (`editors/vscode-mix/`), Zed extension (`editors/zed-mix/`), tree-sitter grammar (`editors/tree-sitter-mix/`, v0)
 
 ## Compiler Options
 

@@ -41,14 +41,36 @@ function M.check()
 
     -- LSP server binary
     start('mix-lsp server')
-    local lsp = which('mix-lsp')
+    local cfg_path = (vim.g.mix_lsp_path ~= nil) and vim.g.mix_lsp_path
+                  or vim.env.MIX_LSP_PATH
+    local resolved = nil
+    if cfg_path and vim.fn.executable(cfg_path) == 1 then
+        resolved = cfg_path
+        ok(string.format("using configured path: %s", cfg_path))
+    elseif cfg_path then
+        warn(string.format("configured path %q not executable, falling back to PATH", cfg_path))
+    end
+    local lsp = resolved or which('mix-lsp')
     if lsp then
         ok("mix-lsp found at " .. lsp)
     else
         err("mix-lsp not found on PATH",
             { "Build with `make` from the project root.",
-              "Either symlink build/mix-lsp into PATH, or set the absolute",
-              "path in your nvim init via `cmd = { '/abs/path/to/mix-lsp' }`." })
+              "Either symlink build/mix-lsp into PATH, or set",
+              "vim.g.mix_lsp_path = '/abs/path/to/mix-lsp' in init.lua,",
+              "or export MIX_LSP_PATH=/abs/path/to/mix-lsp." })
+    end
+
+    -- Environment overrides
+    start('LSP environment')
+    local env_overrides = (type(vim.g.mix_lsp_env) == 'table') and vim.g.mix_lsp_env or {}
+    local env_keys = vim.fn.keys(env_overrides)
+    if #env_keys > 0 then
+        for _, k in ipairs(env_keys) do
+            ok(string.format("vim.g.mix_lsp_env[%q] = %q", k, env_overrides[k]))
+        end
+    else
+        info("no extra env vars set (set vim.g.mix_lsp_env = { ... } in init.lua)")
     end
 
     -- Active LSP clients on this buffer

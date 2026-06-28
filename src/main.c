@@ -61,7 +61,12 @@ static char *read_file(const char *path) {
 }
 
 #ifdef __APPLE__
-static char *detect_macos_sdk_libdir(Arena *arena) {
+static char *detect_macos_sdk_libdir(void) {
+    static char cached_libdir[1200];
+    static bool cached = false;
+    if (cached) return cached_libdir[0] ? cached_libdir : NULL;
+
+    cached = true;
     FILE *fp = popen("xcrun --show-sdk-path 2>/dev/null", "r");
     if (!fp) return NULL;
 
@@ -83,7 +88,8 @@ static char *detect_macos_sdk_libdir(Arena *arena) {
     struct stat st;
     if (stat(libdir, &st) != 0) return NULL;
 
-    return arena_strdup(arena, libdir);
+    strcpy(cached_libdir, libdir);
+    return cached_libdir;
 }
 #endif
 
@@ -180,6 +186,7 @@ static void usage(void) {
     fprintf(stderr, "  --emit-tokens       Print token stream\n");
     fprintf(stderr, "  --emit-ast          Print AST\n");
     fprintf(stderr, "  --debug             Enable debug mode (DWARF info + @debug)\n");
+    fprintf(stderr, "  -O<level>           Set optimization level (e.g., -O2, -Os)\n");
     fprintf(stderr, "  --bind <path>       Generate .mix bindings from C header(s)\n");
     fprintf(stderr, "  --backend <name>    Backend: llvm (default), c (fallback)\n");
     fprintf(stderr, "  --lib <name>        Library name for --bind (e.g., SDL3)\n");
@@ -781,6 +788,7 @@ int main(int argc, char **argv) {
     bool emit_ast = false;
     bool verbose = false;
     bool debug_mode = false;
+    const char *opt_level = NULL;
     const char *backend = "llvm";  /* "llvm" (default) or "c" */
     RunMode mode = MODE_NONE;
     bool output_set = false;
@@ -830,6 +838,8 @@ int main(int argc, char **argv) {
             debug_mode = true;
         } else if (strcmp(argv[i], "--release") == 0) {
             debug_mode = false;
+        } else if (strncmp(argv[i], "-O", 2) == 0 && argv[i][2] != '\0') {
+            opt_level = argv[i] + 2;
         } else if (strcmp(argv[i], "--version") == 0) {
             printf("mix %s (%s)\n", MIX_VERSION, MIX_VERSION_DATE);
             return 0;
@@ -1408,7 +1418,10 @@ int main(int argc, char **argv) {
 
     link_argv[ai++] = "cc";
     if (debug_mode) link_argv[ai++] = "-g";
-    if (!debug_mode) link_argv[ai++] = "-O2";
+    if (opt_level) {
+        char *opt_buf = arena_alloc(&arena, 4);
+        if (opt_buf) { sprintf(opt_buf, "-O%s", opt_level); link_argv[ai++] = opt_buf; }
+    }
     link_argv[ai++] = use_c_backend ? gen_path : asm_path;
     for (int i = 0; i < module_count && ai < MAX_LINK_ARGV - 8; i++)
         link_argv[ai++] = module_asm_files[i];
@@ -1422,7 +1435,7 @@ int main(int argc, char **argv) {
     link_argv[ai++] = "-lm";
 #ifdef __APPLE__
     {
-        char *sdk_libdir = detect_macos_sdk_libdir(&arena);
+        char *sdk_libdir = detect_macos_sdk_libdir();
         if (sdk_libdir && ai < MAX_LINK_ARGV - 2) {
             char *lflag = arena_alloc(&arena, strlen(sdk_libdir) + 3);
             sprintf(lflag, "-L%s", sdk_libdir);
@@ -1514,13 +1527,15 @@ int main(int argc, char **argv) {
 
     if (verbose) fprintf(stderr, "mix: wrote %s\n", output_file);
 
+    TIMER_START(cleanup);
     arena_destroy(&arena);
     free(source);
     free(lexer.tokens);
+    TIMER_END(cleanup);
 
     // In run mode, execute the compiled binary
     if (mode == MODE_RUN) {
-        // Build the path — if output_file is a bare name, prefix with ./
+        TIMER_START(run);
         char run_path[512];
         if (output_file[0] == '/' || (output_file[0] == '.' && output_file[1] == '/')) {
             snprintf(run_path, sizeof(run_path), "%s", output_file);
@@ -1528,7 +1543,9 @@ int main(int argc, char **argv) {
             snprintf(run_path, sizeof(run_path), "./%s", output_file);
         }
         const char *run_argv[] = {run_path, NULL};
-        return run_process(run_argv, NULL);
+        int rc = run_process(run_argv, NULL);
+        TIMER_END(run);
+        return rc;
     }
 
     return 0;

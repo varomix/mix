@@ -6,7 +6,8 @@
 ; --- Literals ---
 (integer) @number
 (float) @number
-(string) @string
+(string_content) @string
+(escape_sequence) @string
 (bool) @boolean
 (none_lit) @constant.builtin
 

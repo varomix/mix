@@ -1,0 +1,14 @@
+use c "cube.h" source "examples/cube/cube.c"
+
+update()
+    rx = get_rx() + 0.01
+    ry = get_ry() + 0.02
+    rz = get_rz() + 0.005
+    set_rx(rx)
+    set_ry(ry)
+    set_rz(rz)
+    gfx_set_rotation(rx, ry, rz)
+
+main()
+    gfx_init(800, 600)
+    gfx_start_loop()

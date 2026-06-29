@@ -32,6 +32,9 @@ static double now_ms(void) {
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <signal.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
@@ -111,6 +114,52 @@ static const char *detect_wasi_clang(void) {
     }
 #endif
     (void)st;
+    return NULL;
+}
+
+// Detect the Emscripten compiler (emcc) for --target wasm-browser.
+// Checks $EMCC env var first, then common install locations + PATH.
+// Returns a pointer to a static buffer, or NULL.
+static const char *detect_emcc(void) {
+    const char *env = getenv("EMCC");
+    if (env) return env;
+    static const char *candidates[] = {
+        "/opt/homebrew/bin/emcc",
+        "/usr/local/bin/emcc",
+        "emcc",     // rely on PATH lookup at exec time
+        NULL
+    };
+    static char found[1024];
+    static bool cached = false;
+    if (cached) return found[0] ? found : NULL;
+    cached = true;
+    struct stat st;
+    for (int i = 0; candidates[i]; i++) {
+        if (candidates[i][0] == '/') {
+            if (stat(candidates[i], &st) == 0 && S_ISREG(st.st_mode)) {
+                strcpy(found, candidates[i]);
+                return found;
+            }
+        } else {
+            // Check PATH for bare name
+            const char *path = getenv("PATH");
+            if (!path) continue;
+            char *path_copy = strdup(path);
+            if (!path_copy) continue;
+            char *dir = strtok(path_copy, ":");
+            while (dir) {
+                char full[1024];
+                snprintf(full, sizeof(full), "%s/%s", dir, candidates[i]);
+                if (stat(full, &st) == 0 && S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR)) {
+                    strcpy(found, full);
+                    free(path_copy);
+                    return found;
+                }
+                dir = strtok(NULL, ":");
+            }
+            free(path_copy);
+        }
+    }
     return NULL;
 }
 
@@ -296,7 +345,7 @@ static void usage(void) {
     fprintf(stderr, "  -O<level>           Set optimization level (e.g., -O2, -Os)\n");
     fprintf(stderr, "  --bind <path>       Generate .mix bindings from C header(s)\n");
     fprintf(stderr, "  --backend <name>    Backend: llvm (default), c (fallback)\n");
-    fprintf(stderr, "  --target <arch>     Target architecture: native (default), wasm32\n");
+    fprintf(stderr, "  --target <arch>     Target architecture: native (default), wasm32, wasm-browser\n");
     fprintf(stderr, "  --lib <name>        Library name for --bind (e.g., SDL3)\n");
     fprintf(stderr, "  --version           Show version\n");
     fprintf(stderr, "  -v                  Verbose\n\n");
@@ -1030,6 +1079,7 @@ int main(int argc, char **argv) {
 
     // Validate target arch
     bool is_wasm_target = (strcmp(target_arch, "wasm32") == 0);
+    bool is_wasm_browser = (strcmp(target_arch, "wasm-browser") == 0);
     if (is_wasm_target) {
         if (!use_llvm_backend) {
             fprintf(stderr, "mix: --target wasm32 requires the LLVM backend (--backend llvm, which is the default)\n");
@@ -1038,6 +1088,17 @@ int main(int argc, char **argv) {
         if (!detect_wasi_clang()) {
             fprintf(stderr, "mix: --target wasm32 requires a WASI-capable clang. "
                     "Install wasi-libc + wasi-runtimes via brew, or set $WASI_CLANG\n");
+            return 1;
+        }
+    }
+    if (is_wasm_browser) {
+        if (!use_llvm_backend) {
+            fprintf(stderr, "mix: --target wasm-browser requires the LLVM backend (--backend llvm, which is the default)\n");
+            return 1;
+        }
+        if (!detect_emcc()) {
+            fprintf(stderr, "mix: --target wasm-browser requires emcc (Emscripten). "
+                    "Install via brew: brew install emscripten, or set $EMCC\n");
             return 1;
         }
     }
@@ -1095,9 +1156,10 @@ int main(int argc, char **argv) {
     static char derived_name[256];
     if (!output_set) {
         derive_output_name(input_file, derived_name, sizeof(derived_name));
-        // Append .wasm extension for wasm targets
         if (is_wasm_target) {
             strncat(derived_name, ".wasm", sizeof(derived_name) - strlen(derived_name) - 1);
+        } else if (is_wasm_browser) {
+            strncat(derived_name, ".html", sizeof(derived_name) - strlen(derived_name) - 1);
         }
         output_file = derived_name;
     }
@@ -1539,8 +1601,25 @@ int main(int argc, char **argv) {
     #define MAX_LINK_ARGV 256
     const char *link_argv[MAX_LINK_ARGV];
     int ai = 0;
+    bool cross_target = is_wasm_target || is_wasm_browser;
 
-    if (is_wasm_target) {
+    // For wasm-browser, write .ll to a temp file (emcc doesn't support stdin pipe)
+    char emsc_ll_path[256] = "";
+    if (is_wasm_browser && lir_buf) {
+        snprintf(emsc_ll_path, sizeof(emsc_ll_path), "/tmp/mix_emsc_%d.ll", getpid());
+        FILE *f = fopen(emsc_ll_path, "w");
+        if (f) {
+            fwrite(lir_buf, 1, lir_size, f);
+            fclose(f);
+        }
+    }
+
+    if (is_wasm_browser) {
+        const char *emcc = detect_emcc();
+        link_argv[ai++] = emcc ? emcc : "emcc";
+        link_argv[ai++] = emsc_ll_path;
+        link_argv[ai++] = "-Wno-override-module";
+    } else if (is_wasm_target) {
         const char *wasi_clang = detect_wasi_clang();
         link_argv[ai++] = wasi_clang ? wasi_clang : "clang";
         link_argv[ai++] = "--target=wasm32-wasip1";
@@ -1575,18 +1654,19 @@ int main(int argc, char **argv) {
     // Add source files (e.g. glad.c)
     for (int i = 0; i < source_file_count && ai < MAX_LINK_ARGV - 8; i++)
         link_argv[ai++] = source_files[i];
-    if (runtime_path && !is_wasm_target)
+    if (runtime_path && !cross_target)
         link_argv[ai++] = runtime_path;
-    if (is_wasm_target) {
-        // Use WASI-compiled runtime
+    if (is_wasm_browser) {
+        link_argv[ai++] = "build/runtime-emsc.o";
+    } else if (is_wasm_target) {
         link_argv[ai++] = "build/runtime-wasi.o";
     }
     link_argv[ai++] = "-o";
     link_argv[ai++] = output_file;
-    if (!is_wasm_target)
+    if (!cross_target)
         link_argv[ai++] = "-lm";
 #ifdef __APPLE__
-    if (!is_wasm_target) {
+    if (!cross_target) {
         char *sdk_libdir = detect_macos_sdk_libdir();
         if (sdk_libdir && ai < MAX_LINK_ARGV - 2) {
             char *lflag = arena_alloc(&arena, strlen(sdk_libdir) + 3);
@@ -1595,12 +1675,12 @@ int main(int argc, char **argv) {
         }
     }
 #endif
-    if (!is_wasm_target) {
+    if (!cross_target) {
         for (int i = 0; i < link_flag_count && ai < MAX_LINK_ARGV - 2; i++)
             link_argv[ai++] = link_flags[i];
     }
     // Add vendor -I directories
-    if (!is_wasm_target) {
+    if (!cross_target) {
         for (int i = 0; i < vendor_idir_count && ai < MAX_LINK_ARGV - 2; i++) {
             char *iflag = arena_alloc(&arena, strlen(vendor_idirs[i]) + 3);
             sprintf(iflag, "-I%s", vendor_idirs[i]);
@@ -1610,7 +1690,7 @@ int main(int argc, char **argv) {
 
     // CPPFLAGS -I flags: pass to linker so source files can find includes
     const char *env_cppflags = NULL;
-    if (!is_wasm_target) env_cppflags = getenv("CPPFLAGS");
+    if (!cross_target) env_cppflags = getenv("CPPFLAGS");
     if (env_cppflags && env_cppflags[0]) {
         char *cppbuf = strdup(env_cppflags);
         char *tok = strtok(cppbuf, " \t");
@@ -1633,7 +1713,7 @@ int main(int argc, char **argv) {
     // LDFLAGS: split by whitespace since execvp doesn't use a shell.
     // Tokenize a mutable copy so each flag becomes a separate argv entry.
     char *ldflags_buf = NULL;
-    const char *env_ldflags = is_wasm_target ? NULL : getenv("LDFLAGS");
+    const char *env_ldflags = cross_target ? NULL : getenv("LDFLAGS");
     if (env_ldflags && env_ldflags[0]) {
         ldflags_buf = strdup(env_ldflags);
         char *tok = strtok(ldflags_buf, " \t");
@@ -1651,7 +1731,10 @@ int main(int argc, char **argv) {
     char *link_stderr = NULL;
     TIMER_START(cc);
     int ret;
-    if (use_llvm_backend && lir_buf) {
+    if (is_wasm_browser) {
+        // emcc reads from a file, not stdin
+        ret = run_process(link_argv, verbose ? NULL : &link_stderr);
+    } else if (use_llvm_backend && lir_buf) {
         ret = run_process_stdin(link_argv, lir_buf, lir_size, verbose ? NULL : &link_stderr);
     } else {
         ret = run_process(link_argv, verbose ? NULL : &link_stderr);
@@ -1684,6 +1767,7 @@ int main(int argc, char **argv) {
         if (use_c_backend && gen_path[0]) remove(gen_path);
         for (int i = 0; i < module_count; i++)
             remove(module_asm_files[i]);
+        if (emsc_ll_path[0]) remove(emsc_ll_path);
     }
 
     if (verbose) fprintf(stderr, "mix: wrote %s\n", output_file);
@@ -1699,11 +1783,66 @@ int main(int argc, char **argv) {
     if (mode == MODE_RUN) {
         TIMER_START(run);
         if (is_wasm_target) {
-            // Run .wasm via wasmtime
             const char *run_argv[] = {"wasmtime", output_file, NULL};
             int rc = run_process(run_argv, NULL);
             TIMER_END(run);
             return rc;
+        }
+        if (is_wasm_browser) {
+            // Extract base name for the URL
+            const char *url_base = strrchr(output_file, '/');
+            url_base = url_base ? url_base + 1 : output_file;
+            // Determine the server directory
+            char serve_dir[512] = ".";
+            const char *sep = strrchr(output_file, '/');
+            if (sep) {
+                size_t dlen = sep - output_file;
+                memcpy(serve_dir, output_file, dlen);
+                serve_dir[dlen] = '\0';
+            }
+            // Try to find a free port starting at 8080
+            int port = 8080;
+            for (int p = 8080; p < 8090; p++) {
+                port = p;
+                int sock = socket(AF_INET, SOCK_STREAM, 0);
+                if (sock < 0) break;
+                struct sockaddr_in addr;
+                memset(&addr, 0, sizeof(addr));
+                addr.sin_family = AF_INET;
+                addr.sin_port = htons(p);
+                addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+                if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
+                    close(sock);
+                    break; // port is free
+                }
+                close(sock);
+            }
+            // Fork HTTP server
+            pid_t server_pid = fork();
+            if (server_pid == 0) {
+                char port_str[16];
+                snprintf(port_str, sizeof(port_str), "%d", port);
+                const char *sv_argv[] = {"python3", "-m", "http.server", port_str, NULL};
+                if (serve_dir[0]) chdir(serve_dir);
+                execvp("python3", (char **)sv_argv);
+                _exit(1);
+            }
+            // Open browser
+            char url[512];
+            snprintf(url, sizeof(url), "http://localhost:%d/%s", port, url_base);
+            pid_t browser_pid = fork();
+            if (browser_pid == 0) {
+                const char *open_argv[] = {"open", url, NULL};
+                execvp("open", (char **)open_argv);
+                _exit(1);
+            }
+            waitpid(browser_pid, NULL, 0);
+            fprintf(stderr, "mix: serving at %s (press Enter to stop)\n", url);
+            getchar();
+            kill(server_pid, SIGTERM);
+            waitpid(server_pid, NULL, 0);
+            TIMER_END(run);
+            return 0;
         }
         char run_path[512];
         if (output_file[0] == '/' || (output_file[0] == '.' && output_file[1] == '/')) {

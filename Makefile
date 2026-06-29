@@ -34,11 +34,10 @@ WASI_RESOURCE := $(BREW_PREFIX)/share/wasi-runtimes
 WASI_FLAGS = --target=wasm32-wasip1 --sysroot=$(WASI_SYSROOT) -resource-dir=$(WASI_RESOURCE)
 RUNTIME_WASI_O = $(BUILD_DIR)/runtime-wasi.o
 
-all: $(BIN) $(LSP_BIN) $(RUNTIME_O) $(RUNTIME_WASI_O)
+# Native, WASI, and Emscripten runtimes are all built during `make`.
+# Pre-compiling avoids recompiling lib/runtime.c on every user build.
+all: $(BIN) $(LSP_BIN) $(RUNTIME_O) $(RUNTIME_WASI_O) $(RUNTIME_EMSC_O)
 
-# Pre-compile the runtime once so user-program builds skip the ~300ms
-# of recompiling lib/runtime.c every time. main.c looks for build/runtime.o
-# first and falls back to lib/runtime.c when missing or stale.
 $(RUNTIME_O): lib/runtime.c | $(BUILD_DIR)
 	$(CC) -O2 -c $< -o $@
 
@@ -46,6 +45,12 @@ $(RUNTIME_O): lib/runtime.c | $(BUILD_DIR)
 # LLVM clang which supports the wasm32-wasip1 target triple.
 $(RUNTIME_WASI_O): lib/runtime.c | $(BUILD_DIR)
 	$(WASI_CLANG) $(WASI_FLAGS) -O2 -c $< -o $@
+
+# Emscripten-compiled runtime for --target wasm-browser. Compiled with emcc
+# so it links against the Emscripten sysroot (not wasi-libc).
+RUNTIME_EMSC_O = $(BUILD_DIR)/runtime-emsc.o
+$(RUNTIME_EMSC_O): lib/runtime.c | $(BUILD_DIR)
+	emcc -O2 -c $< -o $@
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -90,7 +95,7 @@ test-fmt: $(BIN)
 test-all: test test-errors test-error-messages test-fmt
 
 PREFIX ?= /usr/local
-install: $(BIN) $(LSP_BIN) $(RUNTIME_O) $(RUNTIME_WASI_O)
+install: $(BIN) $(LSP_BIN) $(RUNTIME_O) $(RUNTIME_WASI_O) $(RUNTIME_EMSC_O)
 	mkdir -p $(PREFIX)/bin
 	mkdir -p $(PREFIX)/lib/mix/std
 	cp $(BIN) $(PREFIX)/bin/
@@ -98,6 +103,7 @@ install: $(BIN) $(LSP_BIN) $(RUNTIME_O) $(RUNTIME_WASI_O)
 	cp lib/runtime.c $(PREFIX)/lib/mix/
 	cp $(RUNTIME_O) $(PREFIX)/lib/mix/
 	cp $(RUNTIME_WASI_O) $(PREFIX)/lib/mix/
+	cp $(RUNTIME_EMSC_O) $(PREFIX)/lib/mix/
 	@if [ -d lib/std ] && [ "$$(ls -A lib/std/*.mix 2>/dev/null)" ]; then \
 		cp lib/std/*.mix $(PREFIX)/lib/mix/std/; \
 	fi

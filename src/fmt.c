@@ -439,7 +439,6 @@ int mix_format(const char *source, const char *filename, FILE *out) {
     int rc = format_tokens(lex.tokens, lex.token_count, &cl, out);
 
     cl_free(&cl);
-    free(lex.tokens);
     errors_set_callback(prev_cb, prev_ud);
     arena_destroy(&arena);
     return rc;

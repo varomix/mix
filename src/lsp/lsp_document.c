@@ -43,7 +43,6 @@ void docstore_destroy(DocumentStore *store) {
             free(doc->uri);
             free(doc->filepath);
             free(doc->source);
-            if (doc->tokens) free(doc->tokens);
             arena_destroy(&doc->doc_arena);
             diag_list_destroy(&doc->diagnostics);
             symbol_index_destroy(&doc->symbols);
@@ -106,7 +105,6 @@ void docstore_close(DocumentStore *store, const char *uri) {
             free(doc->uri);
             free(doc->filepath);
             free(doc->source);
-            if (doc->tokens) free(doc->tokens);
             arena_destroy(&doc->doc_arena);
             diag_list_destroy(&doc->diagnostics);
             symbol_index_destroy(&doc->symbols);
@@ -183,7 +181,6 @@ static void load_module_imports(AstNode *program, const char *filepath,
                 sema_analyze(sema, bprog);
             }
             free(bind_src);
-            free(bl.tokens);
             free(resolved);
             free(doc_dir);
             continue;
@@ -214,7 +211,6 @@ static void load_module_imports(AstNode *program, const char *filepath,
         }
 
         free(src);
-        free(lex.tokens);
         free(mod_path);
     }
 
@@ -226,8 +222,7 @@ void document_analyze(LspDocument *doc) {
     arena_destroy(&doc->doc_arena);
     doc->doc_arena = arena_create(ARENA_DEFAULT_CAP);
 
-    // Free old tokens
-    if (doc->tokens) { free(doc->tokens); doc->tokens = NULL; }
+    doc->tokens = NULL;
     doc->token_count = 0;
     doc->ast = NULL;
 

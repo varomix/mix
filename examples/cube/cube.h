@@ -20,3 +20,9 @@ float get_rz(void);
 void  set_rx(float v);
 void  set_ry(float v);
 void  set_rz(float v);
+
+// JS-controllable parameters (exported to HTML sliders layer)
+float get_rot_speed(void);
+void  set_rot_speed(float s);
+float get_cube_size(void);
+void  set_cube_size(float s);

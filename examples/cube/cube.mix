@@ -1,9 +1,10 @@
 use c "cube.h" source "examples/cube/cube.c"
 
 update()
-    rx = get_rx() + 0.01
-    ry = get_ry() + 0.02
-    rz = get_rz() + 0.005
+    speed = get_rot_speed()
+    rx = get_rx() + 0.01 * speed
+    ry = get_ry() + 0.02 * speed
+    rz = get_rz() + 0.005 * speed
     set_rx(rx)
     set_ry(ry)
     set_rz(rz)

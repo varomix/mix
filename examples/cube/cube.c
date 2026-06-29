@@ -19,6 +19,15 @@ void  set_ry(float v) { ry = v; }
 void  set_rz(float v) { rz = v; }
 void  gfx_set_rotation(float x, float y, float z) { rx = x; ry = y; rz = z; }
 
+// ---- JS-controllable parameters (exported to the HTML layer) ----
+static float rot_speed = 1.0f;
+static float cube_size  = 1.0f;
+
+float EMSCRIPTEN_KEEPALIVE get_rot_speed(void) { return rot_speed; }
+void  EMSCRIPTEN_KEEPALIVE set_rot_speed(float s) { rot_speed = s; }
+float EMSCRIPTEN_KEEPALIVE get_cube_size(void)  { return cube_size; }
+void  EMSCRIPTEN_KEEPALIVE set_cube_size(float s)  { cube_size = s; }
+
 // ---- GL resources ----
 static GLuint shader_prog;
 static GLuint vbo, ibo;
@@ -87,6 +96,14 @@ static void mat4_translate(mat4 m, float x, float y, float z) {
     mat4 t; memcpy(t, m, sizeof(t));
     for (int i = 0; i < 4; i++)
         m[3 * 4 + i] = t[0 * 4 + i] * x + t[1 * 4 + i] * y + t[2 * 4 + i] * z + t[3 * 4 + i];
+}
+
+static void mat4_scale(mat4 m, float s) {
+    for (int i = 0; i < 4; i++) {
+        m[0 * 4 + i] *= s;
+        m[1 * 4 + i] *= s;
+        m[2 * 4 + i] *= s;
+    }
 }
 
 // ---- shader helpers ----
@@ -206,6 +223,7 @@ void gfx_render(void) {
     mat4_rotate_x(model, rx);
     mat4_rotate_y(model, ry);
     mat4_rotate_z(model, rz);
+    mat4_scale(model, cube_size);
 
     mat4_identity(view);
     mat4_perspective(proj, 3.14159f * 0.25f, 800.0f / 600.0f, 0.1f, 100.0f);

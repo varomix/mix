@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>MIX Cube</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#1e1e24; display:flex; align-items:center; justify-content:center; height:100vh; font-family:sans-serif; }
+  .container { display:flex; flex-direction:column; align-items:center; gap:16px; }
+  canvas { display:block; border-radius:8px; }
+  .controls { background:#2a2a32; padding:12px 24px; border-radius:8px; display:flex; gap:32px; }
+  .control { display:flex; align-items:center; gap:8px; color:#ccc; font-size:14px; }
+  .control label { min-width:70px; }
+  .control input { width:140px; }
+  .control span { min-width:36px; text-align:right; font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+<div class="container">
+  <canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas>
+  <div class="controls">
+    <div class="control">
+      <label>Speed</label>
+      <input type="range" id="speedSlider" min="0" max="5" step="0.1" value="1">
+      <span id="speedVal">1.0</span>
+    </div>
+    <div class="control">
+      <label>Scale</label>
+      <input type="range" id="scaleSlider" min="0.1" max="3" step="0.1" value="1">
+      <span id="scaleVal">1.0</span>
+    </div>
+  </div>
+</div>
+<script>
+var Module = {
+  onRuntimeInitialized: function() {
+    var speedSlider = document.getElementById('speedSlider');
+    var scaleSlider = document.getElementById('scaleSlider');
+    var speedVal = document.getElementById('speedVal');
+    var scaleVal = document.getElementById('scaleVal');
+    speedSlider.addEventListener('input', function() {
+      var v = parseFloat(this.value);
+      speedVal.textContent = v.toFixed(1);
+      Module._set_rot_speed(v);
+    });
+    scaleSlider.addEventListener('input', function() {
+      var v = parseFloat(this.value);
+      scaleVal.textContent = v.toFixed(1);
+      Module._set_cube_size(v);
+    });
+  }
+};
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

@@ -1627,6 +1627,18 @@ int main(int argc, char **argv) {
         link_argv[ai++] = "-Wno-override-module";
         link_argv[ai++] = "-sNO_EXIT_RUNTIME=1";
         char shell_path[512] = "";
+        // Check for shell.html next to the source file first
+        const char *last_slash = input_file ? strrchr(input_file, '/') : NULL;
+        if (last_slash) {
+            int dir_len = (int)(last_slash - input_file);
+            snprintf(shell_path, sizeof(shell_path), "%.*s/shell.html", dir_len, input_file);
+            struct stat sh_st;
+            if (stat(shell_path, &sh_st) == 0) {
+                link_argv[ai++] = "--shell-file";
+                link_argv[ai++] = arena_strdup(&arena, shell_path);
+                goto shell_done;
+            }
+        }
         if (exe_dir[0]) {
             snprintf(shell_path, sizeof(shell_path), "%s/../lib/shell.html", exe_dir);
             struct stat shell_st;
@@ -1635,6 +1647,7 @@ int main(int argc, char **argv) {
                 link_argv[ai++] = arena_strdup(&arena, shell_path);
             }
         }
+        shell_done: ;
     } else if (is_wasm_target) {
         const char *wasi_clang = detect_wasi_clang();
         link_argv[ai++] = wasi_clang ? wasi_clang : "clang";
@@ -1674,6 +1687,15 @@ int main(int argc, char **argv) {
         link_argv[ai++] = runtime_path;
     if (is_wasm_browser) {
         link_argv[ai++] = "build/runtime-emsc.o";
+        // Also resolve via exe_dir so it works from subdirectories
+        if (exe_dir[0]) {
+            char emsc_o_path[512];
+            snprintf(emsc_o_path, sizeof(emsc_o_path), "%s/../build/runtime-emsc.o", exe_dir);
+            struct stat emsc_o_st;
+            if (stat(emsc_o_path, &emsc_o_st) == 0) {
+                link_argv[ai - 1] = arena_strdup(&arena, emsc_o_path);
+            }
+        }
     } else if (is_wasm_target) {
         link_argv[ai++] = "build/runtime-wasi.o";
     }

@@ -1626,6 +1626,15 @@ int main(int argc, char **argv) {
         link_argv[ai++] = emsc_ll_path;
         link_argv[ai++] = "-Wno-override-module";
         link_argv[ai++] = "-sNO_EXIT_RUNTIME=1";
+        char shell_path[512] = "";
+        if (exe_dir[0]) {
+            snprintf(shell_path, sizeof(shell_path), "%s/../lib/shell.html", exe_dir);
+            struct stat shell_st;
+            if (stat(shell_path, &shell_st) == 0) {
+                link_argv[ai++] = "--shell-file";
+                link_argv[ai++] = arena_strdup(&arena, shell_path);
+            }
+        }
     } else if (is_wasm_target) {
         const char *wasi_clang = detect_wasi_clang();
         link_argv[ai++] = wasi_clang ? wasi_clang : "clang";

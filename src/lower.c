@@ -1426,6 +1426,22 @@ static bool lower_builtin(LowerCtx *ctx, AstNode *call, LirOpnd *out) {
         *out = args[0];
         return true;
     }
+    // min/max with 1 arg — list max/min
+    if ((strcmp(name, "min") == 0 || strcmp(name, "max") == 0) && n == 1) {
+        MixType *at = call->call.args[0]->resolved_type;
+        if (at && at->kind == TYPE_LIST) {
+            bool is_min = (name[1] == 'i');
+            MixType *elem = at->list.elem_type;
+            if (elem && type_is_float(elem)) {
+                const char *fn = is_min ? "mix_list_min_double" : "mix_list_max_double";
+                BUILTIN(fn, LIR_TY_F64, LIR_TY_PTR);
+            } else {
+                const char *fn = is_min ? "mix_list_min_int64" : "mix_list_max_int64";
+                BUILTIN(fn, LIR_TY_I64, LIR_TY_PTR);
+            }
+            return true;
+        }
+    }
     // min/max — dispatch by operand type. Math helpers take doubles;
     // for ints, branch on a < b inline (cheaper than calling out).
     if ((strcmp(name, "min") == 0 || strcmp(name, "max") == 0) && n == 2) {
@@ -1952,6 +1968,13 @@ static LirOpnd lower_expr(LowerCtx *ctx, AstNode *expr) {
                 a = to_i64(ctx, expr->loc, a);
                 b = to_i64(ctx, expr->loc, b);
                 operand_type = LIR_TY_I64;
+            } else if (is_float_lir(a.type) && is_float_lir(b.type)) {
+                if (a.type == LIR_TY_F32 && b.type == LIR_TY_F64) {
+                    a = float_cast(ctx, expr->loc, a, LIR_TY_F64);
+                } else if (a.type == LIR_TY_F64 && b.type == LIR_TY_F32) {
+                    b = float_cast(ctx, expr->loc, b, LIR_TY_F64);
+                }
+                operand_type = LIR_TY_F64;
             }
         }
         if (op == LIR_BIN_AND || op == LIR_BIN_OR) {

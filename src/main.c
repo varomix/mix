@@ -725,7 +725,8 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
                             const char *exe_dir,
                             char **module_asm_files, int *module_count,
                             int max_modules,
-                            char **link_flags, int *link_flag_count) {
+                            char **link_flags, int *link_flag_count,
+                            bool is_wasm_browser) {
     // Circular import check
     if (is_module_compiling(source_path)) {
         fprintf(stderr, "mix: circular import detected: '%s'\n", source_path);
@@ -786,7 +787,7 @@ compiling_module_count--;
             }
             errors_set_source(source, source_path);
             free(bind_src);
-            free(bl.tokens);
+            // bl.tokens is arena-allocated, no free needed
 
             // Propagate `link "lib"` to the root linker line so an importing
             // file doesn't have to re-declare it. Dedupe — multiple modules
@@ -819,7 +820,8 @@ compiling_module_count--;
                                            verbose, debug, use_c_backend, use_llvm_backend,
                                            exe_dir, module_asm_files,
                                            module_count, max_modules,
-                                           link_flags, link_flag_count);
+                                           link_flags, link_flag_count,
+                                           is_wasm_browser);
             if (!sub_asm) {
                 fprintf(stderr, "mix: failed to compile module '%s'\n",
                         decl->use_decl.module_path);
@@ -899,15 +901,18 @@ compiling_module_count--;
         llvm_emit_module(&le, lmod);
         fclose(ll_out);
 
-        const char *clang_argv[10];
+        const char *clang_argv[12];
         int cai = 0;
-        clang_argv[cai++] = "clang";
-        clang_argv[cai++] = "-c";
-        // .ll deliberately has no `target triple = ...`. Clang warns
-        // "overriding the module target triple..." either way (with or
-        // without one); suppress it because we explicitly want the
-        // host triple.
-        clang_argv[cai++] = "-Wno-override-module";
+        if (is_wasm_browser) {
+            const char *emcc = detect_emcc();
+            clang_argv[cai++] = emcc ? emcc : "emcc";
+            clang_argv[cai++] = "-c";
+            clang_argv[cai++] = "-Wno-override-module";
+        } else {
+            clang_argv[cai++] = "clang";
+            clang_argv[cai++] = "-c";
+            clang_argv[cai++] = "-Wno-override-module";
+        }
         if (debug) clang_argv[cai++] = "-g";
         clang_argv[cai++] = "-o";
         clang_argv[cai++] = obj_path;
@@ -918,7 +923,8 @@ compiling_module_count--;
         int ret = run_process(clang_argv, verbose ? NULL : &clang_stderr);
         if (ret != 0) {
             if (verbose) {
-                fprintf(stderr, "mix: clang -c failed for module '%s'\n", source_path);
+                const char *tool = is_wasm_browser ? "emcc" : "clang";
+                fprintf(stderr, "mix: %s -c failed for module '%s'\n", tool, source_path);
             } else {
                 fprintf(stderr, "mix: internal compiler error while compiling '%s'. Run with -v for details.\n", source_path);
             }
@@ -1277,7 +1283,7 @@ int main(int argc, char **argv) {
             if (verbose) fprintf(stderr, "mix: use c \"%s\"%s%s%s\n",
                                  header, lib ? " link \"" : "", lib ? lib : "", lib ? "\"" : "");
 
-            char *bind_src = cbind_generate_string(header, lib, verbose, NULL);
+            char *bind_src = cbind_generate_string(header, lib, verbose, base_dir);
             if (!bind_src) {
                 fprintf(stderr, "mix: failed to generate bindings for '%s'\n", header);
                 return 1;
@@ -1288,20 +1294,20 @@ int main(int argc, char **argv) {
             Lexer bind_lex = lexer_create(bind_src, header, &arena);
             lexer_tokenize(&bind_lex);
             if (mix_error_count() > 0) {
-                free(bind_src); free(bind_lex.tokens);
+                free(bind_src);
                 fprintf(stderr, "mix: errors in generated bindings for '%s'\n", header);
                 return 1;
             }
             Parser bind_parser = parser_create(bind_lex.tokens, bind_lex.token_count, &arena, header);
             AstNode *bind_prog = parser_parse(&bind_parser);
             if (mix_error_count() > 0) {
-                free(bind_src); free(bind_lex.tokens);
+                free(bind_src);
                 fprintf(stderr, "mix: errors in generated bindings for '%s'\n", header);
                 return 1;
             }
             sema_analyze(&sema, bind_prog);
             if (mix_error_count() > 0) {
-                free(bind_src); free(bind_lex.tokens);
+                free(bind_src);
                 fprintf(stderr, "mix: errors in generated bindings for '%s'\n", header);
                 return 1;
             }
@@ -1321,7 +1327,6 @@ int main(int argc, char **argv) {
             // Restore error source
             errors_set_source(source, input_file);
             free(bind_src);
-            free(bind_lex.tokens);
 
             // Collect -l flag for linker (dedupe so the same lib pulled in
             // from multiple `use c` declarations only appears once).
@@ -1428,7 +1433,8 @@ int main(int argc, char **argv) {
                                             verbose, debug_mode, use_c_backend, use_llvm_backend,
                                             exe_dir, module_asm_files,
                                             &module_count, MAX_MODULES,
-                                            link_flags, &link_flag_count);
+                                            link_flags, &link_flag_count,
+                                            is_wasm_browser);
             if (!asm_file) {
                 fprintf(stderr, "mix: failed to compile module '%s'\n", decl->use_decl.module_path);
                 return 1;
@@ -1619,6 +1625,7 @@ int main(int argc, char **argv) {
         link_argv[ai++] = emcc ? emcc : "emcc";
         link_argv[ai++] = emsc_ll_path;
         link_argv[ai++] = "-Wno-override-module";
+        link_argv[ai++] = "-sNO_EXIT_RUNTIME=1";
     } else if (is_wasm_target) {
         const char *wasi_clang = detect_wasi_clang();
         link_argv[ai++] = wasi_clang ? wasi_clang : "clang";

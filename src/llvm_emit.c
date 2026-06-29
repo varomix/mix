@@ -211,10 +211,15 @@ static void render_param(FILE *out, int idx) {
 // any f64 hex that isn't exactly representable as f32 when it's
 // being assigned to a `float` slot).
 static void render_float(FILE *out, double v, bool as_f32) {
-    if (as_f32) v = (double)(float)v;
-    union { double d; unsigned long long u; } pun;
-    pun.d = v;
-    fprintf(out, "0x%016llX", pun.u);
+    if (as_f32) {
+        union { float f; unsigned int u; } pun;
+        pun.f = (float)v;
+        fprintf(out, "0x%08X", pun.u);
+    } else {
+        union { double d; unsigned long long u; } pun;
+        pun.d = v;
+        fprintf(out, "0x%016llX", pun.u);
+    }
 }
 
 static void render_operand(FILE *out, LirOpnd op) {

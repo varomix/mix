@@ -995,6 +995,10 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
             // Resolve all embedded expressions
             for (int i2 = 0; i2 < expr->string_interp.expr_count; i2++) {
                 resolve_expr(sema, expr->string_interp.exprs[i2]);
+                if (expr->string_interp.exprs[i2]->resolved_type &&
+                    expr->string_interp.exprs[i2]->resolved_type->kind == TYPE_FUNC) {
+                    mix_error(expr->loc, "cannot convert function to string in interpolated expression");
+                }
             }
             expr->resolved_type = make_type(sema->arena, TYPE_STR);
             return expr->resolved_type;
@@ -1382,7 +1386,8 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     const char *n = expr->call.name;
                     bool is_overloaded = (strcmp(n, "print") == 0 || strcmp(n, "to_string") == 0 ||
                         strcmp(n, "to_int") == 0 || strcmp(n, "to_float") == 0 ||
-                        strcmp(n, "to_set") == 0);
+                        strcmp(n, "to_set") == 0 ||
+                        strcmp(n, "max") == 0 || strcmp(n, "min") == 0);
                     if (!is_overloaded) {
                         mix_error(expr->loc, "'%s' expects %d argument(s), got %d",
                                   expr->call.name, ftype->func.param_count, expr->call.arg_count);
@@ -1431,6 +1436,25 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                 MixType *arg_type = expr->call.args[0]->resolved_type;
                 if (arg_type && arg_type->kind == TYPE_LIST && arg_type->list.elem_type) {
                     expr->resolved_type = make_set_type(sema->arena, arg_type->list.elem_type);
+                }
+            }
+            // min/max: infer return type from args (list or scalar pair)
+            if ((strcmp(expr->call.name, "min") == 0 || strcmp(expr->call.name, "max") == 0)) {
+                if (expr->call.arg_count == 1) {
+                    MixType *arg_type = expr->call.args[0]->resolved_type;
+                    if (arg_type && arg_type->kind == TYPE_LIST && arg_type->list.elem_type) {
+                        expr->resolved_type = arg_type->list.elem_type;
+                    } else {
+                        expr->resolved_type = make_type(sema->arena, TYPE_INT);
+                    }
+                } else if (expr->call.arg_count == 2) {
+                    MixType *t0 = expr->call.args[0]->resolved_type;
+                    MixType *t1 = expr->call.args[1]->resolved_type;
+                    if ((t0 && type_is_float(t0)) || (t1 && type_is_float(t1))) {
+                        expr->resolved_type = make_type(sema->arena, TYPE_FLOAT);
+                    } else {
+                        expr->resolved_type = make_type(sema->arena, TYPE_INT);
+                    }
                 }
             }
             return expr->resolved_type;
@@ -3360,16 +3384,26 @@ void sema_analyze(Sema *sema, AstNode *program) {
         }
     }
     {
-        // pow, min, max: (float, float) -> float
-        const char *math_fns2[] = {"pow", "min", "max"};
-        for (int mi = 0; mi < 3; mi++) {
+        // pow: (float, float) -> float
+        MixType *ft = make_type(sema->arena, TYPE_FUNC);
+        ft->func.return_type = make_type(sema->arena, TYPE_FLOAT);
+        ft->func.param_count = 2;
+        ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*) * 2);
+        ft->func.param_types[0] = make_type(sema->arena, TYPE_FLOAT);
+        ft->func.param_types[1] = make_type(sema->arena, TYPE_FLOAT);
+        symtab_insert(&sema->symtab, "pow", ft, false);
+    }
+    {
+        // min, max: (infer, infer) -> infer (supports both 2-arg and list-arg forms)
+        const char *minmax[] = {"min", "max"};
+        for (int mi = 0; mi < 2; mi++) {
             MixType *ft = make_type(sema->arena, TYPE_FUNC);
-            ft->func.return_type = make_type(sema->arena, TYPE_FLOAT);
+            ft->func.return_type = make_type(sema->arena, TYPE_INFER);
             ft->func.param_count = 2;
             ft->func.param_types = arena_alloc(sema->arena, sizeof(MixType*) * 2);
-            ft->func.param_types[0] = make_type(sema->arena, TYPE_FLOAT);
-            ft->func.param_types[1] = make_type(sema->arena, TYPE_FLOAT);
-            symtab_insert(&sema->symtab, math_fns2[mi], ft, false);
+            ft->func.param_types[0] = make_type(sema->arena, TYPE_INFER);
+            ft->func.param_types[1] = make_type(sema->arena, TYPE_INFER);
+            symtab_insert(&sema->symtab, minmax[mi], ft, false);
         }
     }
 

@@ -391,6 +391,58 @@ void mix_list_insert_bytes(void *list_ptr, int64_t idx, const void *src) {
     list->len++;
 }
 
+int64_t mix_list_max_int64(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    mix_list_require_alive(list);
+    if (list->len == 0) mix_panic("max of empty list");
+    int64_t max = INT64_MIN;
+    for (int64_t i = 0; i < list->len; i++) {
+        int64_t val;
+        memcpy(&val, mix_list_elem_ptr_const(list, i), sizeof(int64_t));
+        if (val > max) max = val;
+    }
+    return max;
+}
+
+double mix_list_max_double(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    mix_list_require_alive(list);
+    if (list->len == 0) mix_panic("max of empty list");
+    double max = -1.0 / 0.0;
+    for (int64_t i = 0; i < list->len; i++) {
+        double val;
+        memcpy(&val, mix_list_elem_ptr_const(list, i), sizeof(double));
+        if (val > max) max = val;
+    }
+    return max;
+}
+
+int64_t mix_list_min_int64(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    mix_list_require_alive(list);
+    if (list->len == 0) mix_panic("min of empty list");
+    int64_t min = INT64_MAX;
+    for (int64_t i = 0; i < list->len; i++) {
+        int64_t val;
+        memcpy(&val, mix_list_elem_ptr_const(list, i), sizeof(int64_t));
+        if (val < min) min = val;
+    }
+    return min;
+}
+
+double mix_list_min_double(const void *list_ptr) {
+    const MixList *list = list_ptr;
+    mix_list_require_alive(list);
+    if (list->len == 0) mix_panic("min of empty list");
+    double min = 1.0 / 0.0;
+    for (int64_t i = 0; i < list->len; i++) {
+        double val;
+        memcpy(&val, mix_list_elem_ptr_const(list, i), sizeof(double));
+        if (val < min) min = val;
+    }
+    return min;
+}
+
 void *mix_list_slice(const void *list_ptr, int64_t start, int64_t end, int32_t inclusive) {
     const MixList *list = list_ptr;
     mix_list_require_alive(list);

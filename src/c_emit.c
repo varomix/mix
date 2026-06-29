@@ -254,6 +254,10 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void mix_list_reverse(void *);\n"
         "extern int32_t mix_list_contains(const void *, int64_t);\n"
         "extern int64_t mix_list_index_of(const void *, int64_t);\n"
+        "extern int64_t mix_list_max_int64(const void *);\n"
+        "extern double mix_list_max_double(const void *);\n"
+        "extern int64_t mix_list_min_int64(const void *);\n"
+        "extern double mix_list_min_double(const void *);\n"
         "extern void *mix_map_new(void);\n"
         "extern void *mix_map_new_in(void *);\n"
         "extern int64_t mix_map_len(const void *);\n"
@@ -1518,6 +1522,25 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                         ind(emit); fprintf(emit->out, "double t%d = %s(t%d);\n", t, rt1[mi], arg);
                         return t;
                     }
+                }
+            }
+            /* List max/min (1 arg) */
+            if ((strcmp(expr->call.name, "max") == 0 || strcmp(expr->call.name, "min") == 0) && expr->call.arg_count == 1) {
+                MixType *at = expr->call.args[0]->resolved_type;
+                if (at && at->kind == TYPE_LIST) {
+                    MixType *elem = at->list.elem_type;
+                    const char *fn = (expr->call.name[1] == 'i') ? "mix_list_min" : "mix_list_max";
+                    fn = (elem && type_is_float(elem)) ? fn : fn;
+                    if (elem && type_is_float(elem)) {
+                        ind(emit); fprintf(emit->out, "double t%d = %s(t%d);\n", t,
+                            expr->call.name[1] == 'i' ? "mix_list_min_double" : "mix_list_max_double",
+                            arg_temps[0]);
+                    } else {
+                        ind(emit); fprintf(emit->out, "int64_t t%d = %s(t%d);\n", t,
+                            expr->call.name[1] == 'i' ? "mix_list_min_int64" : "mix_list_max_int64",
+                            arg_temps[0]);
+                    }
+                    return t;
                 }
             }
             /* Math builtins (2 args) */

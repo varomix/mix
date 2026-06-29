@@ -4586,17 +4586,25 @@ static void lower_function_inner(LirModule *mod, SymTab *symtab,
     if (need_implicit_return && body && body->kind == NODE_BLOCK) {
         for (int i = body->block.stmt_count - 1; i >= 0; i--) {
             AstNode *s = body->block.stmts[i];
-            if (s && (s->kind == NODE_EXPR_STMT || s->kind == NODE_CALL_EXPR ||
-                      s->kind == NODE_BINARY_EXPR || s->kind == NODE_INT_LIT ||
-                      s->kind == NODE_FLOAT_LIT || s->kind == NODE_BOOL_LIT ||
-                      s->kind == NODE_IDENT || s->kind == NODE_FIELD_EXPR ||
-                      s->kind == NODE_SHAPE_LIT || s->kind == NODE_MATCH_STMT ||
-                      s->kind == NODE_INDEX_EXPR || s->kind == NODE_LIST_LIT ||
-                      s->kind == NODE_MAP_LIT || s->kind == NODE_SET_LIT ||
-                      s->kind == NODE_NONE_LIT || s->kind == NODE_ELSE_EXPR ||
-                      s->kind == NODE_STRING_LIT || s->kind == NODE_STRING_INTERP ||
-                      s->kind == NODE_UNARY_EXPR || s->kind == NODE_CAST_EXPR ||
-                      s->kind == NODE_LIST_COMP || s->kind == NODE_METHOD_CALL)) {
+            if (!s) continue;
+            // If the last statement is a terminator (done, break, continue, fail),
+            // the function already has an explicit flow — no implicit return needed.
+            if (s->kind == NODE_DONE_STMT || s->kind == NODE_BREAK_STMT ||
+                s->kind == NODE_CONTINUE_STMT || s->kind == NODE_FAIL_STMT) {
+                need_implicit_return = false;
+                break;
+            }
+            if (s->kind == NODE_EXPR_STMT || s->kind == NODE_CALL_EXPR ||
+                s->kind == NODE_BINARY_EXPR || s->kind == NODE_INT_LIT ||
+                s->kind == NODE_FLOAT_LIT || s->kind == NODE_BOOL_LIT ||
+                s->kind == NODE_IDENT || s->kind == NODE_FIELD_EXPR ||
+                s->kind == NODE_SHAPE_LIT || s->kind == NODE_MATCH_STMT ||
+                s->kind == NODE_INDEX_EXPR || s->kind == NODE_LIST_LIT ||
+                s->kind == NODE_MAP_LIT || s->kind == NODE_SET_LIT ||
+                s->kind == NODE_NONE_LIT || s->kind == NODE_ELSE_EXPR ||
+                s->kind == NODE_STRING_LIT || s->kind == NODE_STRING_INTERP ||
+                s->kind == NODE_UNARY_EXPR || s->kind == NODE_CAST_EXPR ||
+                s->kind == NODE_LIST_COMP || s->kind == NODE_METHOD_CALL) {
                 last_idx = i;
                 break;
             }

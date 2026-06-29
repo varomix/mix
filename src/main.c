@@ -93,6 +93,27 @@ static char *detect_macos_sdk_libdir(void) {
 }
 #endif
 
+// Detect the WASI-capable clang for --target wasm32.
+// Checks $WASI_CLANG env var first, then brew-installed Emscripten LLVM.
+// Returns NULL if no suitable clang is found.
+static const char *detect_wasi_clang(void) {
+    const char *env = getenv("WASI_CLANG");
+    if (env) return env;
+    struct stat st;
+#if defined(__APPLE__)
+    const char *candidates[] = {
+        "/opt/homebrew/Cellar/emscripten/6.0.1/libexec/llvm/bin/clang",
+        "/opt/homebrew/bin/wasm32-wasi-clang",
+        NULL
+    };
+    for (int i = 0; candidates[i]; i++) {
+        if (stat(candidates[i], &st) == 0 && S_ISREG(st.st_mode)) return candidates[i];
+    }
+#endif
+    (void)st;
+    return NULL;
+}
+
 // Run a subprocess without shell interpretation (prevents command injection).
 // argv must be NULL-terminated. Returns the process exit code, or -1 on failure.
 // If captured_stderr is non-NULL, child stderr is captured into a malloc'd buffer
@@ -275,6 +296,7 @@ static void usage(void) {
     fprintf(stderr, "  -O<level>           Set optimization level (e.g., -O2, -Os)\n");
     fprintf(stderr, "  --bind <path>       Generate .mix bindings from C header(s)\n");
     fprintf(stderr, "  --backend <name>    Backend: llvm (default), c (fallback)\n");
+    fprintf(stderr, "  --target <arch>     Target architecture: native (default), wasm32\n");
     fprintf(stderr, "  --lib <name>        Library name for --bind (e.g., SDL3)\n");
     fprintf(stderr, "  --version           Show version\n");
     fprintf(stderr, "  -v                  Verbose\n\n");
@@ -886,6 +908,7 @@ int main(int argc, char **argv) {
     bool verbose = false;
     bool debug_mode = false;
     const char *opt_level = NULL;
+    const char *target_arch = "native";
     const char *backend = "llvm";  /* "llvm" (default) or "c" */
     RunMode mode = MODE_NONE;
     bool output_set = false;
@@ -944,6 +967,8 @@ int main(int argc, char **argv) {
             bind_path = argv[++i];
         } else if (strcmp(argv[i], "--backend") == 0 && i + 1 < argc) {
             backend = argv[++i];
+        } else if (strcmp(argv[i], "--target") == 0 && i + 1 < argc) {
+            target_arch = argv[++i];
         } else if (strcmp(argv[i], "--lib") == 0 && i + 1 < argc) {
             bind_lib = argv[++i];
         } else if (strcmp(argv[i], "--timings") == 0) {
@@ -1003,6 +1028,20 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // Validate target arch
+    bool is_wasm_target = (strcmp(target_arch, "wasm32") == 0);
+    if (is_wasm_target) {
+        if (!use_llvm_backend) {
+            fprintf(stderr, "mix: --target wasm32 requires the LLVM backend (--backend llvm, which is the default)\n");
+            return 1;
+        }
+        if (!detect_wasi_clang()) {
+            fprintf(stderr, "mix: --target wasm32 requires a WASI-capable clang. "
+                    "Install wasi-libc + wasi-runtimes via brew, or set $WASI_CLANG\n");
+            return 1;
+        }
+    }
+
     // Auto-discover if no input file specified
     if (!input_file) {
         if (mode == MODE_NONE) {
@@ -1056,6 +1095,10 @@ int main(int argc, char **argv) {
     static char derived_name[256];
     if (!output_set) {
         derive_output_name(input_file, derived_name, sizeof(derived_name));
+        // Append .wasm extension for wasm targets
+        if (is_wasm_target) {
+            strncat(derived_name, ".wasm", sizeof(derived_name) - strlen(derived_name) - 1);
+        }
         output_file = derived_name;
     }
 
@@ -1388,6 +1431,7 @@ int main(int argc, char **argv) {
             TIMER_START(emit);
             LirModule *lmod = lower_program(program, &arena, &sema.symtab);
             LlvmEmitter le = llvm_emitter_create(ll_out);
+            if (is_wasm_target) le.wasm_main = true;
             if (debug_mode) llvm_emitter_enable_debug(&le, input_file);
             if (lmod) llvm_emit_module(&le, lmod);
             TIMER_END(emit);
@@ -1401,6 +1445,7 @@ int main(int argc, char **argv) {
             }
             LirModule *lmod = lower_program(program, &arena, &sema.symtab);
             LlvmEmitter le = llvm_emitter_create(ll_out);
+            if (is_wasm_target) le.wasm_main = true;
             if (debug_mode) llvm_emitter_enable_debug(&le, input_file);
             if (lmod) llvm_emit_module(&le, lmod);
             TIMER_END(emit);
@@ -1495,7 +1540,19 @@ int main(int argc, char **argv) {
     const char *link_argv[MAX_LINK_ARGV];
     int ai = 0;
 
-    if (use_llvm_backend) {
+    if (is_wasm_target) {
+        const char *wasi_clang = detect_wasi_clang();
+        link_argv[ai++] = wasi_clang ? wasi_clang : "clang";
+        link_argv[ai++] = "--target=wasm32-wasip1";
+        link_argv[ai++] = "--sysroot=/opt/homebrew/share/wasi-sysroot";
+        link_argv[ai++] = "-resource-dir=/opt/homebrew/share/wasi-runtimes";
+        link_argv[ai++] = "-x";
+        link_argv[ai++] = "ir";
+        link_argv[ai++] = "-";
+        link_argv[ai++] = "-x";
+        link_argv[ai++] = "none";
+        link_argv[ai++] = "-Wno-override-module";
+    } else if (use_llvm_backend) {
         // Combined compile+link: pipe .ll to clang's stdin, then link with runtime + modules
         link_argv[ai++] = "clang";
         link_argv[ai++] = "-x";
@@ -1518,13 +1575,18 @@ int main(int argc, char **argv) {
     // Add source files (e.g. glad.c)
     for (int i = 0; i < source_file_count && ai < MAX_LINK_ARGV - 8; i++)
         link_argv[ai++] = source_files[i];
-    if (runtime_path)
+    if (runtime_path && !is_wasm_target)
         link_argv[ai++] = runtime_path;
+    if (is_wasm_target) {
+        // Use WASI-compiled runtime
+        link_argv[ai++] = "build/runtime-wasi.o";
+    }
     link_argv[ai++] = "-o";
     link_argv[ai++] = output_file;
-    link_argv[ai++] = "-lm";
+    if (!is_wasm_target)
+        link_argv[ai++] = "-lm";
 #ifdef __APPLE__
-    {
+    if (!is_wasm_target) {
         char *sdk_libdir = detect_macos_sdk_libdir();
         if (sdk_libdir && ai < MAX_LINK_ARGV - 2) {
             char *lflag = arena_alloc(&arena, strlen(sdk_libdir) + 3);
@@ -1533,17 +1595,22 @@ int main(int argc, char **argv) {
         }
     }
 #endif
-    for (int i = 0; i < link_flag_count && ai < MAX_LINK_ARGV - 2; i++)
-        link_argv[ai++] = link_flags[i];
+    if (!is_wasm_target) {
+        for (int i = 0; i < link_flag_count && ai < MAX_LINK_ARGV - 2; i++)
+            link_argv[ai++] = link_flags[i];
+    }
     // Add vendor -I directories
-    for (int i = 0; i < vendor_idir_count && ai < MAX_LINK_ARGV - 2; i++) {
-        char *iflag = arena_alloc(&arena, strlen(vendor_idirs[i]) + 3);
-        sprintf(iflag, "-I%s", vendor_idirs[i]);
-        link_argv[ai++] = iflag;
+    if (!is_wasm_target) {
+        for (int i = 0; i < vendor_idir_count && ai < MAX_LINK_ARGV - 2; i++) {
+            char *iflag = arena_alloc(&arena, strlen(vendor_idirs[i]) + 3);
+            sprintf(iflag, "-I%s", vendor_idirs[i]);
+            link_argv[ai++] = iflag;
+        }
     }
 
     // CPPFLAGS -I flags: pass to linker so source files can find includes
-    const char *env_cppflags = getenv("CPPFLAGS");
+    const char *env_cppflags = NULL;
+    if (!is_wasm_target) env_cppflags = getenv("CPPFLAGS");
     if (env_cppflags && env_cppflags[0]) {
         char *cppbuf = strdup(env_cppflags);
         char *tok = strtok(cppbuf, " \t");
@@ -1566,7 +1633,7 @@ int main(int argc, char **argv) {
     // LDFLAGS: split by whitespace since execvp doesn't use a shell.
     // Tokenize a mutable copy so each flag becomes a separate argv entry.
     char *ldflags_buf = NULL;
-    const char *env_ldflags = getenv("LDFLAGS");
+    const char *env_ldflags = is_wasm_target ? NULL : getenv("LDFLAGS");
     if (env_ldflags && env_ldflags[0]) {
         ldflags_buf = strdup(env_ldflags);
         char *tok = strtok(ldflags_buf, " \t");
@@ -1631,6 +1698,13 @@ int main(int argc, char **argv) {
     // In run mode, execute the compiled binary
     if (mode == MODE_RUN) {
         TIMER_START(run);
+        if (is_wasm_target) {
+            // Run .wasm via wasmtime
+            const char *run_argv[] = {"wasmtime", output_file, NULL};
+            int rc = run_process(run_argv, NULL);
+            TIMER_END(run);
+            return rc;
+        }
         char run_path[512];
         if (output_file[0] == '/' || (output_file[0] == '.' && output_file[1] == '/')) {
             snprintf(run_path, sizeof(run_path), "%s", output_file);

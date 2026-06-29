@@ -84,6 +84,7 @@ typedef struct {
     int          var_capacity;
 
     bool         needs_dbg_declare_decl;   // emit `declare void @llvm.dbg.declare(...)` once
+    bool         wasm_main;                // emit __main_argc_argv instead of main (WASI target)
 } LlvmEmitter;
 
 LlvmEmitter llvm_emitter_create(FILE *out);

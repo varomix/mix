@@ -1999,6 +1999,7 @@ void *mix_args(void) {
     return list;
 }
 
+#ifndef __wasi__
 int64_t mix_shell(const char *cmd) {
     return (int64_t)system(cmd);
 }
@@ -2029,6 +2030,10 @@ char *mix_shell_output(const char *cmd) {
     pclose(fp);
     return buf;
 }
+#else
+int64_t mix_shell(const char *cmd) { (void)cmd; return -1; }
+char *mix_shell_output(const char *cmd) { (void)cmd; char *empty = mix_alloc_zero_current(1); empty[0] = '\0'; return empty; }
+#endif
 
 int64_t mix_file_exists(const char *path) {
     return access(path, F_OK) == 0 ? 1 : 0;

@@ -570,9 +570,13 @@ static void emit_instr_raw(FILE *out, const LirInstr *ins) {
 
 // ---- Function emission ----------------------------------------------------
 
-static void emit_function_signature(FILE *out, const LirFunc *fn) {
+static void emit_function_signature(FILE *out, LlvmEmitter *emit, const LirFunc *fn) {
     if (fn->is_main) {
-        fputs("define i32 @main(i32 %argc, ptr %argv)", out);
+        if (emit && emit->wasm_main) {
+            fputs("define hidden i32 @__main_argc_argv(i32 noundef %argc, ptr noundef %argv)", out);
+        } else {
+            fputs("define i32 @main(i32 %argc, ptr %argv)", out);
+        }
         return;
     }
     fprintf(out, "define %s @%s(", llvm_type(fn->return_type), fn->name);
@@ -585,7 +589,7 @@ static void emit_function_signature(FILE *out, const LirFunc *fn) {
 
 static void emit_function(FILE *out, LlvmEmitter *emit, const LirFunc *fn) {
     fputs("\n", out);
-    emit_function_signature(out, fn);
+    emit_function_signature(out, emit, fn);
 
     // Phase 6: register a !DISubprogram for this function. Use the
     // first instruction with a non-zero loc to pick the file and line.

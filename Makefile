@@ -25,13 +25,27 @@ BIN = $(BUILD_DIR)/mix
 LSP_BIN = $(BUILD_DIR)/mix-lsp
 RUNTIME_O = $(BUILD_DIR)/runtime.o
 
-all: $(BIN) $(LSP_BIN) $(RUNTIME_O)
+# WASI target (wasm32) — requires wasi-libc + wasi-runtimes from brew.
+# WASI_CLANG can be overridden via environment variable.
+BREW_PREFIX := $(shell brew --prefix 2>/dev/null || echo /opt/homebrew)
+WASI_CLANG ?= $(BREW_PREFIX)/Cellar/emscripten/6.0.1/libexec/llvm/bin/clang
+WASI_SYSROOT := $(BREW_PREFIX)/share/wasi-sysroot
+WASI_RESOURCE := $(BREW_PREFIX)/share/wasi-runtimes
+WASI_FLAGS = --target=wasm32-wasip1 --sysroot=$(WASI_SYSROOT) -resource-dir=$(WASI_RESOURCE)
+RUNTIME_WASI_O = $(BUILD_DIR)/runtime-wasi.o
+
+all: $(BIN) $(LSP_BIN) $(RUNTIME_O) $(RUNTIME_WASI_O)
 
 # Pre-compile the runtime once so user-program builds skip the ~300ms
 # of recompiling lib/runtime.c every time. main.c looks for build/runtime.o
 # first and falls back to lib/runtime.c when missing or stale.
 $(RUNTIME_O): lib/runtime.c | $(BUILD_DIR)
 	$(CC) -O2 -c $< -o $@
+
+# WASI-compiled runtime for --target wasm32. Compiled with the Emscripten
+# LLVM clang which supports the wasm32-wasip1 target triple.
+$(RUNTIME_WASI_O): lib/runtime.c | $(BUILD_DIR)
+	$(WASI_CLANG) $(WASI_FLAGS) -O2 -c $< -o $@
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -76,13 +90,14 @@ test-fmt: $(BIN)
 test-all: test test-errors test-error-messages test-fmt
 
 PREFIX ?= /usr/local
-install: $(BIN) $(LSP_BIN) $(RUNTIME_O)
+install: $(BIN) $(LSP_BIN) $(RUNTIME_O) $(RUNTIME_WASI_O)
 	mkdir -p $(PREFIX)/bin
 	mkdir -p $(PREFIX)/lib/mix/std
 	cp $(BIN) $(PREFIX)/bin/
 	cp $(LSP_BIN) $(PREFIX)/bin/
 	cp lib/runtime.c $(PREFIX)/lib/mix/
 	cp $(RUNTIME_O) $(PREFIX)/lib/mix/
+	cp $(RUNTIME_WASI_O) $(PREFIX)/lib/mix/
 	@if [ -d lib/std ] && [ "$$(ls -A lib/std/*.mix 2>/dev/null)" ]; then \
 		cp lib/std/*.mix $(PREFIX)/lib/mix/std/; \
 	fi

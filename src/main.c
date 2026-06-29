@@ -49,9 +49,9 @@ static char *read_file(const char *path) {
         fprintf(stderr, "mix: cannot open '%s': %s\n", path, strerror(errno));
         return NULL;
     }
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    struct stat st;
+    if (fstat(fileno(f), &st) != 0) { fclose(f); return NULL; }
+    long size = st.st_size;
     char *buf = malloc(size + 1);
     if (!buf) { fprintf(stderr, "mix: out of memory\n"); exit(1); }
     size_t rd = fread(buf, 1, size, f);
@@ -145,6 +145,92 @@ static int run_process(const char *const argv[], char **captured_stderr) {
         buf[len] = '\0';
         close(pipe_fds[0]);
         *captured_stderr = buf;
+        }
+    }
+
+    int status;
+    if (waitpid(pid, &status, 0) < 0) {
+        fprintf(stderr, "mix: waitpid failed: %s\n", strerror(errno));
+        return -1;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    return -1;
+}
+
+// Like run_process but writes data to child's stdin.
+// stdin_data may be NULL (behaves identically to run_process).
+static int run_process_stdin(const char *const argv[], const char *stdin_data, size_t stdin_len, char **captured_stderr) {
+    int stdin_pipe[2] = {-1, -1};
+    int stderr_pipe[2] = {-1, -1};
+    if (stdin_data) {
+        if (pipe(stdin_pipe) < 0) {
+            fprintf(stderr, "mix: pipe failed: %s\n", strerror(errno));
+            return -1;
+        }
+    }
+    if (captured_stderr) {
+        *captured_stderr = NULL;
+        if (pipe(stderr_pipe) < 0) {
+            fprintf(stderr, "mix: pipe failed: %s\n", strerror(errno));
+            if (stdin_data) { close(stdin_pipe[0]); close(stdin_pipe[1]); }
+            return -1;
+        }
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "mix: fork failed: %s\n", strerror(errno));
+        if (stdin_data) { close(stdin_pipe[0]); close(stdin_pipe[1]); }
+        if (captured_stderr) { close(stderr_pipe[0]); close(stderr_pipe[1]); }
+        return -1;
+    }
+    if (pid == 0) {
+        if (stdin_data) {
+            close(stdin_pipe[1]);
+            dup2(stdin_pipe[0], STDIN_FILENO);
+            close(stdin_pipe[0]);
+        }
+        if (captured_stderr) {
+            close(stderr_pipe[0]);
+            dup2(stderr_pipe[1], STDERR_FILENO);
+            close(stderr_pipe[1]);
+        }
+        execvp(argv[0], (char *const *)argv);
+        fprintf(stderr, "mix: exec '%s' failed: %s\n", argv[0], strerror(errno));
+        _exit(127);
+    }
+
+    // Parent
+    if (stdin_data) {
+        close(stdin_pipe[0]);
+        size_t written = 0;
+        while (written < stdin_len) {
+            ssize_t n = write(stdin_pipe[1], stdin_data + written, stdin_len - written);
+            if (n < 0) break;
+            written += n;
+        }
+        close(stdin_pipe[1]);
+    }
+
+    if (captured_stderr) {
+        close(stderr_pipe[1]);
+        size_t cap = 4096, len = 0;
+        char *buf = malloc(cap);
+        if (!buf) { close(stderr_pipe[0]); *captured_stderr = NULL; }
+        else {
+            ssize_t n;
+            while ((n = read(stderr_pipe[0], buf + len, cap - len - 1)) > 0) {
+                len += n;
+                if (len + 1 >= cap) {
+                    cap *= 2;
+                    char *newbuf = realloc(buf, cap);
+                    if (!newbuf) break;
+                    buf = newbuf;
+                }
+            }
+            buf[len] = '\0';
+            close(stderr_pipe[0]);
+            *captured_stderr = buf;
         }
     }
 
@@ -590,7 +676,8 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
     Lexer lexer = lexer_create(source, source_path, arena);
     lexer_tokenize(&lexer);
     if (mix_error_count() > 0) {
-        free(source); free(lexer.tokens); compiling_module_count--;
+        free(source); 
+compiling_module_count--;
         return NULL;
     }
 
@@ -598,7 +685,8 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
     Parser parser = parser_create(lexer.tokens, lexer.token_count, arena, source_path);
     AstNode *program = parser_parse(&parser);
     if (mix_error_count() > 0) {
-        free(source); free(lexer.tokens); compiling_module_count--;
+        free(source); 
+compiling_module_count--;
         return NULL;
     }
 
@@ -613,7 +701,8 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
             if (!bind_src) {
                 fprintf(stderr, "mix: failed to generate bindings for '%s'\n",
                         decl->use_c_decl.header_path);
-                free(source); free(lexer.tokens); compiling_module_count--;
+                free(source); 
+compiling_module_count--;
                 return NULL;
             }
             errors_set_source(bind_src, decl->use_c_decl.header_path);
@@ -663,7 +752,8 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
             if (!sub_asm) {
                 fprintf(stderr, "mix: failed to compile module '%s'\n",
                         decl->use_decl.module_path);
-                free(source); free(lexer.tokens); compiling_module_count--;
+                free(source); 
+compiling_module_count--;
                 return NULL;
             }
             // Apply selective imports if specified
@@ -676,7 +766,8 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
 
             if (*module_count >= max_modules) {
                 fprintf(stderr, "mix: too many modules (max %d)\n", max_modules);
-                free(source); free(lexer.tokens); compiling_module_count--;
+                free(source); 
+compiling_module_count--;
                 return NULL;
             }
             module_asm_files[(*module_count)++] = sub_asm;
@@ -686,7 +777,8 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
     // Analyze (uses shared sema so pub symbols are visible to main)
     sema_analyze(sema, program);
     if (mix_error_count() > 0) {
-        free(source); free(lexer.tokens); compiling_module_count--;
+        free(source); 
+compiling_module_count--;
         return NULL;
     }
 
@@ -698,14 +790,15 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
         snprintf(c_path, sizeof(c_path), "/tmp/mod_%d_%d.c", getpid(), mod_id);
         FILE *c_out = fopen(c_path, "w");
         if (!c_out) {
-            free(source); free(lexer.tokens); compiling_module_count--;
+            free(source); 
+compiling_module_count--;
             return NULL;
         }
         CEmitter c_emitter = c_emitter_create(c_out, arena, &sema->symtab);
         c_emit_program(&c_emitter, program);
         fclose(c_out);
         free(source);
-        free(lexer.tokens);
+        
         compiling_module_count--;
         return arena_strdup(arena, c_path);
     } else if (use_llvm_backend) {
@@ -719,13 +812,15 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
 
         FILE *ll_out = fopen(ll_path, "w");
         if (!ll_out) {
-            free(source); free(lexer.tokens); compiling_module_count--;
+            free(source); 
+compiling_module_count--;
             return NULL;
         }
         LirModule *lmod = lower_program(program, arena, &sema->symtab);
         if (!lmod || mix_error_count() > 0) {
             fclose(ll_out);
-            free(source); free(lexer.tokens); compiling_module_count--;
+            free(source); 
+compiling_module_count--;
             return NULL;
         }
         LlvmEmitter le = llvm_emitter_create(ll_out);
@@ -757,21 +852,23 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
                 fprintf(stderr, "mix: internal compiler error while compiling '%s'. Run with -v for details.\n", source_path);
             }
             free(clang_stderr);
-            free(source); free(lexer.tokens); compiling_module_count--;
+            free(source); 
+compiling_module_count--;
             return NULL;
         }
         free(clang_stderr);
 
         if (!verbose) remove(ll_path);
         free(source);
-        free(lexer.tokens);
+        
         compiling_module_count--;
         return arena_strdup(arena, obj_path);
     } else {
         // No remaining backend (QBE retired in Phase 9). Sema/lower
         // route through the C and LLVM branches above.
         fprintf(stderr, "mix: internal: unknown backend\n");
-        free(source); free(lexer.tokens); compiling_module_count--;
+        free(source); 
+compiling_module_count--;
         return NULL;
     }
 }
@@ -1013,13 +1110,13 @@ int main(int argc, char **argv) {
 
     if (emit_ast) {
         ast_print(program, 0);
-        arena_destroy(&arena); free(source); free(lexer.tokens);
+        arena_destroy(&arena); free(source); 
         return 0;
     }
 
     if (mix_error_count() > 0) {
         fprintf(stderr, "mix: %d error(s) during parsing\n", mix_error_count());
-        arena_destroy(&arena); free(source); free(lexer.tokens);
+        arena_destroy(&arena); free(source); 
         return 1;
     }
 
@@ -1253,13 +1350,14 @@ int main(int argc, char **argv) {
 
     if (mix_error_count() > 0) {
         fprintf(stderr, "mix: %d error(s) during analysis\n", mix_error_count());
-        arena_destroy(&arena); free(source); free(lexer.tokens);
+        arena_destroy(&arena); free(source); 
         return 1;
     }
 
     // Emit code for main file
-    char gen_path[256];  // generated .ssa, .c, or .ll
-    char asm_path[256];  // .o from clang -c (LLVM backend)
+    char gen_path[256] = "";  // .c file (C backend) or empty (LLVM backend)
+    char *lir_buf = NULL;     // LLVM IR buffer (LLVM backend, piped to clang)
+    size_t lir_size = 0;
 
     if (use_c_backend) {
         // C backend: emit .c file
@@ -1279,69 +1377,47 @@ int main(int argc, char **argv) {
         TIMER_END(emit);
         fclose(c_out);
     } else if (use_llvm_backend) {
-        // LLVM backend (Phase 2): AST → lower → LIR → llvm_emit → .ll
+        // LLVM backend: AST → lower → LIR → llvm_emit to memory buffer
         if (emit_ir_only) {
             snprintf(gen_path, sizeof(gen_path), "%s", output_file);
+            FILE *ll_out = fopen(gen_path, "w");
+            if (!ll_out) {
+                fprintf(stderr, "mix: cannot create '%s': %s\n", gen_path, strerror(errno));
+                return 1;
+            }
+            TIMER_START(emit);
+            LirModule *lmod = lower_program(program, &arena, &sema.symtab);
+            LlvmEmitter le = llvm_emitter_create(ll_out);
+            if (debug_mode) llvm_emitter_enable_debug(&le, input_file);
+            if (lmod) llvm_emit_module(&le, lmod);
+            TIMER_END(emit);
+            fclose(ll_out);
         } else {
-            snprintf(gen_path, sizeof(gen_path), "/tmp/mix_%d.ll", getpid());
+            TIMER_START(emit);
+            FILE *ll_out = open_memstream(&lir_buf, &lir_size);
+            if (!ll_out) {
+                fprintf(stderr, "mix: open_memstream failed: %s\n", strerror(errno));
+                return 1;
+            }
+            LirModule *lmod = lower_program(program, &arena, &sema.symtab);
+            LlvmEmitter le = llvm_emitter_create(ll_out);
+            if (debug_mode) llvm_emitter_enable_debug(&le, input_file);
+            if (lmod) llvm_emit_module(&le, lmod);
+            TIMER_END(emit);
+            fclose(ll_out);
         }
-        FILE *ll_out = fopen(gen_path, "w");
-        if (!ll_out) {
-            fprintf(stderr, "mix: cannot create '%s': %s\n", gen_path, strerror(errno));
-            return 1;
-        }
-        TIMER_START(emit);
-        LirModule *lmod = lower_program(program, &arena, &sema.symtab);
-        LlvmEmitter le = llvm_emitter_create(ll_out);
-        if (debug_mode) llvm_emitter_enable_debug(&le, input_file);
-        if (lmod) llvm_emit_module(&le, lmod);
-        TIMER_END(emit);
-        fclose(ll_out);
     }
 
     if (mix_error_count() > 0) {
         fprintf(stderr, "mix: %d error(s) during code generation\n", mix_error_count());
-        arena_destroy(&arena); free(source); free(lexer.tokens);
+        arena_destroy(&arena); free(source); 
         return 1;
     }
 
     if (emit_ir_only) {
         if (verbose) fprintf(stderr, "mix: wrote %s\n", gen_path);
-        arena_destroy(&arena); free(source); free(lexer.tokens);
+        arena_destroy(&arena); free(source); 
         return 0;
-    }
-
-    // LLVM backend: compile .ll -> .o via clang. The resulting .o is what
-    // gets handed to the final cc link step below.
-    if (use_llvm_backend) {
-        snprintf(asm_path, sizeof(asm_path), "/tmp/mix_%d.o", getpid());
-        const char *clang_argv[10];
-        int cai = 0;
-        clang_argv[cai++] = "clang";
-        clang_argv[cai++] = "-c";
-        // See comment on the per-module clang call: silence the
-        // override-module warning, host triple is the intended target.
-        clang_argv[cai++] = "-Wno-override-module";
-        if (debug_mode) clang_argv[cai++] = "-g";
-        clang_argv[cai++] = "-o";
-        clang_argv[cai++] = asm_path;
-        clang_argv[cai++] = gen_path;
-        clang_argv[cai++] = NULL;
-        if (verbose) { fprintf(stderr, "mix: "); print_argv(clang_argv); }
-        TIMER_START(clang);
-        char *clang_stderr = NULL;
-        int ret = run_process(clang_argv, verbose ? NULL : &clang_stderr);
-        TIMER_END(clang);
-        if (ret != 0) {
-            if (verbose) {
-                fprintf(stderr, "mix: clang -c failed (exit %d)\n", ret);
-            } else {
-                fprintf(stderr, "mix: internal compiler error while compiling '%s'. Run with -v for details.\n", input_file);
-            }
-            free(clang_stderr);
-            return 1;
-        }
-        free(clang_stderr);
     }
 
     // Find runtime
@@ -1373,56 +1449,70 @@ int main(int argc, char **argv) {
         NULL
     };
     const char *runtime_path = NULL;
-    bool runtime_is_object = false;
-    if (!debug_mode) {
-        for (int i = 0; runtime_o_paths[i]; i++) {
-            struct stat ost, src_st;
-            if (stat(runtime_o_paths[i], &ost) != 0) continue;
-            // Make sure the .o is at least as new as runtime.c — otherwise
-            // a fresh edit could be silently linked against stale code.
-            // Only checked if a sibling .c file exists.
-            char rt_c[1200];
-            snprintf(rt_c, sizeof(rt_c), "%s", runtime_o_paths[i]);
-            char *dot = strrchr(rt_c, '.');
-            if (dot) { strcpy(dot, ".c"); }
-            if (stat(rt_c, &src_st) == 0 && src_st.st_mtime > ost.st_mtime) continue;
-            // Also try the lib/runtime.c sibling for the build/runtime.o
-            // case where they're not in the same dir.
-            const char *src_alt[] = {"lib/runtime.c", "../lib/runtime.c", NULL};
-            bool stale = false;
-            for (int j = 0; src_alt[j]; j++) {
-                if (stat(src_alt[j], &src_st) == 0 && src_st.st_mtime > ost.st_mtime) {
-                    stale = true; break;
+    {
+        // Cache the result so subsequent invocations skip the stat storm
+        static const char *cached_runtime = NULL;
+        static bool cached = false;
+        if (cached) {
+            runtime_path = cached_runtime;
+        } else {
+            if (!debug_mode) {
+                for (int i = 0; runtime_o_paths[i]; i++) {
+                    struct stat ost, src_st;
+                    if (stat(runtime_o_paths[i], &ost) != 0) continue;
+                    char rt_c[1200];
+                    snprintf(rt_c, sizeof(rt_c), "%s", runtime_o_paths[i]);
+                    char *dot = strrchr(rt_c, '.');
+                    if (dot) { strcpy(dot, ".c"); }
+                    if (stat(rt_c, &src_st) == 0 && src_st.st_mtime > ost.st_mtime) continue;
+                    const char *src_alt[] = {"lib/runtime.c", "../lib/runtime.c", NULL};
+                    bool stale = false;
+                    for (int j = 0; src_alt[j]; j++) {
+                        if (stat(src_alt[j], &src_st) == 0 && src_st.st_mtime > ost.st_mtime) {
+                            stale = true; break;
+                        }
+                    }
+                    if (stale) continue;
+                    runtime_path = runtime_o_paths[i];
+                    break;
                 }
             }
-            if (stale) continue;
-            runtime_path = runtime_o_paths[i];
-            runtime_is_object = true;
-            break;
+            if (!runtime_path) {
+                for (int i = 0; runtime_paths[i]; i++) {
+                    FILE *test = fopen(runtime_paths[i], "r");
+                    if (test) { fclose(test); runtime_path = runtime_paths[i]; break; }
+                }
+            }
+            cached = true;
+            cached_runtime = runtime_path;
         }
     }
-    if (!runtime_path) {
-        for (int i = 0; runtime_paths[i]; i++) {
-            FILE *test = fopen(runtime_paths[i], "r");
-            if (test) { fclose(test); runtime_path = runtime_paths[i]; break; }
-        }
-    }
-    (void)runtime_is_object;
 
     // Link — build argv array to avoid shell injection
-    // Max entries: cc + flags(2) + main_file + modules(64) + runtime + -o + output + -lm
+    // Max entries: clang/cc + flags(5) + main_file + modules(64) + runtime + -o + output + -lm
     //              + link_flags(64) + LDFLAGS tokens(64) + NULL
     #define MAX_LINK_ARGV 256
     const char *link_argv[MAX_LINK_ARGV];
     int ai = 0;
 
-    link_argv[ai++] = "cc";
+    if (use_llvm_backend) {
+        // Combined compile+link: pipe .ll to clang's stdin, then link with runtime + modules
+        link_argv[ai++] = "clang";
+        link_argv[ai++] = "-x";
+        link_argv[ai++] = "ir";
+        link_argv[ai++] = "-";
+        link_argv[ai++] = "-x";
+        link_argv[ai++] = "none";
+        link_argv[ai++] = "-Wno-override-module";
+    } else {
+        link_argv[ai++] = "cc";
+        link_argv[ai++] = gen_path;
+    }
     if (debug_mode) link_argv[ai++] = "-g";
     if (opt_level) {
         char *opt_buf = arena_alloc(&arena, 4);
         if (opt_buf) { sprintf(opt_buf, "-O%s", opt_level); link_argv[ai++] = opt_buf; }
     }
-    link_argv[ai++] = use_c_backend ? gen_path : asm_path;
     for (int i = 0; i < module_count && ai < MAX_LINK_ARGV - 8; i++)
         link_argv[ai++] = module_asm_files[i];
     // Add source files (e.g. glad.c)
@@ -1493,7 +1583,12 @@ int main(int argc, char **argv) {
 
     char *link_stderr = NULL;
     TIMER_START(cc);
-    int ret = run_process(link_argv, verbose ? NULL : &link_stderr);
+    int ret;
+    if (use_llvm_backend && lir_buf) {
+        ret = run_process_stdin(link_argv, lir_buf, lir_size, verbose ? NULL : &link_stderr);
+    } else {
+        ret = run_process(link_argv, verbose ? NULL : &link_stderr);
+    }
     TIMER_END(cc);
     free(ldflags_buf);
     if (ret != 0) {
@@ -1519,8 +1614,7 @@ int main(int argc, char **argv) {
 
     // Cleanup
     if (!verbose) {
-        remove(gen_path);
-        if (!use_c_backend) remove(asm_path);
+        if (use_c_backend && gen_path[0]) remove(gen_path);
         for (int i = 0; i < module_count; i++)
             remove(module_asm_files[i]);
     }
@@ -1528,9 +1622,10 @@ int main(int argc, char **argv) {
     if (verbose) fprintf(stderr, "mix: wrote %s\n", output_file);
 
     TIMER_START(cleanup);
+    free(lir_buf);
     arena_destroy(&arena);
     free(source);
-    free(lexer.tokens);
+    
     TIMER_END(cleanup);
 
     // In run mode, execute the compiled binary

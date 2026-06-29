@@ -1,5 +1,7 @@
 #include "lexer.h"
+#include "arena.h"
 #include "errors.h"
+#include <string.h>
 #include <inttypes.h>
 
 // --- Token kind names ---
@@ -118,8 +120,8 @@ Lexer lexer_create(const char *source, const char *filename, Arena *arena) {
     lex.indent_stack[0] = 0;
     lex.indent_top = 0;
     lex.paren_depth = 0;
-    lex.token_capacity = 1024;
-    lex.tokens = malloc(sizeof(Token) * lex.token_capacity);
+    lex.token_capacity = 4096;
+    lex.tokens = arena_alloc(arena, sizeof(Token) * lex.token_capacity);
     lex.token_count = 0;
     lex.at_line_start = true;
     lex.arena = arena;
@@ -129,7 +131,9 @@ Lexer lexer_create(const char *source, const char *filename, Arena *arena) {
 static void emit_token(Lexer *lex, Token tok) {
     if (lex->token_count >= lex->token_capacity) {
         lex->token_capacity *= 2;
-        lex->tokens = realloc(lex->tokens, sizeof(Token) * lex->token_capacity);
+        Token *new_tokens = arena_alloc(lex->arena, sizeof(Token) * lex->token_capacity);
+        memcpy(new_tokens, lex->tokens, lex->token_count * sizeof(Token));
+        lex->tokens = new_tokens;
     }
     lex->tokens[lex->token_count++] = tok;
 }

@@ -89,7 +89,7 @@ static bool analyze_file(WorkspaceFile *wf) {
     errors_reset();
     errors_set_callback(prev_cb, prev_ud);
     free(source);
-    free(lexer.tokens);
+
     wf->valid = true;
     return true;
 }

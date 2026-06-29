@@ -700,7 +700,7 @@ static void index_module_file(SymbolIndex *idx, const char *module_path) {
         }
     }
 
-    free(lexer.tokens);
+
     arena_destroy(&arena);
     free(source);
 }
@@ -824,7 +824,7 @@ static void index_c_header(SymbolIndex *idx, const char *header_path,
         }
     }
 
-    free(lexer.tokens);
+
     arena_destroy(&arena);
     free(bind_src);
     // resolved intentionally not freed — it lives in SymbolEntry.def_loc

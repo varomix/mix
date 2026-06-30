@@ -1,8 +1,11 @@
-; Increase indent after constructs that have an indented body block
-(fn_decl) @indent
-(if_stmt) @indent
-(while_stmt) @indent
-(for_stmt) @indent
-(match_stmt) @indent
-(zone_stmt) @indent
-(unsafe_block) @indent
+(_ "{" "}" @end) @indent
+(_ "[" "]" @end) @indent
+(_ "(" ")" @end) @indent
+
+(fn_decl) @start.def
+(if_stmt) @start.if
+(while_stmt) @start.while
+(for_stmt) @start.for
+(match_stmt) @start.match
+(zone_stmt) @start.zone
+(unsafe_block) @start.unsafe

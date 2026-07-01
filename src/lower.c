@@ -141,6 +141,7 @@ static bool    needs_box_check     (MixType *t);
 static void unsupported(AstNode *node, const char *what) {
     SrcLoc loc = node ? node->loc : (SrcLoc){0};
     mix_error(loc, "lowering (Phase 4A): %s — not yet implemented", what);
+    mix_help(loc, "this feature is still being implemented; use the C backend (--backend c) or a different construct");
 }
 
 // ---- Type mapping ----------------------------------------------------------

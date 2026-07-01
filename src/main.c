@@ -46,17 +46,45 @@ typedef enum {
     MODE_FMT,
 } RunMode;
 
+static void cli_error(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "mix: error: ");
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+}
+
+static void cli_help(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "mix: help: ");
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+}
+
+static void compile_phase_failed(const char *phase) {
+    fprintf(stderr, "mix: %d error(s) during %s\n", mix_error_count(), phase);
+    cli_help("fix the first error above, then run the same command again");
+}
+
 static char *read_file(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) {
-        fprintf(stderr, "mix: cannot open '%s': %s\n", path, strerror(errno));
+        cli_error("cannot open '%s': %s", path, strerror(errno));
+        cli_help("check that the path exists and that you have permission to read it");
         return NULL;
     }
     struct stat st;
     if (fstat(fileno(f), &st) != 0) { fclose(f); return NULL; }
     long size = st.st_size;
     char *buf = malloc(size + 1);
-    if (!buf) { fprintf(stderr, "mix: out of memory\n"); exit(1); }
+    if (!buf) {
+        fprintf(stderr, "mix: out of memory\n");
+        fprintf(stderr, "mix: help: free memory and try again, or reduce input size\n");
+        exit(1);
+    }
     size_t rd = fread(buf, 1, size, f);
     buf[rd] = '\0';
     fclose(f);
@@ -172,14 +200,16 @@ static int run_process(const char *const argv[], char **captured_stderr) {
     if (captured_stderr) {
         *captured_stderr = NULL;
         if (pipe(pipe_fds) < 0) {
-            fprintf(stderr, "mix: pipe failed: %s\n", strerror(errno));
+            cli_error("could not capture tool output: %s", strerror(errno));
+            cli_help("free file descriptors or run with -v to avoid stderr capture");
             return -1;
         }
     }
 
     pid_t pid = fork();
     if (pid < 0) {
-        fprintf(stderr, "mix: fork failed: %s\n", strerror(errno));
+        cli_error("could not start child process: %s", strerror(errno));
+        cli_help("check process limits and available system resources, then try again");
         if (captured_stderr) { close(pipe_fds[0]); close(pipe_fds[1]); }
         return -1;
     }
@@ -190,7 +220,8 @@ static int run_process(const char *const argv[], char **captured_stderr) {
             close(pipe_fds[1]);
         }
         execvp(argv[0], (char *const *)argv);
-        fprintf(stderr, "mix: exec '%s' failed: %s\n", argv[0], strerror(errno));
+        cli_error("could not run '%s': %s", argv[0], strerror(errno));
+        cli_help("install the tool or make sure it is on PATH");
         _exit(127);
     }
 
@@ -220,7 +251,8 @@ static int run_process(const char *const argv[], char **captured_stderr) {
 
     int status;
     if (waitpid(pid, &status, 0) < 0) {
-        fprintf(stderr, "mix: waitpid failed: %s\n", strerror(errno));
+        cli_error("could not wait for child process: %s", strerror(errno));
+        cli_help("try again; if this repeats, run with -v and report the command");
         return -1;
     }
     if (WIFEXITED(status)) return WEXITSTATUS(status);
@@ -234,14 +266,16 @@ static int run_process_stdin(const char *const argv[], const char *stdin_data, s
     int stderr_pipe[2] = {-1, -1};
     if (stdin_data) {
         if (pipe(stdin_pipe) < 0) {
-            fprintf(stderr, "mix: pipe failed: %s\n", strerror(errno));
+            cli_error("could not create compiler input pipe: %s", strerror(errno));
+            cli_help("free file descriptors or disk resources, then try again");
             return -1;
         }
     }
     if (captured_stderr) {
         *captured_stderr = NULL;
         if (pipe(stderr_pipe) < 0) {
-            fprintf(stderr, "mix: pipe failed: %s\n", strerror(errno));
+            cli_error("could not capture tool output: %s", strerror(errno));
+            cli_help("free file descriptors or run with -v to avoid stderr capture");
             if (stdin_data) { close(stdin_pipe[0]); close(stdin_pipe[1]); }
             return -1;
         }
@@ -249,7 +283,8 @@ static int run_process_stdin(const char *const argv[], const char *stdin_data, s
 
     pid_t pid = fork();
     if (pid < 0) {
-        fprintf(stderr, "mix: fork failed: %s\n", strerror(errno));
+        cli_error("could not start child process: %s", strerror(errno));
+        cli_help("check process limits and available system resources, then try again");
         if (stdin_data) { close(stdin_pipe[0]); close(stdin_pipe[1]); }
         if (captured_stderr) { close(stderr_pipe[0]); close(stderr_pipe[1]); }
         return -1;
@@ -266,7 +301,8 @@ static int run_process_stdin(const char *const argv[], const char *stdin_data, s
             close(stderr_pipe[1]);
         }
         execvp(argv[0], (char *const *)argv);
-        fprintf(stderr, "mix: exec '%s' failed: %s\n", argv[0], strerror(errno));
+        cli_error("could not run '%s': %s", argv[0], strerror(errno));
+        cli_help("install the tool or make sure it is on PATH");
         _exit(127);
     }
 
@@ -306,7 +342,8 @@ static int run_process_stdin(const char *const argv[], const char *stdin_data, s
 
     int status;
     if (waitpid(pid, &status, 0) < 0) {
-        fprintf(stderr, "mix: waitpid failed: %s\n", strerror(errno));
+        cli_error("could not wait for child process: %s", strerror(errno));
+        cli_help("try again; if this repeats, run with -v and report the command");
         return -1;
     }
     if (WIFEXITED(status)) return WEXITSTATUS(status);
@@ -364,7 +401,8 @@ static void usage(void) {
 static const char *auto_discover_main(void) {
     DIR *dir = opendir(".");
     if (!dir) {
-        fprintf(stderr, "mix: cannot open current directory\n");
+        cli_error("cannot open current directory: %s", strerror(errno));
+        cli_help("run mix from a readable project directory or pass a specific .mix file");
         return NULL;
     }
 
@@ -404,11 +442,13 @@ static const char *auto_discover_main(void) {
     closedir(dir);
 
     if (match_count == 0) {
-        fprintf(stderr, "mix: no .mix file with main() found in current directory\n");
+        cli_error("no .mix file with main() found in current directory");
+        cli_help("pass the file explicitly, for example `mix build path/to/app.mix`, or add `main()` to one .mix file here");
         return NULL;
     }
     if (match_count > 1) {
-        fprintf(stderr, "mix: multiple .mix files with main() found, specify one\n");
+        cli_error("multiple .mix files with main() found");
+        cli_help("choose one explicitly, for example `mix build app.mix`");
         return NULL;
     }
     return found_file;
@@ -486,7 +526,8 @@ static int fmt_walk_dir(const char *dir, bool write_in_place,
                         bool check, bool diff) {
     DIR *d = opendir(dir);
     if (!d) {
-        fprintf(stderr, "mix fmt: cannot open '%s': %s\n", dir, strerror(errno));
+        cli_error("fmt cannot open '%s': %s", dir, strerror(errno));
+        cli_help("check that the path exists and is readable");
         return 1;
     }
     int worst = 0;
@@ -520,7 +561,8 @@ static int fmt_one_file(const char *path, bool write_in_place,
     if (!src) return 1;
     char *out = fmt_to_buf(src, path);
     if (!out) {
-        fprintf(stderr, "mix fmt: failed to format '%s'\n", path);
+        cli_error("fmt failed to format '%s'", path);
+        cli_help("fix the syntax error reported above, then run fmt again");
         free(src);
         return 1;
     }
@@ -538,13 +580,15 @@ static int fmt_one_file(const char *path, bool write_in_place,
             snprintf(tmp, sizeof(tmp), "%s.fmt.tmp", path);
             FILE *f = fopen(tmp, "w");
             if (!f) {
-                fprintf(stderr, "mix fmt: cannot create '%s': %s\n", tmp, strerror(errno));
+                cli_error("fmt cannot create '%s': %s", tmp, strerror(errno));
+                cli_help("check write permissions and free space in the target directory");
                 rc = 1;
             } else {
                 fputs(out, f);
                 fclose(f);
                 if (rename(tmp, path) != 0) {
-                    fprintf(stderr, "mix fmt: rename failed: %s\n", strerror(errno));
+                    cli_error("fmt could not replace '%s': %s", path, strerror(errno));
+                    cli_help("check write permissions and whether another process is using the file");
                     unlink(tmp);
                     rc = 1;
                 }
@@ -576,7 +620,8 @@ static int fmt_dispatch(const char **paths, int n_paths,
         char *out = fmt_to_buf(src, NULL);
         int rc = 0;
         if (!out) {
-            fprintf(stderr, "mix fmt: failed to format stdin\n");
+            cli_error("fmt failed to format stdin");
+            cli_help("fix the syntax error reported above, then run fmt again");
             rc = 1;
         } else if (check) {
             rc = (strcmp(src, out) == 0) ? 0 : 1;
@@ -593,7 +638,8 @@ static int fmt_dispatch(const char **paths, int n_paths,
     for (int i = 0; i < n_paths; i++) {
         struct stat st;
         if (stat(paths[i], &st) != 0) {
-            fprintf(stderr, "mix fmt: cannot stat '%s': %s\n", paths[i], strerror(errno));
+            cli_error("fmt cannot stat '%s': %s", paths[i], strerror(errno));
+            cli_help("check that the path exists and is accessible");
             if (1 > worst) worst = 1;
             continue;
         }
@@ -729,11 +775,13 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
                             bool is_wasm_browser) {
     // Circular import check
     if (is_module_compiling(source_path)) {
-        fprintf(stderr, "mix: circular import detected: '%s'\n", source_path);
+        cli_error("circular import detected: '%s'", source_path);
+        cli_help("remove one `use` from the cycle or move shared declarations into a third module");
         return NULL;
     }
     if (compiling_module_count >= MAX_COMPILING_MODULES) {
-        fprintf(stderr, "mix: too many nested imports (max %d)\n", MAX_COMPILING_MODULES);
+        cli_error("too many nested imports (max %d)", MAX_COMPILING_MODULES);
+        cli_help("simplify the import chain or raise MAX_COMPILING_MODULES in the compiler");
         return NULL;
     }
     compiling_modules[compiling_module_count++] = source_path;
@@ -771,8 +819,9 @@ compiling_module_count--;
                                                      decl->use_c_decl.lib_name,
                                                      verbose, NULL);
             if (!bind_src) {
-                fprintf(stderr, "mix: failed to generate bindings for '%s'\n",
-                        decl->use_c_decl.header_path);
+                cli_error("failed to generate bindings for '%s'",
+                          decl->use_c_decl.header_path);
+                cli_help("check that the header path is correct; use -v to see the C binding command");
                 free(source); 
 compiling_module_count--;
                 return NULL;
@@ -823,8 +872,9 @@ compiling_module_count--;
                                            link_flags, link_flag_count,
                                            is_wasm_browser);
             if (!sub_asm) {
-                fprintf(stderr, "mix: failed to compile module '%s'\n",
-                        decl->use_decl.module_path);
+                cli_error("failed to compile module '%s'",
+                          decl->use_decl.module_path);
+                cli_help("fix the module error above or check that the `use` path resolves to the intended .mix file");
                 free(source); 
 compiling_module_count--;
                 return NULL;
@@ -838,7 +888,8 @@ compiling_module_count--;
             errors_set_source(source, source_path);
 
             if (*module_count >= max_modules) {
-                fprintf(stderr, "mix: too many modules (max %d)\n", max_modules);
+                cli_error("too many modules (max %d)", max_modules);
+                cli_help("reduce the import graph or raise the module limit in the compiler");
                 free(source); 
 compiling_module_count--;
                 return NULL;
@@ -863,6 +914,8 @@ compiling_module_count--;
         snprintf(c_path, sizeof(c_path), "/tmp/mod_%d_%d.c", getpid(), mod_id);
         FILE *c_out = fopen(c_path, "w");
         if (!c_out) {
+            cli_error("cannot create temporary C output '%s': %s", c_path, strerror(errno));
+            cli_help("check that /tmp is writable and has free space");
             free(source); 
 compiling_module_count--;
             return NULL;
@@ -885,6 +938,8 @@ compiling_module_count--;
 
         FILE *ll_out = fopen(ll_path, "w");
         if (!ll_out) {
+            cli_error("cannot create temporary LLVM output '%s': %s", ll_path, strerror(errno));
+            cli_help("check that /tmp is writable and has free space");
             free(source); 
 compiling_module_count--;
             return NULL;
@@ -924,9 +979,11 @@ compiling_module_count--;
         if (ret != 0) {
             if (verbose) {
                 const char *tool = is_wasm_browser ? "emcc" : "clang";
-                fprintf(stderr, "mix: %s -c failed for module '%s'\n", tool, source_path);
+                cli_error("%s -c failed for module '%s'", tool, source_path);
+                cli_help("read the tool output above, then fix the generated IR path with -v if needed");
             } else {
-                fprintf(stderr, "mix: internal compiler error while compiling '%s'. Run with -v for details.\n", source_path);
+                cli_error("internal compiler error while compiling '%s'", source_path);
+                cli_help("run the same command with -v to show the backend tool output");
             }
             free(clang_stderr);
             free(source); 
@@ -943,7 +1000,8 @@ compiling_module_count--;
     } else {
         // No remaining backend (QBE retired in Phase 9). Sema/lower
         // route through the C and LLVM branches above.
-        fprintf(stderr, "mix: internal: unknown backend\n");
+        cli_error("internal compiler error: unknown backend");
+        cli_help("choose --backend llvm or --backend c");
         free(source); 
 compiling_module_count--;
         return NULL;
@@ -1036,19 +1094,22 @@ int main(int argc, char **argv) {
             fmt_diff = true;
     } else if (strncmp(argv[i], "-l", 2) == 0 || strncmp(argv[i], "-L", 2) == 0) {
             if (link_flag_count >= MAX_LINK_FLAGS) {
-                fprintf(stderr, "mix: too many linker flags (max %d)\n", MAX_LINK_FLAGS);
+                cli_error("too many linker flags (max %d)", MAX_LINK_FLAGS);
+                cli_help("remove duplicate -l/-L flags or raise MAX_LINK_FLAGS in the compiler");
                 return 1;
             }
             link_flags[link_flag_count++] = argv[i];
         } else if (strcmp(argv[i], "-framework") == 0 && i + 1 < argc) {
             if (link_flag_count + 1 >= MAX_LINK_FLAGS) {
-                fprintf(stderr, "mix: too many linker flags (max %d)\n", MAX_LINK_FLAGS);
+                cli_error("too many linker flags (max %d)", MAX_LINK_FLAGS);
+                cli_help("remove duplicate framework flags or raise MAX_LINK_FLAGS in the compiler");
                 return 1;
             }
             link_flags[link_flag_count++] = argv[i];
             link_flags[link_flag_count++] = argv[++i];
         } else if (argv[i][0] == '-') {
-            fprintf(stderr, "mix: unknown option '%s'\n", argv[i]);
+            cli_error("unknown option '%s'", argv[i]);
+            cli_help("run `mix` with no arguments to see the supported commands and options");
             usage();
         } else if (mode == MODE_FMT) {
             // fmt accepts multiple positional args (files or directories).
@@ -1079,7 +1140,8 @@ int main(int argc, char **argv) {
     bool use_c_backend = (strcmp(backend, "c") == 0);
     bool use_llvm_backend = (strcmp(backend, "llvm") == 0);
     if (!use_c_backend && !use_llvm_backend) {
-        fprintf(stderr, "mix: unknown --backend '%s' (expected: c, llvm)\n", backend);
+        cli_error("unknown --backend '%s'", backend);
+        cli_help("choose `--backend llvm` or `--backend c`");
         return 1;
     }
 
@@ -1088,23 +1150,25 @@ int main(int argc, char **argv) {
     bool is_wasm_browser = (strcmp(target_arch, "wasm-browser") == 0);
     if (is_wasm_target) {
         if (!use_llvm_backend) {
-            fprintf(stderr, "mix: --target wasm32 requires the LLVM backend (--backend llvm, which is the default)\n");
+            cli_error("--target wasm32 requires the LLVM backend");
+            cli_help("remove `--backend c` or pass `--backend llvm`");
             return 1;
         }
         if (!detect_wasi_clang()) {
-            fprintf(stderr, "mix: --target wasm32 requires a WASI-capable clang. "
-                    "Install wasi-libc + wasi-runtimes via brew, or set $WASI_CLANG\n");
+            cli_error("--target wasm32 requires a WASI-capable clang");
+            cli_help("install wasi-libc + wasi-runtimes, or set WASI_CLANG=/path/to/clang");
             return 1;
         }
     }
     if (is_wasm_browser) {
         if (!use_llvm_backend) {
-            fprintf(stderr, "mix: --target wasm-browser requires the LLVM backend (--backend llvm, which is the default)\n");
+            cli_error("--target wasm-browser requires the LLVM backend");
+            cli_help("remove `--backend c` or pass `--backend llvm`");
             return 1;
         }
         if (!detect_emcc()) {
-            fprintf(stderr, "mix: --target wasm-browser requires emcc (Emscripten). "
-                    "Install via brew: brew install emscripten, or set $EMCC\n");
+            cli_error("--target wasm-browser requires emcc (Emscripten)");
+            cli_help("install Emscripten or set EMCC=/path/to/emcc");
             return 1;
         }
     }
@@ -1208,7 +1272,7 @@ int main(int argc, char **argv) {
     }
 
     if (mix_error_count() > 0) {
-        fprintf(stderr, "mix: %d error(s) during lexing\n", mix_error_count());
+        compile_phase_failed("lexing");
         arena_destroy(&arena); free(source);
         return 1;
     }
@@ -1226,7 +1290,7 @@ int main(int argc, char **argv) {
     }
 
     if (mix_error_count() > 0) {
-        fprintf(stderr, "mix: %d error(s) during parsing\n", mix_error_count());
+        compile_phase_failed("parsing");
         arena_destroy(&arena); free(source); 
         return 1;
     }
@@ -1285,7 +1349,8 @@ int main(int argc, char **argv) {
 
             char *bind_src = cbind_generate_string(header, lib, verbose, base_dir);
             if (!bind_src) {
-                fprintf(stderr, "mix: failed to generate bindings for '%s'\n", header);
+                cli_error("failed to generate bindings for '%s'", header);
+                cli_help("check that the header path is correct; use -v to see the C binding command");
                 return 1;
             }
 
@@ -1295,20 +1360,23 @@ int main(int argc, char **argv) {
             lexer_tokenize(&bind_lex);
             if (mix_error_count() > 0) {
                 free(bind_src);
-                fprintf(stderr, "mix: errors in generated bindings for '%s'\n", header);
+                cli_error("generated bindings for '%s' contain errors", header);
+                cli_help("run with -v to inspect the generated binding step, then fix or narrow the C header");
                 return 1;
             }
             Parser bind_parser = parser_create(bind_lex.tokens, bind_lex.token_count, &arena, header);
             AstNode *bind_prog = parser_parse(&bind_parser);
             if (mix_error_count() > 0) {
                 free(bind_src);
-                fprintf(stderr, "mix: errors in generated bindings for '%s'\n", header);
+                cli_error("generated bindings for '%s' contain parse errors", header);
+                cli_help("run with -v to inspect the generated binding step, then fix or narrow the C header");
                 return 1;
             }
             sema_analyze(&sema, bind_prog);
             if (mix_error_count() > 0) {
                 free(bind_src);
-                fprintf(stderr, "mix: errors in generated bindings for '%s'\n", header);
+                cli_error("generated bindings for '%s' contain type errors", header);
+                cli_help("run with -v to inspect the generated binding step, then fix or narrow the C header");
                 return 1;
             }
 
@@ -1390,7 +1458,8 @@ int main(int argc, char **argv) {
                         closedir(vdir);
                     }
                     if (!found_src) {
-                        fprintf(stderr, "mix: source file '%s' not found\n", src_path);
+                        cli_error("source file '%s' not found", src_path);
+                        cli_help("check the `source` path in the `use c` declaration or place the file under lib/vendor/<name>/src");
                         return 1;
                     }
                 }
@@ -1436,7 +1505,8 @@ int main(int argc, char **argv) {
                                             link_flags, &link_flag_count,
                                             is_wasm_browser);
             if (!asm_file) {
-                fprintf(stderr, "mix: failed to compile module '%s'\n", decl->use_decl.module_path);
+                cli_error("failed to compile module '%s'", decl->use_decl.module_path);
+                cli_help("fix the module error above or check that the `use` path resolves to the intended .mix file");
                 return 1;
             }
             // Apply selective imports if specified
@@ -1447,7 +1517,8 @@ int main(int argc, char **argv) {
             // Restore error source to main file after module compilation
             errors_set_source(source, input_file);
             if (module_count >= MAX_MODULES) {
-                fprintf(stderr, "mix: too many modules (max %d)\n", MAX_MODULES);
+                cli_error("too many modules (max %d)", MAX_MODULES);
+                cli_help("reduce the import graph or raise MAX_MODULES in the compiler");
                 return 1;
             }
             module_asm_files[module_count++] = asm_file;
@@ -1460,7 +1531,7 @@ int main(int argc, char **argv) {
     TIMER_END(sema);
 
     if (mix_error_count() > 0) {
-        fprintf(stderr, "mix: %d error(s) during analysis\n", mix_error_count());
+        compile_phase_failed("analysis");
         arena_destroy(&arena); free(source); 
         return 1;
     }
@@ -1479,7 +1550,8 @@ int main(int argc, char **argv) {
         }
         FILE *c_out = fopen(gen_path, "w");
         if (!c_out) {
-            fprintf(stderr, "mix: cannot create '%s': %s\n", gen_path, strerror(errno));
+            cli_error("cannot create '%s': %s", gen_path, strerror(errno));
+            cli_help("choose a writable output path with -o or fix permissions for the target directory");
             return 1;
         }
         CEmitter c_emitter = c_emitter_create(c_out, &arena, &sema.symtab);
@@ -1493,7 +1565,8 @@ int main(int argc, char **argv) {
             snprintf(gen_path, sizeof(gen_path), "%s", output_file);
             FILE *ll_out = fopen(gen_path, "w");
             if (!ll_out) {
-                fprintf(stderr, "mix: cannot create '%s': %s\n", gen_path, strerror(errno));
+                cli_error("cannot create '%s': %s", gen_path, strerror(errno));
+                cli_help("choose a writable output path with -o or fix permissions for the target directory");
                 return 1;
             }
             TIMER_START(emit);
@@ -1508,7 +1581,8 @@ int main(int argc, char **argv) {
             TIMER_START(emit);
             FILE *ll_out = open_memstream(&lir_buf, &lir_size);
             if (!ll_out) {
-                fprintf(stderr, "mix: open_memstream failed: %s\n", strerror(errno));
+                cli_error("could not create the in-memory LLVM output buffer: %s", strerror(errno));
+                cli_help("free some memory and try again; run with -v if this keeps happening");
                 return 1;
             }
             LirModule *lmod = lower_program(program, &arena, &sema.symtab);
@@ -1522,7 +1596,7 @@ int main(int argc, char **argv) {
     }
 
     if (mix_error_count() > 0) {
-        fprintf(stderr, "mix: %d error(s) during code generation\n", mix_error_count());
+        compile_phase_failed("code generation");
         arena_destroy(&arena); free(source); 
         return 1;
     }
@@ -1781,18 +1855,22 @@ int main(int argc, char **argv) {
     free(ldflags_buf);
     if (ret != 0) {
         if (verbose) {
-            fprintf(stderr, "mix: linker failed (exit %d)\n", ret);
+            cli_error("linker failed (exit %d)", ret);
+            cli_help("read the tool output above, then adjust missing symbols, sources, or linker flags");
         } else {
             // Try to translate common linker errors
             if (link_stderr && (strstr(link_stderr, "undefined reference") ||
                                 strstr(link_stderr, "undefined symbol") ||
                                 strstr(link_stderr, "Undefined symbols"))) {
-                fprintf(stderr, "mix: linking failed: undefined symbol. Check that all functions and external libraries are available.\n");
+                cli_error("linking failed: undefined symbol");
+                cli_help("make sure the function is defined, add the needed C source file, or pass the required -l library");
             } else if (link_stderr && (strstr(link_stderr, "library not found") ||
                                        strstr(link_stderr, "cannot find -l"))) {
-                fprintf(stderr, "mix: linking failed: library not found. Check your -l flags.\n");
+                cli_error("linking failed: library not found");
+                cli_help("check the -l name and add a matching -L search path if the library is not in a system directory");
             } else {
-                fprintf(stderr, "mix: linking failed. Run with -v for details.\n");
+                cli_error("linking failed");
+                cli_help("run the same command with -v to show the linker output");
             }
         }
         free(link_stderr);

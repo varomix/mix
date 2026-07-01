@@ -4,11 +4,13 @@ static ArenaBlock *block_create(size_t capacity) {
     ArenaBlock *block = malloc(sizeof(ArenaBlock));
     if (!block) {
         fprintf(stderr, "mix: out of memory\n");
+        fprintf(stderr, "mix: help: free memory and try again, or reduce input size\n");
         exit(1);
     }
     block->base = malloc(capacity);
     if (!block->base) {
         fprintf(stderr, "mix: out of memory\n");
+        fprintf(stderr, "mix: help: free memory and try again, or reduce input size\n");
         free(block);
         exit(1);
     }

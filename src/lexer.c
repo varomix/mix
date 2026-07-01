@@ -247,6 +247,7 @@ static void scan_identifier(Lexer *lex) {
         if (kw != TOK_IDENT) {
             SrcLoc loc = {lex->filename, lex->line, start_col};
             mix_error(loc, "keyword '%.*s' cannot have '!' modifier", length, start);
+            mix_help(loc, "remove the `!` — only identifiers can be made mutable");
             return;
         }
         Token tok = {0};
@@ -362,6 +363,7 @@ static void scan_string(Lexer *lex) {
     if (peek(lex) == '\0') {
         SrcLoc loc = {lex->filename, start_line, start_col};
         mix_error(loc, "unterminated string literal");
+        mix_help(loc, "add a closing double-quote at the end of the string");
         return;
     }
 
@@ -391,6 +393,7 @@ static void process_indentation(Lexer *lex) {
     if (peek(lex) == '\t') {
         SrcLoc loc = {lex->filename, lex->line, lex->col};
         mix_error(loc, "tabs are not allowed for indentation, use 4 spaces");
+        mix_help(loc, "replace tabs with spaces in your editor settings");
         // Skip past the tab to continue
         while (peek(lex) == '\t') advance(lex);
         return;
@@ -408,6 +411,7 @@ static void process_indentation(Lexer *lex) {
         if (lex->indent_top + 1 >= 128) {
             SrcLoc loc = {lex->filename, lex->line, 1};
             mix_error(loc, "indentation nested too deeply (max 127 levels)");
+            mix_help(loc, "simplify the nesting structure or split into smaller functions");
             return;
         }
         lex->indent_top++;
@@ -434,6 +438,7 @@ static void process_indentation(Lexer *lex) {
         if (lex->indent_stack[lex->indent_top] != current_indent) {
             SrcLoc loc = {lex->filename, lex->line, 1};
             mix_error(loc, "inconsistent indentation");
+            mix_help(loc, "make sure this line has the same indentation as the surrounding block");
         }
     }
     // If equal, no INDENT/DEDENT needed
@@ -525,6 +530,7 @@ void lexer_tokenize(Lexer *lex) {
                 } else {
                     SrcLoc loc = {lex->filename, lex->line, lex->col - 1};
                     mix_error(loc, "unmatched ')'");
+                    mix_help(loc, "remove this extra ')' or add a matching '(' earlier");
                 }
                 emit_token(lex, make_token(lex, TOK_RPAREN, lex->current - 1, 1));
                 break;
@@ -540,6 +546,7 @@ void lexer_tokenize(Lexer *lex) {
                 } else {
                     SrcLoc loc = {lex->filename, lex->line, lex->col - 1};
                     mix_error(loc, "unmatched ']'");
+                    mix_help(loc, "remove this extra ']' or add a matching '[' earlier");
                 }
                 emit_token(lex, make_token(lex, TOK_RBRACKET, lex->current - 1, 1));
                 break;
@@ -555,6 +562,7 @@ void lexer_tokenize(Lexer *lex) {
                 } else {
                     SrcLoc loc = {lex->filename, lex->line, lex->col - 1};
                     mix_error(loc, "unmatched '}'");
+                    mix_help(loc, "remove this extra '}' or add a matching '{' earlier");
                 }
                 emit_token(lex, make_token(lex, TOK_RBRACE, lex->current - 1, 1));
                 break;
@@ -614,6 +622,7 @@ void lexer_tokenize(Lexer *lex) {
             default: {
                 SrcLoc loc = {lex->filename, lex->line, lex->col - 1};
                 mix_error(loc, "unexpected character '%c' (0x%02x)", c, (unsigned char)c);
+                mix_help(loc, "remove the character or replace it with a valid MIX operator or letter");
                 break;
             }
         }

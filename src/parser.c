@@ -47,6 +47,7 @@ static Token *expect(Parser *p, TokenKind kind) {
     if (current(p)->kind != kind) {
         mix_error(tok_loc(p), "expected %s, got %s",
                   token_kind_name(kind), token_kind_name(current(p)->kind));
+        mix_help(tok_loc(p), "check for missing punctuation, indentation, or a misplaced keyword");
         return current(p);
     }
     return advance_tok(p);
@@ -142,6 +143,7 @@ static AstNode *parse_type(Parser *p) {
         advance_tok(p);
     } else {
         mix_error(loc, "expected type, got %s", token_kind_name(t->kind));
+        mix_help(loc, "use a built-in type (`int`, `float`, `bool`, `str`) or a named shape");
         node->type_name.name = "error";
         node->type_name.type_kind = TOK_INT;
     }
@@ -402,6 +404,7 @@ static AstNode *parse_primary(Parser *p) {
             }
             // Otherwise fall through to error (type keyword used as expression)
             mix_error(loc, "unexpected type keyword '%s' in expression", token_kind_name(t->kind));
+            mix_help(loc, "remove the type keyword, or use a cast like `int(expr)`");
             advance_tok(p);
             return ast_new(p->arena, NODE_INT_LIT, loc);
         }
@@ -698,6 +701,7 @@ static AstNode *parse_primary(Parser *p) {
         }
         default:
             mix_error(loc, "expected expression, got %s", token_kind_name(t->kind));
+            mix_help(loc, "check the syntax around this position for missing parentheses or operands");
             advance_tok(p);
             return ast_new(p->arena, NODE_NONE_LIT, loc);
     }
@@ -760,6 +764,7 @@ static AstNode *parse_expr_prec(Parser *p, Precedence min_prec) {
             field->kind != TOK_REPEAT && field->kind != TOK_SET &&
             field->kind != TOK_UNION) {
             mix_error(dot_loc, "expected field or method name after '.'");
+            mix_help(dot_loc, "add a field name or remove the trailing dot");
             break;
         }
         char *field_name = tok_str(p, field);
@@ -966,6 +971,7 @@ static AstNode *parse_for_stmt(Parser *p) {
     Token *first = advance_tok(p);
     if (first->kind != TOK_IDENT && first->kind != TOK_IDENT_MUT) {
         mix_error(tok_loc(p), "expected identifier after 'for'");
+        mix_help(tok_loc(p), "write `for var_name in iterable:`");
         return node;
     }
     char *first_name = tok_str(p, first);
@@ -974,6 +980,7 @@ static AstNode *parse_for_stmt(Parser *p) {
         Token *second = advance_tok(p);
         if (second->kind != TOK_IDENT && second->kind != TOK_IDENT_MUT) {
             mix_error(tok_loc(p), "expected loop variable name after ','");
+            mix_help(tok_loc(p), "write `for index, var_name in iterable:`");
             return node;
         }
         node->for_stmt.index_name = first_name;
@@ -1235,6 +1242,7 @@ static Param *parse_params(Parser *p, int *count) {
             Token *name_tok = current(p);
             if (name_tok->kind != TOK_IDENT && name_tok->kind != TOK_IDENT_MUT) {
                 mix_error(tok_loc(p), "expected parameter name");
+                mix_help(tok_loc(p), "parameters must be identifiers: `func_name(param1, param2)`");
                 break;
             }
             advance_tok(p);
@@ -1304,6 +1312,7 @@ static AstNode *parse_extern_fn_decl(Parser *p) {
     Token *name_tok = current(p);
     if (name_tok->kind != TOK_IDENT) {
         mix_error(loc, "expected function name in extern block");
+        mix_help(loc, "write `extern func_name(params) -> return_type`");
         return ast_new(p->arena, NODE_NONE_LIT, loc);
     }
     advance_tok(p);
@@ -1641,7 +1650,8 @@ static AstNode *parse_top_level(Parser *p) {
             off += snprintf(path + off, sizeof(path) - off, "..");
             while (match_tok(p, TOK_SLASH)) {
                 if (off >= (int)sizeof(path) - 4) {
-                    mix_error(loc, "use path too long");
+                    mix_error(loc, "use path too long (max 256 characters)");
+                    mix_help(loc, "shorten directory or file names in the use path");
                     break;
                 }
                 if (check(p, TOK_DOTDOT)) {
@@ -1665,6 +1675,7 @@ static AstNode *parse_top_level(Parser *p) {
                     } else {
                         mix_error(tok_loc(p),
                                   "expected identifier or `..` after `/` in use path");
+                        mix_help(tok_loc(p), "use path segments must be identifiers or `..`: `use ../../module`");
                         break;
                     }
                 }
@@ -1714,6 +1725,7 @@ use_decl_colon_check:
             // Disallow combining with alias for now — it's confusing semantically.
             if (node->use_decl.alias) {
                 mix_error(loc, "selective imports (':') cannot be combined with an alias");
+                mix_help(loc, "use either an alias or selective imports, not both at once");
             }
             char **imports = NULL;
             int import_count = 0;
@@ -1927,10 +1939,12 @@ use_decl_colon_check:
             }
 
             mix_error(at_loc, "expected function declaration after @%s", type_params[0]);
+            mix_help(at_loc, "add a generic function declaration after the type parameter: `@T fn name[T](...) -> T`");
             return NULL;
         }
 
         mix_error(at_loc, "expected 'const' or type parameter after '@'");
+        mix_help(at_loc, "write `@T` for a generic type parameter or `@const` for a constant");
         advance_tok(p);
         return NULL;
     }
@@ -1957,6 +1971,7 @@ use_decl_colon_check:
 
     mix_error(tok_loc(p), "expected function, shape, use, or extern declaration at top level, got %s",
               token_kind_name(current(p)->kind));
+    mix_help(tok_loc(p), "top-level statements must be a function, shape, use, or extern declaration");
     advance_tok(p);
     return NULL;
 }

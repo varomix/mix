@@ -157,6 +157,13 @@ void mix_note(SrcLoc loc, const char *fmt, ...) {
     va_end(args);
 }
 
+void mix_help(SrcLoc loc, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    report("help", DIAG_NOTE, loc, fmt, args);
+    va_end(args);
+}
+
 int mix_error_count(void) {
     return g_error_count;
 }

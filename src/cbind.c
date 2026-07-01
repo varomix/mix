@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdarg.h>
 #include <sys/stat.h>
 #include <dirent.h>
 
@@ -58,6 +59,24 @@ static char enum_names[MAX_ENUM_NAMES][256];
 static int enum_name_count = 0;
 
 // ---- Helpers ----
+
+static void cbind_error(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "mix: error: ");
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+}
+
+static void cbind_help(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "mix: help: ");
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+}
 
 static void trim(char *s) {
     // trim leading
@@ -1911,7 +1930,8 @@ int cbind_generate(const char *header_path, const char *out_path,
         // Count total .h files first for progress
         DIR *dir = opendir(header_path);
         if (!dir) {
-            fprintf(stderr, "mix: cannot open directory '%s'\n", header_path);
+            cbind_error("cannot open directory '%s'", header_path);
+            cbind_help("check the directory path and read permissions");
             return 1;
         }
         int total_files = 0;
@@ -1925,14 +1945,16 @@ int cbind_generate(const char *header_path, const char *out_path,
         closedir(dir);
 
         if (total_files == 0) {
-            fprintf(stderr, "mix: no .h files found in '%s'\n", header_path);
+            cbind_error("no .h files found in '%s'", header_path);
+            cbind_help("pass a specific header file or choose a directory that contains C headers");
             return 1;
         }
 
         // Process all .h files in the directory
         dir = opendir(header_path);
         if (!dir) {
-            fprintf(stderr, "mix: cannot open directory '%s'\n", header_path);
+            cbind_error("cannot open directory '%s'", header_path);
+            cbind_help("check the directory path and read permissions");
             return 1;
         }
         int file_count = 0;
@@ -1966,7 +1988,8 @@ int cbind_generate(const char *header_path, const char *out_path,
         // Single file
         char *text = preprocess_header(header_path, verbose);
         if (!text) {
-            fprintf(stderr, "mix: failed to preprocess '%s'\n", header_path);
+            cbind_error("failed to preprocess '%s'", header_path);
+            cbind_help("make sure the header exists and add needed include paths with CPPFLAGS=-I...");
             return 1;
         }
         parse_typedefs(text);
@@ -1983,7 +2006,8 @@ int cbind_generate(const char *header_path, const char *out_path,
     // Write output
     FILE *out = fopen(out_path, "w");
     if (!out) {
-        fprintf(stderr, "mix: cannot create '%s'\n", out_path);
+        cbind_error("cannot create '%s'", out_path);
+        cbind_help("choose a writable output path with -o or fix directory permissions");
         return 1;
     }
 
@@ -2023,7 +2047,8 @@ char *cbind_generate_string(const char *header_path, const char *lib_name,
     if (path_is_directory(header_path)) {
         DIR *dir = opendir(header_path);
         if (!dir) {
-            fprintf(stderr, "mix: cannot open directory '%s'\n", header_path);
+            cbind_error("cannot open directory '%s'", header_path);
+            cbind_help("check the directory path and read permissions");
             free(resolved);
             return NULL;
         }
@@ -2051,7 +2076,8 @@ char *cbind_generate_string(const char *header_path, const char *lib_name,
     } else {
         char *text = preprocess_header(header_path, verbose);
         if (!text) {
-            fprintf(stderr, "mix: failed to preprocess '%s'\n", header_path);
+            cbind_error("failed to preprocess '%s'", header_path);
+            cbind_help("make sure the header exists and add needed include paths with CPPFLAGS=-I...");
             free(resolved);
             return NULL;
         }
@@ -2071,7 +2097,8 @@ char *cbind_generate_string(const char *header_path, const char *lib_name,
     size_t buf_size = 0;
     FILE *mem = open_memstream(&buf, &buf_size);
     if (!mem) {
-        fprintf(stderr, "mix: open_memstream failed\n");
+        cbind_error("could not create the in-memory binding output buffer");
+        cbind_help("free some memory and try again");
         free(resolved);
         return NULL;
     }

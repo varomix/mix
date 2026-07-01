@@ -418,6 +418,8 @@ static MixType *instantiate_generic_shape(Sema *sema, const char *template_name,
     if (decl->shape_decl.type_param_count != type_arg_count) {
         mix_error(decl->loc, "shape '%s' takes %d type arg(s), got %d",
                   template_name, decl->shape_decl.type_param_count, type_arg_count);
+        mix_help(decl->loc, "add or remove type arguments in brackets: `%s[%s]`",
+                 template_name, decl->shape_decl.type_param_count > 0 ? "T1, T2, ..." : "");
         return NULL;
     }
 
@@ -486,6 +488,8 @@ static MixType *instantiate_generic_shape(Sema *sema, const char *template_name,
             mix_error(sf->type ? sf->type->loc : clone->loc,
                       "shape field '%s.%s' cannot have ref type",
                       clone->shape_decl.name, sf->name);
+            mix_help(sf->type ? sf->type->loc : clone->loc,
+                     "store the referenced value directly in the shape instead of using ref");
         }
         if (sf->type) sf->type->resolved_type = ftype;
         int fsize = type_size(ftype);
@@ -568,6 +572,9 @@ static void instantiate_methods_into(Sema *sema, AstNode *cloned_decl,
                     "mutable parameter '%s' of '%s.%s' cannot have a default value",
                     method->fn_decl.params[k].name,
                     cloned_decl->shape_decl.name, method->fn_decl.name);
+                mix_help(method->loc,
+                         "remove the default value or the `!` from parameter '%s'",
+                         method->fn_decl.params[k].name);
             }
             if (method->fn_decl.params[k].type)
                 method->fn_decl.params[k].type->resolved_type = pt;
@@ -632,8 +639,9 @@ static MixType *resolve_type_node(Sema *sema, AstNode *type_node) {
             case TOK_IDENT: {
                 if (strcmp(type_node->type_name.name, "Box") == 0) {
                     if (type_node->type_name.type_arg_count != 1) {
-                        mix_error(type_node->loc, "Box expects exactly 1 type argument");
-                        return make_type(sema->arena, TYPE_VOID);
+                    mix_error(type_node->loc, "Box expects exactly 1 type argument");
+                    mix_help(type_node->loc, "write `Box[YourType]` to create a box");
+                    return make_type(sema->arena, TYPE_VOID);
                     }
                     MixType *inner = resolve_type_node(
                         sema, type_node->type_name.type_args[0]);
@@ -670,7 +678,9 @@ static MixType *resolve_type_node(Sema *sema, AstNode *type_node) {
                 return make_set_type(sema->arena, elem);
             }
             default:
-                mix_error(type_node->loc, "unknown type");
+                mix_error(type_node->loc, "unknown type '%s'",
+                          type_node->type_name.name ? type_node->type_name.name : "");
+                mix_help(type_node->loc, "check the type name or use a built-in type (`int`, `float`, `bool`, `str`)");
                 return make_type(sema->arena, TYPE_INT);
         }
     }
@@ -718,6 +728,7 @@ static MixType *resolve_collection_type_expr(Sema *sema, AstNode *expr) {
     if (strcmp(name, "List") == 0) {
         if (expr->ident.type_arg_count != 1) {
             mix_error(expr->loc, "List expects exactly 1 type argument");
+            mix_help(expr->loc, "write `List[YourType]` to create a typed list");
             return make_type(sema->arena, TYPE_VOID);
         }
         return make_list_type(sema->arena,
@@ -726,6 +737,7 @@ static MixType *resolve_collection_type_expr(Sema *sema, AstNode *expr) {
     if (strcmp(name, "Map") == 0) {
         if (expr->ident.type_arg_count != 2) {
             mix_error(expr->loc, "Map expects exactly 2 type arguments");
+            mix_help(expr->loc, "write `Map[KeyType, ValueType]` to create a typed map");
             return make_type(sema->arena, TYPE_VOID);
         }
         return make_map_type(sema->arena,
@@ -735,6 +747,7 @@ static MixType *resolve_collection_type_expr(Sema *sema, AstNode *expr) {
     if (strcmp(name, "Set") == 0) {
         if (expr->ident.type_arg_count != 1) {
             mix_error(expr->loc, "Set expects exactly 1 type argument");
+            mix_help(expr->loc, "write `Set[YourType]` to create a typed set");
             return make_type(sema->arena, TYPE_VOID);
         }
         return make_set_type(sema->arena,
@@ -828,6 +841,7 @@ static void require_mutable_call_argument(Sema *sema, AstNode *arg,
             mix_error(arg->loc,
                       "argument %d of '%s' must be mutable",
                       arg_index + 1, callee_name);
+            mix_help(arg->loc, "pass a mutable ref (`ref!`) or a value declared with `!`");
             return;
         }
         if (expected_type && expected_type->kind == TYPE_SHAPE) {
@@ -835,6 +849,7 @@ static void require_mutable_call_argument(Sema *sema, AstNode *arg,
                       "argument %d of '%s' cannot bind mutable shape parameter "
                       "through ref! yet",
                       arg_index + 1, callee_name);
+            mix_help(arg->loc, "pass the mutable shape variable directly for now");
             return;
         }
         return;
@@ -851,6 +866,7 @@ static void require_mutable_call_argument(Sema *sema, AstNode *arg,
                   "through `at_mut!` yet",
                   arg_index + 1, callee_name,
                   type_name(sema->arena, expected_type));
+        mix_help(arg->loc, "store the element in a mutable local, call '%s', then write it back", callee_name);
         return;
     }
 
@@ -865,6 +881,7 @@ static void require_mutable_call_argument(Sema *sema, AstNode *arg,
                               "argument %d of '%s' cannot bind mutable shape "
                               "parameter to inline field '%s'",
                               arg_index + 1, callee_name, arg->ident.name);
+                    mix_help(arg->loc, "copy the field into a mutable local before passing it");
                 }
                 return;
             }
@@ -872,6 +889,8 @@ static void require_mutable_call_argument(Sema *sema, AstNode *arg,
                       "argument %d of '%s' must be mutable "
                       "(declare `%s! = ...`)",
                       arg_index + 1, callee_name, arg->ident.name);
+            mix_help(arg->loc, "change the declaration to `%s! = ...` if '%s' should modify it",
+                     arg->ident.name, callee_name);
             return;
         }
     }
@@ -882,6 +901,7 @@ static void require_mutable_call_argument(Sema *sema, AstNode *arg,
                       "argument %d of '%s' cannot bind mutable shape "
                       "parameter to an inline field",
                       arg_index + 1, callee_name);
+            mix_help(arg->loc, "copy the field into a mutable local before passing it");
             return;
         }
     }
@@ -897,6 +917,7 @@ static void require_mutable_call_argument(Sema *sema, AstNode *arg,
                       "(declare `%s! = ...`)",
                       arg_index + 1, callee_name,
                       root->ident.name, root->ident.name);
+            mix_help(arg->loc, "change the root binding to `%s! = ...`", root->ident.name);
             return;
         }
     }
@@ -904,6 +925,7 @@ static void require_mutable_call_argument(Sema *sema, AstNode *arg,
     mix_error(arg->loc,
               "argument %d of '%s' must be a mutable variable, field, or dereference",
               arg_index + 1, callee_name);
+    mix_help(arg->loc, "store the value in a mutable local before passing it");
 }
 
 static void require_mutable_method_receiver(Sema *sema, AstNode *object,
@@ -919,11 +941,13 @@ static void require_mutable_method_receiver(Sema *sema, AstNode *object,
                       "cannot call mutating method '%s!' through immutable '%s' "
                       "(declare it as `%s! = ...`)",
                       method_name, root->ident.name, root->ident.name);
+            mix_help(loc, "change the receiver declaration to `%s! = ...`", root->ident.name);
         }
         return;
     }
     mix_error(loc, "cannot call mutating method '%s!' on a non-mutable temporary",
               method_name);
+    mix_help(loc, "store the receiver in a mutable variable first, then call `%s!`", method_name);
 }
 
 static void require_mutable_loop_iterable(Sema *sema, AstNode *iterable,
@@ -939,12 +963,17 @@ static void require_mutable_loop_iterable(Sema *sema, AstNode *iterable,
                     "cannot use mutable loop binding '%s!' through immutable "
                     "'self' (declare the method with a trailing `!`)",
                     var_name);
+                mix_help(loc,
+                         "add `!` to the method name to make it mutating: `fn method_name!(...)`");
             } else {
                 mix_error(
                     loc,
                     "cannot use mutable loop binding '%s!' through immutable "
                     "'%s' (declare `%s! = ...`)",
                     var_name, root->ident.name, root->ident.name);
+                mix_help(loc,
+                         "change the declaration to `%s! = ...` to make it mutable",
+                         root->ident.name);
             }
             return;
         }
@@ -953,6 +982,8 @@ static void require_mutable_loop_iterable(Sema *sema, AstNode *iterable,
     mix_error(loc,
               "cannot use mutable loop binding '%s!' over a non-mutable temporary",
               var_name);
+    mix_help(loc,
+             "store the value in a mutable variable before using it in this loop");
 }
 
 static bool is_mutating_builtin_method(MixType *obj_type, const char *method_name) {
@@ -1023,6 +1054,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                 if (expr->string_interp.exprs[i2]->resolved_type &&
                     expr->string_interp.exprs[i2]->resolved_type->kind == TYPE_FUNC) {
                     mix_error(expr->loc, "cannot convert function to string in interpolated expression");
+                    mix_help(expr->loc, "call the function first: `{func()}` instead of `{func}`");
                 }
             }
             expr->resolved_type = make_type(sema->arena, TYPE_STR);
@@ -1046,7 +1078,11 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
             if (!sym) {
                 mix_error(expr->loc, "undefined variable '%s'", expr->ident.name);
                 const char *suggestion = find_similar_name(&sema->symtab, expr->ident.name, 2);
-                if (suggestion) mix_note(expr->loc, "did you mean '%s'?", suggestion);
+                if (suggestion) {
+                    mix_help(expr->loc, "did you mean '%s'?", suggestion);
+                } else {
+                    mix_help(expr->loc, "declare '%s' before using it, or check the spelling/import", expr->ident.name);
+                }
                 expr->resolved_type = make_type(sema->arena, TYPE_INT);
             } else {
                 expr->resolved_type = sym->type;
@@ -1077,6 +1113,8 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                               binary_op_name(expr->binary.op),
                               type_name(sema->arena, left),
                               type_name(sema->arena, right));
+                    mix_help(expr->loc,
+                             "make both sides strings, or convert one side before using '+'");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 }
                 return expr->resolved_type;
@@ -1139,6 +1177,8 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                               binary_op_name(expr->binary.op),
                               type_name(sema->arena, left),
                               type_name(sema->arena, right));
+                    mix_help(expr->loc,
+                             "convert one operand or use an operator both types support");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                     return expr->resolved_type;
                 }
@@ -1165,9 +1205,11 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                        expr->unary.op == TOK_REF_MUT) {
                 if (!expr_is_borrowable(expr->unary.operand)) {
                     mix_error(expr->loc, "cannot borrow a non-addressable expression");
+                    mix_help(expr->loc, "borrow a variable, field, index, or dereference instead of a temporary value");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 } else if (operand && operand->kind == TYPE_REF) {
                     mix_error(expr->loc, "cannot borrow an existing ref value");
+                    mix_help(expr->loc, "use the existing ref directly, or dereference it before borrowing again");
                     expr->resolved_type = operand;
                 } else {
                     bool want_mut = expr->unary.op == TOK_REF_MUT;
@@ -1178,9 +1220,11 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                                       "cannot take mutable ref through immutable '%s' "
                                       "(declare it as `%s! = ...`)",
                                       root->ident.name, root->ident.name);
+                            mix_help(expr->loc, "change the binding to `%s! = ...` if this value should be mutated", root->ident.name);
                         } else {
                             mix_error(expr->loc,
                                       "cannot take mutable ref of a non-mutable temporary");
+                            mix_help(expr->loc, "store the value in a mutable variable first, then take the mutable ref");
                         }
                         expr->resolved_type = make_ref_type(
                             sema->arena, operand, false);
@@ -1351,6 +1395,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                 if (expr->call.arg_count != 2) {
                     mix_error(expr->loc, "'%s' expects 2 argument(s), got %d",
                               expr->call.name, expr->call.arg_count);
+                    mix_help(expr->loc, "call it as `%s(zone, value)`", expr->call.name);
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                     for (int i = 0; i < expr->call.arg_count; i++) {
                         resolve_expr(sema, expr->call.args[i]);
@@ -1363,11 +1408,13 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     mix_error(expr->call.args[0]->loc,
                               "argument 1 of '%s': expected Zone, got %s",
                               expr->call.name, type_name(sema->arena, zone_type));
+                    mix_help(expr->call.args[0]->loc, "pass an active Zone as the first argument");
                 }
                 if (!value_type || value_type->kind == TYPE_VOID) {
                     mix_error(expr->call.args[1]->loc,
                               "argument 2 of '%s' must be a value",
                               expr->call.name);
+                    mix_help(expr->call.args[1]->loc, "pass the value you want to store in the box");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                     return expr->resolved_type;
                 }
@@ -1381,7 +1428,11 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
             if (!sym) {
                 mix_error(expr->loc, "undefined function '%s'", expr->call.name);
                 const char *suggestion = find_similar_name(&sema->symtab, expr->call.name, 2);
-                if (suggestion) mix_note(expr->loc, "did you mean '%s'?", suggestion);
+                if (suggestion) {
+                    mix_help(expr->loc, "did you mean '%s'?", suggestion);
+                } else {
+                    mix_help(expr->loc, "define '%s' before calling it, or add the module that exports it with `use`", expr->call.name);
+                }
                 expr->resolved_type = make_type(sema->arena, TYPE_INT);
                 for (int i = 0; i < expr->call.arg_count; i++) {
                     resolve_expr(sema, expr->call.args[i]);
@@ -1463,6 +1514,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     if (!is_overloaded) {
                         mix_error(expr->loc, "'%s' expects %d argument(s), got %d",
                                   expr->call.name, ftype->func.param_count, expr->call.arg_count);
+                        mix_help(expr->loc, "add missing arguments or remove extras to match '%s'", expr->call.name);
                     }
                 }
                 // Check argument types
@@ -1483,6 +1535,9 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                                   i + 1, expr->call.name,
                                   type_name(sema->arena, expected),
                                   type_name(sema->arena, actual));
+                        mix_help(expr->call.args[i]->loc,
+                                 "change this argument or update '%s' to accept %s",
+                                 expr->call.name, type_name(sema->arena, actual));
                     }
                 }
                 // Enforce `has` constraints on the inferred type parameter.
@@ -1498,6 +1553,9 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                                     "type %s does not satisfy constraint '%s' on '%s'",
                                     type_name(sema->arena, t_concrete),
                                     constraint_label(c), expr->call.name);
+                                mix_help(expr->loc,
+                                    "constraint '%s' requires the type to have specific methods or fields; implement them or choose a different type",
+                                    constraint_label(c));
                             }
                         }
                     }
@@ -1656,6 +1714,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     stype = sym->type->func.return_type;
                 } else {
                     mix_error(expr->loc, "unknown shape '%s'", expr->shape_lit.shape_name);
+                    mix_help(expr->loc, "declare the shape before using it, or check the spelling");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                     return expr->resolved_type;
                 }
@@ -1761,6 +1820,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     expr->resolved_type = make_type(sema->arena, TYPE_INT);
                 } else {
                     mix_error(expr->loc, "list has no field '%s'", expr->field_expr.field_name);
+                    mix_help(expr->loc, "use `.len` for list length, or call a list method with parentheses");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 }
             } else if (obj_base && obj_base->kind == TYPE_MAP) {
@@ -1774,6 +1834,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     expr->resolved_type = make_list_type(sema->arena, obj_base->map.val_type);
                 } else {
                     mix_error(expr->loc, "map has no field '%s'", fn);
+                    mix_help(expr->loc, "map fields are `.len`, `.keys`, and `.values`");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 }
             } else if (obj_base && obj_base->kind == TYPE_SET) {
@@ -1785,6 +1846,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     expr->resolved_type = make_list_type(sema->arena, obj_base->set.elem_type);
                 } else {
                     mix_error(expr->loc, "set has no field '%s'", fn);
+                    mix_help(expr->loc, "set fields are `.len` and `.values`");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 }
             } else if (obj_base && obj_base->kind == TYPE_STR) {
@@ -1793,6 +1855,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     expr->resolved_type = make_type(sema->arena, TYPE_INT);
                 } else {
                     mix_error(expr->loc, "str has no field '%s'", expr->field_expr.field_name);
+                    mix_help(expr->loc, "use `.len` for string length, or call a string method with parentheses");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 }
             } else if (obj_base && obj_base->kind == TYPE_SHAPE) {
@@ -1810,6 +1873,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     } else {
                         mix_error(expr->loc, "shape '%s' has no field '%s'",
                                   obj_base->shape.name, expr->field_expr.field_name);
+                        mix_help(expr->loc, "add the field to shape '%s' or check the field name", obj_base->shape.name);
                         expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                     }
                 }
@@ -1832,12 +1896,14 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     mix_error(expr->loc,
                               "type expression '%s' has no static method '%s'",
                               type_name(sema->arena, static_collection), m);
+                    mix_help(expr->loc, "use `.new(zone)` to create this collection type");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                     return expr->resolved_type;
                 }
                 if (expr->method_call.arg_count != 1) {
                     mix_error(expr->loc,
                               "method 'new' expects exactly 1 argument: Zone");
+                    mix_help(expr->loc, "call it as `.new(zone)`");
                     expr->resolved_type = static_collection;
                     return expr->resolved_type;
                 }
@@ -1846,6 +1912,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     mix_error(expr->method_call.args[0]->loc,
                               "argument 1 of 'new': expected Zone, got %s",
                               type_name(sema->arena, zone_type));
+                    mix_help(expr->method_call.args[0]->loc, "pass the Zone that should own the collection storage");
                 }
                 expr->resolved_type = static_collection;
                 return expr->resolved_type;
@@ -1870,6 +1937,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 } else {
                     mix_error(expr->loc, "shared has no method '%s'", m);
+                    mix_help(expr->loc, "shared values support `read()` and `update!(...)`");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 }
                 return expr->resolved_type;
@@ -1895,6 +1963,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     expr->resolved_type = make_type(sema->arena, TYPE_STR);
                 } else {
                     mix_error(expr->loc, "str has no method '%s'", m);
+                    mix_help(expr->loc, "check the method name; common string methods include `split`, `contains`, `trim`, and `upper`");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 }
                 return expr->resolved_type;
@@ -1943,6 +2012,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     expr->resolved_type = make_type(sema->arena, TYPE_STR);
                 } else {
                     mix_error(expr->loc, "list has no method '%s'", m);
+                    mix_help(expr->loc, "check the method name; common list methods include `push!`, `pop`, `at`, `at_mut!`, and `contains`");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 }
                 return expr->resolved_type;
@@ -1965,6 +2035,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 } else {
                     mix_error(expr->loc, "map has no method '%s'", m);
+                    mix_help(expr->loc, "map methods are `has` and `remove!`");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 }
                 return expr->resolved_type;
@@ -1990,6 +2061,7 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     expr->resolved_type = make_set_type(sema->arena, obj_base->set.elem_type);
                 } else {
                     mix_error(expr->loc, "set has no method '%s'", m);
+                    mix_help(expr->loc, "set methods include `has`, `add!`, `remove!`, `union`, `intersect`, and `diff`");
                     expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                 }
                 return expr->resolved_type;
@@ -2033,6 +2105,11 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                                       expr->method_call.method_name,
                                       type_name(sema->arena, expected),
                                       type_name(sema->arena, actual));
+                            mix_help(expr->method_call.args[i2]->loc,
+                                     "change this argument or update '%s.%s' to accept %s",
+                                     obj_base->shape.name,
+                                     expr->method_call.method_name,
+                                     type_name(sema->arena, actual));
                         }
                     }
                 } else {
@@ -2064,10 +2141,14 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                                   obj_base->shape.name,
                                   expr->method_call.method_name,
                                   type_name(sema->arena, fi->type));
+                        mix_help(expr->loc, "use `%s.%s` as a field value, or change the field type to a function",
+                                 obj_base->shape.name, expr->method_call.method_name);
                         expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                     } else {
                         mix_error(expr->loc, "shape '%s' has no method '%s'",
                                   obj_base->shape.name, expr->method_call.method_name);
+                        mix_help(expr->loc, "add method '%s' to shape '%s' or check the method name",
+                                 expr->method_call.method_name, obj_base->shape.name);
                         expr->resolved_type = make_type(sema->arena, TYPE_VOID);
                     }
                 }
@@ -2093,6 +2174,8 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     mix_error(call->loc,
                               "cannot spawn '%s' with mutable parameter(s) via `go`",
                               call->call.name);
+                    mix_help(call->loc,
+                             "wrap the call in a non-mutating helper that captures the mutable args");
                 }
             } else if (call && call->kind == NODE_METHOD_CALL) {
                 MixType *obj_type = call->method_call.object
@@ -2101,6 +2184,8 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                     mix_error(call->loc,
                               "cannot spawn mutating method '%s!' via `go`",
                               call->method_call.method_name);
+                    mix_help(call->loc,
+                             "call the non-mutating version or wrap in a non-mutating helper");
                 } else if (obj_type && obj_type->kind == TYPE_SHAPE) {
                     char mangled[256];
                     snprintf(mangled, sizeof(mangled), "%s_%s",
@@ -2111,6 +2196,8 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                         mix_error(call->loc,
                                   "cannot spawn method '%s' with mutable parameter(s) via `go`",
                                   call->method_call.method_name);
+                        mix_help(call->loc,
+                                 "wrap the call in a non-mutating helper that captures the mutable args");
                     }
                 }
             }
@@ -2201,6 +2288,7 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                 mix_error(stmt->loc,
                           "global variable '%s' cannot have ref type",
                           stmt->var_decl.name);
+                mix_help(stmt->loc, "store refs in local scope, or make the global hold the referenced value instead");
             }
             // When there's a type annotation, still resolve the init expression
             // so it gets type-checked and its resolved_type is set.
@@ -2213,6 +2301,8 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                               type_name(sema->arena, init_type),
                               stmt->var_decl.name,
                               type_name(sema->arena, type));
+                    mix_help(stmt->loc, "change the initializer or update '%s' to use type %s",
+                             stmt->var_decl.name, type_name(sema->arena, init_type));
                 }
             }
             symtab_insert(&sema->symtab, stmt->var_decl.name, type, stmt->var_decl.is_mutable);
@@ -2238,6 +2328,7 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                                   "cannot assign to field '%s' from a non-mutating method "
                                   "(declare the method with a trailing `!`)",
                                   stmt->assign.name);
+                        mix_help(stmt->loc, "rename the method with a trailing `!` if it should mutate self");
                         break;
                     }
                     AstNode *self_ref = ast_new(sema->arena, NODE_IDENT, stmt->loc);
@@ -2272,6 +2363,8 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                 if (!var_sym->is_mutable) {
                     mix_error(stmt->loc, "cannot assign to immutable variable '%s'",
                               stmt->assign.name);
+                    mix_help(stmt->loc, "declare it as `%s! = ...` if reassignment is intended",
+                             stmt->assign.name);
                 }
                 if (stmt->assign.op == TOK_EQ && !types_compatible(var_sym->type, val_type)) {
                     mix_error(stmt->loc,
@@ -2279,6 +2372,8 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                               type_name(sema->arena, val_type),
                               stmt->assign.name,
                               type_name(sema->arena, var_sym->type));
+                    mix_help(stmt->loc, "change the assigned value or update '%s' to use type %s",
+                             stmt->assign.name, type_name(sema->arena, val_type));
                 }
             }
             break;
@@ -2294,6 +2389,7 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                 resolve_expr(sema, stmt->field_assign.value);
                 mix_error(stmt->loc, "cannot assign to field on non-shape type %s",
                           type_name(sema->arena, obj_type));
+                mix_help(stmt->loc, "only shape values have assignable fields");
                 break;
             }
             ShapeFieldInfo *fi = type_find_field(obj_base, stmt->field_assign.field_name);
@@ -2301,6 +2397,8 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                 resolve_expr(sema, stmt->field_assign.value);
                 mix_error(stmt->loc, "shape '%s' has no field '%s'",
                           obj_base->shape.name, stmt->field_assign.field_name);
+                mix_help(stmt->loc, "add field '%s' to shape '%s' or check the field name",
+                         stmt->field_assign.field_name, obj_base->shape.name);
                 break;
             }
             // Hint with the field's declared type so `b.sprites = []` retypes
@@ -2315,10 +2413,12 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                               "(declare it as `%s! = ...`)",
                               stmt->field_assign.field_name,
                               root->ident.name, root->ident.name);
+                    mix_help(stmt->loc, "change the receiver declaration to `%s! = ...`", root->ident.name);
                 } else {
                     mix_error(stmt->loc,
                               "cannot assign to field '%s' on a non-mutable temporary",
                               stmt->field_assign.field_name);
+                    mix_help(stmt->loc, "store the receiver in a mutable variable before assigning the field");
                 }
                 break;
             }
@@ -2329,6 +2429,8 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                           type_name(sema->arena, val_type),
                           stmt->field_assign.field_name,
                           type_name(sema->arena, fi->type));
+                mix_help(stmt->loc, "change the assigned value or update field '%s' to use type %s",
+                         stmt->field_assign.field_name, type_name(sema->arena, val_type));
             }
             break;
         }
@@ -2353,6 +2455,9 @@ static void analyze_stmt(Sema *sema, AstNode *stmt) {
                     mix_error(stmt->loc,
                               "mutable loop binding '%s!' is only supported when iterating a list",
                               stmt->for_stmt.var_name);
+                    mix_help(stmt->loc,
+                             "use a regular (immutable) loop binding `%s` or iterate over a list",
+                             stmt->for_stmt.var_name);
                 } else {
                     require_mutable_loop_iterable(
                         sema, stmt->for_stmt.iterable,
@@ -2676,6 +2781,8 @@ static void register_global(Sema *sema, AstNode *decl) {
         mix_error(decl->loc,
                   "module-level mutable '%s' must be initialized with a literal "
                   "(int, float, bool, or string)", decl->var_decl.name);
+        mix_help(decl->loc,
+                 "assign a literal value like `0`, `true`, or `\"hello\"` as the initializer");
         return;
     }
     MixType *type = resolve_expr(sema, decl->var_decl.init_expr);
@@ -2727,6 +2834,8 @@ static void register_fn(Sema *sema, AstNode *fn) {
         mix_error(fn->loc,
                   "function '%s' cannot return a ref type",
                   fn->fn_decl.name);
+        mix_help(fn->loc,
+                 "return the referenced value by value instead, or use a Box/Zone");
     }
 
     // If function has side effects (~), non-void return, and body contains fail,
@@ -2766,6 +2875,9 @@ static void register_fn(Sema *sema, AstNode *fn) {
                     mix_error(fn->loc,
                         "mutable parameter '%s' of '%s' cannot have a default value",
                         fn->fn_decl.params[i].name, fn->fn_decl.name);
+                    mix_help(fn->loc,
+                             "remove the default value or the `!` from parameter '%s'",
+                             fn->fn_decl.params[i].name);
                 }
                 seen_default = true;
             } else if (seen_default) {
@@ -2773,6 +2885,9 @@ static void register_fn(Sema *sema, AstNode *fn) {
                     "parameter '%s' of '%s' must have a default — "
                     "non-default param after a defaulted one",
                     fn->fn_decl.params[i].name, fn->fn_decl.name);
+                mix_help(fn->loc,
+                         "reorder parameters so that defaulted ones come last, or add a default to '%s'",
+                         fn->fn_decl.params[i].name);
             }
             // Annotate param type AST node
             if (fn->fn_decl.params[i].type) {
@@ -2807,6 +2922,8 @@ static void register_extern_fn(Sema *sema, AstNode *fn) {
         mix_error(fn->loc,
                   "extern function '%s' cannot return a ref type",
                   fn->extern_fn_decl.name);
+        mix_help(fn->loc,
+                 "return a pointer or value type instead; refs cannot cross the extern boundary");
     }
 
     func_type->func.param_count = fn->extern_fn_decl.param_count;
@@ -3520,6 +3637,8 @@ void sema_analyze(Sema *sema, AstNode *program) {
                     mix_error(sf->type ? sf->type->loc : decl->loc,
                               "shape field '%s.%s' cannot have ref type",
                               decl->shape_decl.name, sf->name);
+                    mix_help(sf->type ? sf->type->loc : decl->loc,
+                             "store the referenced value directly in the shape instead of using ref");
                 }
                 // Annotate AST node
                 if (sf->type) sf->type->resolved_type = ftype;
@@ -3655,6 +3774,9 @@ void sema_analyze(Sema *sema, AstNode *program) {
                             "mutable parameter '%s' of '%s.%s' cannot have a default value",
                             method->fn_decl.params[k].name,
                             decl->shape_decl.name, method->fn_decl.name);
+                        mix_help(method->loc,
+                                 "remove the default value or the `!` from parameter '%s'",
+                                 method->fn_decl.params[k].name);
                     }
                     if (method->fn_decl.params[k].type)
                         method->fn_decl.params[k].type->resolved_type = pt;

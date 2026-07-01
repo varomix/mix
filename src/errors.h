@@ -38,6 +38,9 @@ void mix_warning(SrcLoc loc, const char *fmt, ...);
 // Report a note (additional context)
 void mix_note(SrcLoc loc, const char *fmt, ...);
 
+// Report a help line (actionable next step)
+void mix_help(SrcLoc loc, const char *fmt, ...);
+
 // Get total error count
 int mix_error_count(void);
 

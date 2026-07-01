@@ -219,10 +219,10 @@ footer a { color: var(--accent); text-decoration: none; }
 <table>
 <tr><th>Backend</th><th>Flag</th><th>Pipeline</th><th>Platforms</th></tr>
 <tr>
-    <td><strong>QBE</strong> (default)</td>
+    <td><strong>LLVM</strong> (default)</td>
     <td><em>none</em></td>
-    <td><code>.mix &rarr; QBE IR &rarr; assembly &rarr; binary</code></td>
-    <td>x86_64, aarch64, riscv64</td>
+    <td><code>.mix &rarr; LLVM IR &rarr; clang &rarr; binary</code></td>
+    <td>Native targets supported by clang; also <code>wasm32</code> and <code>wasm-browser</code></td>
 </tr>
 <tr>
     <td><strong>C</strong></td>
@@ -232,17 +232,15 @@ footer a { color: var(--accent); text-decoration: none; }
 </tr>
 </table>
 
-<p>The C backend translates MIX directly to portable C99 code, bypassing QBE entirely. The generated C is then compiled by whatever <code>cc</code> is available on the target system &mdash; MIPSpro on IRIX, GCC on Linux, Clang on macOS.</p>
+<p>The C backend translates MIX directly to portable C99 code, bypassing LLVM entirely. The generated C is then compiled by whatever <code>cc</code> is available on the target system &mdash; MIPSpro on IRIX, GCC on Linux, Clang on macOS.</p>
 
 <div class="diagram">
-    <div style="margin-bottom: 0.5rem; color: var(--text-dim)">QBE backend (default)</div>
+    <div style="margin-bottom: 0.5rem; color: var(--text-dim)">LLVM backend (default)</div>
     <span class="file">.mix</span> <span class="arrow">&rarr;</span>
     <span class="stage">AST</span> <span class="arrow">&rarr;</span>
-    <span class="stage">qbe_emit</span> <span class="arrow">&rarr;</span>
-    <span class="file">.ssa</span> <span class="arrow">&rarr;</span>
-    <span class="stage">QBE</span> <span class="arrow">&rarr;</span>
-    <span class="file">.s</span> <span class="arrow">&rarr;</span>
-    <span class="stage">cc</span> <span class="arrow">&rarr;</span>
+    <span class="stage">lower/LIR</span> <span class="arrow">&rarr;</span>
+    <span class="file">.ll</span> <span class="arrow">&rarr;</span>
+    <span class="stage">clang</span> <span class="arrow">&rarr;</span>
     <span class="file">binary</span>
     <br><br>
     <div style="margin-bottom: 0.5rem; color: var(--text-dim)">C backend (--backend c)</div>
@@ -357,7 +355,7 @@ forms such as <code>Box[T]</code> and collections remain pointer-based runtime v
 <section id="irix">
 <h2><span class="num">03</span>Building for SGI IRIX</h2>
 
-<p>The C backend was specifically designed to target SGI IRIX on MIPS hardware (R10000/R12000/R14000 processors). IRIX has MIPSpro <code>cc</code> but no QBE &mdash; the C backend solves this.</p>
+<p>The C backend was specifically designed to target SGI IRIX on MIPS hardware (R10000/R12000/R14000 processors). IRIX has MIPSpro <code>cc</code> but no modern LLVM toolchain &mdash; the C backend solves this.</p>
 
 <h3>Prerequisites</h3>
 
@@ -381,7 +379,7 @@ make clean
 make CC="cc -64" CFLAGS="-O2 -64"</code><span class="label">shell</span></pre>
 
 <div class="info-box warning">
-    <strong>Note:</strong> The QBE backend will not work on IRIX since QBE does not support MIPS. The MIX compiler itself compiles fine (it's portable C), but you must use <code>--backend c</code> when compiling MIX programs.
+    <strong>Note:</strong> The LLVM backend is intended for the actively supported native and WebAssembly targets. On IRIX, use <code>--backend c</code> when compiling MIX programs.
 </div>
 
 <h3>Step 2: Compile MIX Programs</h3>
@@ -462,7 +460,7 @@ mix --backend c run hello.mix</code><span class="label">shell</span></pre>
 <tr><td>PowerPC (classic Mac, PS3)</td><td>GCC</td><td>Should work (untested)</td></tr>
 <tr><td>SPARC (Sun workstations)</td><td>GCC / Sun Studio</td><td>Should work (untested)</td></tr>
 <tr><td>ARM 32-bit (RPi)</td><td>GCC</td><td>Should work (untested)</td></tr>
-<tr><td>RISC-V</td><td>GCC</td><td>QBE backend also available</td></tr>
+<tr><td>RISC-V</td><td>GCC / Clang</td><td>Use LLVM when available, or the C backend for portability</td></tr>
 </table>
 
 <h3>Cross-Compilation</h3>
@@ -486,22 +484,22 @@ cc -64 -O2 game.c runtime.c -o game -lm</code><span class="label">shell</span></
 
 <!-- ====== DIFFERENCES ====== -->
 <section id="differences">
-<h2><span class="num">05</span>QBE vs C Backend</h2>
+<h2><span class="num">05</span>LLVM vs C Backend</h2>
 
 <p>Both backends produce identical program behavior &mdash; all tests pass with matching output. The differences are in compilation:</p>
 
 <table>
-<tr><th>Aspect</th><th>QBE Backend</th><th>C Backend</th></tr>
-<tr><td>Speed</td><td>Faster (QBE is optimized)</td><td>Depends on target <code>cc</code></td></tr>
-<tr><td>Optimization</td><td>QBE + <code>cc -O2</code></td><td><code>cc -O2</code> only</td></tr>
+<tr><th>Aspect</th><th>LLVM Backend</th><th>C Backend</th></tr>
+<tr><td>Speed</td><td>Fast default native path</td><td>Depends on target <code>cc</code></td></tr>
+<tr><td>Optimization</td><td>clang/LLVM via <code>-O&lt;level&gt;</code></td><td>target <code>cc</code> via <code>-O&lt;level&gt;</code></td></tr>
 <tr><td>Debug info</td><td>DWARF via <code>--debug</code></td><td><code>cc -g</code> via <code>--debug</code></td></tr>
-<tr><td>Dependencies</td><td>Requires QBE installed</td><td>Only needs a C compiler</td></tr>
-<tr><td>Portability</td><td>x86_64, aarch64, riscv64</td><td>Any platform with C99</td></tr>
+<tr><td>Dependencies</td><td>Requires clang; WebAssembly targets need WASI clang or Emscripten</td><td>Only needs a C compiler</td></tr>
+<tr><td>Portability</td><td>Native clang targets plus <code>wasm32</code> and <code>wasm-browser</code></td><td>Any platform with C99</td></tr>
 <tr><td>Output quality</td><td>Optimized machine code</td><td>Readable C source</td></tr>
 </table>
 
 <div class="info-box tip">
-    <strong>When to use which:</strong> Use the QBE backend (default) for development on supported platforms &mdash; it's faster and produces better optimized code. Use the C backend when targeting unsupported architectures, when QBE is not available, or when you want to inspect the generated code.
+    <strong>When to use which:</strong> Use the LLVM backend (default) for development on supported native and WebAssembly targets. Use the C backend when targeting unsupported architectures, when a C compiler is the only viable toolchain, or when you want to inspect the generated code.
 </div>
 </section>
 

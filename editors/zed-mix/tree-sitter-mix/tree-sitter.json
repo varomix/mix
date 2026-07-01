@@ -1,0 +1,20 @@
+{
+  "grammars": [{
+    "name": "mix",
+    "camelcase": "Mix",
+    "scope": "source.mix",
+    "path": ".",
+    "file-types": ["mix"],
+    "highlights": "queries/highlights.scm",
+    "injection-regex": "mix"
+  }],
+  "metadata": {
+    "version": "0.2.0",
+    "license": "MIT",
+    "description": "MIX programming language grammar",
+    "authors": [{"name": "mix-lang"}],
+    "links": {
+      "repository": "https://github.com/mix-lang/tree-sitter-mix"
+    }
+  }
+}

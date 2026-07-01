@@ -166,6 +166,31 @@ static const char *type_name(Arena *a, MixType *t) {
     }
 }
 
+static const char *binary_op_name(TokenKind op) {
+    switch (op) {
+        case TOK_PLUS:    return "+";
+        case TOK_MINUS:   return "-";
+        case TOK_STAR:    return "*";
+        case TOK_SLASH:   return "/";
+        case TOK_PERCENT: return "%";
+        case TOK_EQEQ:    return "==";
+        case TOK_NEQ:     return "!=";
+        case TOK_LT:      return "<";
+        case TOK_GT:      return ">";
+        case TOK_LTE:     return "<=";
+        case TOK_GTE:     return ">=";
+        case TOK_AND:     return "and";
+        case TOK_OR:      return "or";
+        case TOK_PIPE:    return "|";
+        default:          return token_kind_name(op);
+    }
+}
+
+static bool type_is_unresolved_for_binary(MixType *t) {
+    return !t || t->kind == TYPE_INFER || t->kind == TYPE_GENERIC ||
+           t->kind == TYPE_NAMED || t->kind == TYPE_VOID;
+}
+
 /* Check if two types are compatible (same kind + matching inner types) */
 // Does `t` satisfy a `has` constraint? For operator constraints (+, -, *, /,
 // %, ==, !=, <, >, <=, >=) we know the built-in type rules. For named
@@ -1039,11 +1064,21 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
         }
         case NODE_BINARY_EXPR: {
             MixType *left = resolve_expr(sema, expr->binary.left);
-            resolve_expr(sema, expr->binary.right);
+            MixType *right = resolve_expr(sema, expr->binary.right);
 
             // String concatenation: str + str -> str
-            if (left && left->kind == TYPE_STR && expr->binary.op == TOK_PLUS) {
-                expr->resolved_type = make_type(sema->arena, TYPE_STR);
+            if (expr->binary.op == TOK_PLUS &&
+                ((left && left->kind == TYPE_STR) || (right && right->kind == TYPE_STR))) {
+                if (left && right && left->kind == TYPE_STR && right->kind == TYPE_STR) {
+                    expr->resolved_type = make_type(sema->arena, TYPE_STR);
+                } else {
+                    mix_error(expr->loc,
+                              "cannot apply operator '%s' to %s and %s",
+                              binary_op_name(expr->binary.op),
+                              type_name(sema->arena, left),
+                              type_name(sema->arena, right));
+                    expr->resolved_type = make_type(sema->arena, TYPE_VOID);
+                }
                 return expr->resolved_type;
             }
 
@@ -1073,6 +1108,43 @@ static MixType *resolve_expr(Sema *sema, AstNode *expr) {
                         return expr->resolved_type;
                     }
                 }
+            }
+
+            if (expr->binary.op == TOK_PLUS || expr->binary.op == TOK_MINUS ||
+                expr->binary.op == TOK_STAR || expr->binary.op == TOK_SLASH ||
+                expr->binary.op == TOK_PERCENT || expr->binary.op == TOK_PIPE) {
+                bool ptr_arith = (expr->binary.op == TOK_PLUS || expr->binary.op == TOK_MINUS) &&
+                    ((left && left->kind == TYPE_PTR && right && type_is_integer(right)) ||
+                     (right && right->kind == TYPE_PTR && left && type_is_integer(left)));
+                if (ptr_arith) {
+                    expr->resolved_type = (left && left->kind == TYPE_PTR) ? left : right;
+                    return expr->resolved_type;
+                }
+
+                bool ok = false;
+                if (type_is_unresolved_for_binary(left) ||
+                    type_is_unresolved_for_binary(right)) {
+                    ok = true;
+                } else if (expr->binary.op == TOK_PERCENT || expr->binary.op == TOK_PIPE) {
+                    ok = left && right && type_is_integer(left) && type_is_integer(right);
+                } else {
+                    ok = left && right &&
+                         ((type_is_integer(left) && type_is_integer(right)) ||
+                          (type_is_float(left) && type_is_float(right)));
+                }
+
+                if (!ok) {
+                    mix_error(expr->loc,
+                              "cannot apply operator '%s' to %s and %s",
+                              binary_op_name(expr->binary.op),
+                              type_name(sema->arena, left),
+                              type_name(sema->arena, right));
+                    expr->resolved_type = make_type(sema->arena, TYPE_VOID);
+                    return expr->resolved_type;
+                }
+
+                expr->resolved_type = left;
+                return expr->resolved_type;
             }
 
             if (expr->binary.op == TOK_EQEQ || expr->binary.op == TOK_NEQ ||

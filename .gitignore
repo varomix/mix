@@ -1,16 +1,34 @@
 build/
+plans/
+.claude/
 /bin/
+target/
+editors/zed-mix/target/
+editors/zed-mix/tree-sitter-mix/tree-sitter-mix.wasm
+editors/zed-mix/grammars/mix/tree-sitter-mix.wasm
 *.o
 *.s
 *.ssa
 *.dSYM/
+*.out
+*.zip
 *.spv
 .DS_Store
 node_modules/
 out/
 
+# Root-level browser/WASM compiler outputs from ad-hoc local runs.
+/*.wasm
+/*.js
+/*.html
+/js/
+
 # Built example binaries (sources are *.mix; binaries are produced by `mix build`)
 /a.out
+/arithmetic
+/control_flow
+/extern_c
+/fibonacci
 /opengl_triangle
 /raylib_C_example
 /sdl3_use_c
@@ -39,14 +57,24 @@ out/
 /redecl
 /scale_test
 /two_args
+/test_*
+/_test_*
+/1071_Greatest_Common_Divisor_of_Strings
 
 # examples/ — the .mix sources are tracked; their compiled output is not
+examples/arithmetic
+examples/control_flow
+examples/extern_c
+examples/fibonacci
 examples/hello
+examples/Encode_and_Decode_Strings_v01
 examples/opengl_triangle
 examples/raylib_C_example
+examples/raylib_example
 examples/raylib_shapes_example
 examples/sdl3_use_c
 examples/shapes_methods
+examples/C_examples/a.out
 examples/gpu_triangle/gpu_triangle
 examples/gpu_triangle_mix/gpu_*
 examples/gpu_triangle_mix/test_*

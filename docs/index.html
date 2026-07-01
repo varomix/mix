@@ -433,11 +433,11 @@ footer em { color: var(--text); }
     <div class="grid-bg"></div>
     <div class="logo">mix</div>
     <p class="tagline">"Fast to run, fast to write, fast to read."</p>
-    <p class="hero-sub">A systems language with the footprint of C and the clarity of Python. Compiles to native arm64 via QBE. Built for graphics, games, and real-time systems.</p>
+    <p class="hero-sub">A systems language with the footprint of C and the clarity of Python. Compiles through LLVM by default, with C and WebAssembly targets. Built for graphics, games, and real-time systems.</p>
     <div class="hero-badges">
-        <span class="badge g">52/52 tests passing</span>
-        <span class="badge b">QBE backend</span>
-        <span class="badge p">arm64 native</span>
+        <span class="badge g">107/107 tests passing</span>
+        <span class="badge b">LLVM backend</span>
+        <span class="badge p">native + wasm</span>
         <span class="badge o">SDL3 verified</span>
         <span class="badge r">pthreads concurrency</span>
         <span class="badge g">standard library</span>
@@ -472,11 +472,11 @@ footer em { color: var(--text); }
     <span class="fn">print</span>(<span class="str">"length^2 = {a.length_sq}"</span>) <span class="cm">// computed field</span></code><span class="label">mix</span></pre>
 
 <div class="card-grid">
-    <div class="card"><span class="icon">&#9889;</span><h4>Native Speed</h4><p>Compiles to arm64 machine code. No VM, no interpreter, no GC pauses.</p></div>
+    <div class="card"><span class="icon">&#9889;</span><h4>Native Speed</h4><p>Compiles to native machine code. No VM, no interpreter, no GC pauses.</p></div>
     <div class="card"><span class="icon">&#128064;</span><h4>Obvious Syntax</h4><p>If a beginner can't guess it, it's out. ~30 keywords, the whole language fits in your head.</p></div>
     <div class="card"><span class="icon">&#128279;</span><h4>C Interop</h4><p>Import C headers directly with <code>use c</code> &mdash; call SDL3, OpenGL, or any C library. No binding generators.</p></div>
     <div class="card"><span class="icon">&#128230;</span><h4>Modules</h4><p>File = module. Folder = namespace. No headers, no build files.</p></div>
-    <div class="card"><span class="icon">&#9881;</span><h4>QBE Backend</h4><p>12K-line compiler backend. Builds in seconds, produces good code.</p></div>
+    <div class="card"><span class="icon">&#9881;</span><h4>LLVM Backend</h4><p>Default native backend with C fallback plus WASI and browser WebAssembly targets.</p></div>
     <div class="card"><span class="icon">&#127926;</span><h4>Game Ready</h4><p>SDL3 + Raylib verified. Shapes for game math. defer for cleanup. go/wait for parallelism.</p></div>
 </div>
 </section>
@@ -486,17 +486,13 @@ footer em { color: var(--text); }
 <h2><span class="num">01</span>Getting Started</h2>
 
 <h3>Install Prerequisites</h3>
-<pre><code><span class="cm"># Build QBE from source</span>
-git clone git://c9x.me/qbe.git
-cd qbe && make && sudo cp qbe /usr/local/bin/
-
-<span class="cm"># macOS command line tools</span>
+<pre><code><span class="cm"># macOS command line tools</span>
 xcode-select --install</code></pre>
 
 <h3>Build the Compiler</h3>
 <pre><code>cd mix_lang
 make              <span class="cm"># produces build/mix</span>
-make test         <span class="cm"># runs 77 tests</span></code></pre>
+make test         <span class="cm"># runs the runtime suite</span></code></pre>
 
 <h3>Compile &amp; Run</h3>
 <pre><code>./build/mix hello.mix -o hello && ./hello</code></pre>
@@ -507,13 +503,9 @@ make test         <span class="cm"># runs 77 tests</span></code></pre>
     <span class="pipe-arrow">&rarr;</span>
     <span class="pipe-stage">mix</span>
     <span class="pipe-arrow">&rarr;</span>
-    <span class="pipe-stage">.ssa</span>
+    <span class="pipe-stage">.ll</span>
     <span class="pipe-arrow">&rarr;</span>
-    <span class="pipe-stage">QBE</span>
-    <span class="pipe-arrow">&rarr;</span>
-    <span class="pipe-stage">.s</span>
-    <span class="pipe-arrow">&rarr;</span>
-    <span class="pipe-stage">cc</span>
+    <span class="pipe-stage">clang</span>
     <span class="pipe-arrow">&rarr;</span>
     <span class="pipe-stage">binary</span>
 </div>
@@ -600,7 +592,7 @@ c = <span class="ty">Circle</span>(radius: <span class="num">5.0</span>)
         x == other.x <span class="kw">and</span> y == other.y
 
 a = <span class="ty">Vec2</span>(<span class="num">1.0</span>, <span class="num">2.0</span>) + <span class="ty">Vec2</span>(<span class="num">3.0</span>, <span class="num">4.0</span>)  <span class="cm">// Vec2(4.0, 6.0)</span></code><span class="label">mix</span></pre>
-<p class="dim">Supported operators: <code>+ - * / % == != &lt; &gt; &lt;= &gt;=</code></p>
+<p class="dim">Supported operators: <code>+ - * / % == != &lt; &gt; &lt;= &gt;=</code>. Built-in arithmetic requires operands from the same numeric category; convert explicitly before mixing <code>int</code> and <code>float</code>.</p>
 
 <h3>Tagged Unions</h3>
 <pre><code><span class="kw">shape</span> <span class="ty">Shape</span>
@@ -637,6 +629,8 @@ nums.<span class="fn">push!</span>(<span class="num">60</span>)           <span 
 nums.<span class="fn">sort!</span>()              <span class="cm">// sorts int, float, str lists</span>
 nums.<span class="fn">reverse!</span>()           <span class="cm">// reverse in place</span>
 last = nums.<span class="fn">pop!</span>()       <span class="cm">// remove + return last</span>
+lo = <span class="fn">min</span>(nums)             <span class="cm">// minimum numeric element</span>
+hi = <span class="fn">max</span>(nums)             <span class="cm">// maximum numeric element</span>
 <span class="fn">print</span>(nums.<span class="fn">contains</span>(<span class="num">30</span>)) <span class="cm">// true</span>
 <span class="fn">print</span>(nums.<span class="fn">index_of</span>(<span class="num">30</span>)) <span class="cm">// index or -1</span>
 
@@ -905,6 +899,11 @@ cwd = <span class="fn">getcwd</span>()
 )
 app.<span class="fn">build</span>()</code></pre>
 </div>
+<div class="card">
+<h4 style="color:var(--accent3)">WebAssembly Targets</h4>
+<pre style="border:none;margin:0;padding:12px"><code>mix build --target wasm32 app.mix -o app.wasm
+mix build --target wasm-browser app.mix -o app.html</code></pre>
+</div>
 </div>
 </section>
 
@@ -964,7 +963,7 @@ app.<span class="fn">build</span>()</code></pre>
 <h3>Debug Info (<code>--debug</code>)</h3>
 <p>Compile with DWARF line numbers for source-level debugging with lldb or gdb:</p>
 <pre><code>./build/mix program.mix -o program --debug</code></pre>
-<p class="dim">Emits QBE <code>dbgfile</code>/<code>dbgloc</code> directives &rarr; <code>.file</code>/<code>.loc</code> assembly directives &rarr; DWARF line table in the binary.</p>
+<p class="dim">Emits LLVM debug metadata that clang encodes into DWARF line tables in the binary.</p>
 </section>
 
 <!-- ========== EDITOR SUPPORT & LSP ========== -->
@@ -1224,7 +1223,9 @@ mix build examples/sdl3_use_c.mix -o sdl3
     <span class="pipe-arrow">&rarr;</span>
     <span class="pipe-stage">Sema</span>
     <span class="pipe-arrow">&rarr;</span>
-    <span class="pipe-stage">QBE Emit</span>
+    <span class="pipe-stage">Lower/LIR</span>
+    <span class="pipe-arrow">&rarr;</span>
+    <span class="pipe-stage">LLVM Emit</span>
     <span class="pipe-arrow">&rarr;</span>
     <span class="pipe-stage">Binary</span>
 </div>

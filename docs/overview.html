@@ -523,6 +523,7 @@ b <span class="op">=</span> <span class="ty">Vec2</span>(<span class="num">3.0</
 c <span class="op">=</span> a <span class="op">+</span> b   <span class="cm">// Vec2(4.0, 6.0)</span></code><span class="label">mix</span></pre>
 
 <p>Overloadable operators: <code class="op">+</code> <code class="op">-</code> <code class="op">*</code> <code class="op">/</code> <code class="op">%</code> <code class="op">==</code> <code class="op">!=</code> <code class="op">&lt;</code> <code class="op">&gt;</code> <code class="op">&lt;=</code> <code class="op">&gt;=</code></p>
+<p>Built-in arithmetic operators require operands from the same numeric category: integers with integers, or floats with floats. MIX does not implicitly mix <code>int</code> and <code>float</code>; convert explicitly when needed. <code>str + str</code> concatenates strings, but mixed string operators such as <code>str + int</code> are errors.</p>
 
 <h3>Tagged Unions</h3>
 <pre><code><span class="kw">shape</span> <span class="ty">Expr</span>
@@ -573,6 +574,8 @@ nums.<span class="fn">insert!</span>(<span class="num">0</span>, <span class="nu
 nums.<span class="fn">remove!</span>(<span class="num">0</span>)
 nums.<span class="fn">sort!</span>()              <span class="cm">// sorts int, float, str lists</span>
 nums.<span class="fn">reverse!</span>()
+lo <span class="op">=</span> <span class="fn">min</span>(nums)             <span class="cm">// minimum numeric element</span>
+hi <span class="op">=</span> <span class="fn">max</span>(nums)             <span class="cm">// maximum numeric element</span>
 
 <span class="cm">// query</span>
 has_three <span class="op">=</span> nums.<span class="fn">contains</span>(<span class="num">3</span>)
@@ -1023,6 +1026,8 @@ mix --bind raylib.h -o raylib.mix</code><span class="label">shell</span></pre>
     <tr><td><code><span class="fn">pow</span></code></td><td><code>(<span class="ty">float</span>, <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Exponentiation</td></tr>
     <tr><td><code><span class="fn">min</span></code></td><td><code>(<span class="ty">float</span>, <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Minimum</td></tr>
     <tr><td><code><span class="fn">max</span></code></td><td><code>(<span class="ty">float</span>, <span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Maximum</td></tr>
+    <tr><td><code><span class="fn">min</span></code></td><td><code>([<span class="ty">int</span>|<span class="ty">float</span>]) <span class="op">-></span> element</code></td><td>Minimum element of a numeric list</td></tr>
+    <tr><td><code><span class="fn">max</span></code></td><td><code>([<span class="ty">int</span>|<span class="ty">float</span>]) <span class="op">-></span> element</code></td><td>Maximum element of a numeric list</td></tr>
     <tr><td><code><span class="fn">sin</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Sine</td></tr>
     <tr><td><code><span class="fn">cos</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Cosine</td></tr>
     <tr><td><code><span class="fn">tan</span></code></td><td><code>(<span class="ty">float</span>) <span class="op">-></span> <span class="ty">float</span></code></td><td>Tangent</td></tr>
@@ -1068,7 +1073,12 @@ mix --bind raylib.h -o raylib.mix</code><span class="label">shell</span></pre>
     <tr><td><code>mix build -o myapp game.mix</code></td><td>Compile with custom output name</td></tr>
     <tr><td><code>mix build</code></td><td>Auto-discover and build (looks for <code>build.mix</code> or <code>main()</code>)</td></tr>
     <tr><td><code>mix run</code></td><td>Auto-discover, build, and run</td></tr>
+    <tr><td><code>mix build --backend c game.mix</code></td><td>Compile through the portable C backend</td></tr>
+    <tr><td><code>mix build --target wasm32 game.mix -o game.wasm</code></td><td>Compile a WASI WebAssembly module</td></tr>
+    <tr><td><code>mix build --target wasm-browser game.mix -o game.html</code></td><td>Compile browser HTML/JS/WASM output through Emscripten</td></tr>
+    <tr><td><code>mix build -O2 game.mix</code></td><td>Compile with an optimization level</td></tr>
 </table>
+<p><code>--target wasm32</code> requires a WASI-capable clang. <code>--target wasm-browser</code> requires Emscripten and uses a source-local <code>shell.html</code> when present.</p>
 
 <h3>Project Shape</h3>
 <p>Define build configuration using the built-in <code class="ty">Project</code> shape in a <code>build.mix</code> file.</p>

@@ -1,0 +1,6 @@
+// ERROR: to int and float
+main()
+    count = 4
+    scale = 0.5
+    value!: float = count * scale
+    print(value)

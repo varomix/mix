@@ -1,0 +1,6 @@
+// ERROR: cannot apply operator '/' to int and float
+main()
+    IMAGE_WIDTH = 256
+    i = 10
+    r!: float = i / float(IMAGE_WIDTH - 1)
+    print(r)

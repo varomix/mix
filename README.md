@@ -28,7 +28,7 @@ make
 - **Match exhaustiveness** — warns on missing variants/arms for tagged unions, optionals, and results
 - **String interpolation** — `"Hello {name}!"`
 - **String operations** — `+`, comparison, `.sort()`, `.char_at()`, `.code()`, `ord()`, `chr()`
-- **Lists** — `push!`, `pop!`, `sort!` (int/float/string), `reverse!`, `insert!`, `remove!`, `contains`, `index_of`, `join`, `at`, `at_mut!`, `for item! in list`
+- **Lists** — `push!`, `pop!`, `sort!` (int/float/string), `min(list)`, `max(list)`, `reverse!`, `insert!`, `remove!`, `contains`, `index_of`, `join`, `at`, `at_mut!`, `for item! in list`
 - **Maps** — `{"key": val}`, `.has()`, `.remove!()`, `.keys`, `.values`
 - **Sets** — `set{"a", "b"}`, `.add!()`, `.remove!()`, `.has()`, `.union()`, `.intersect()`, `.diff()`
 - **Slices & comprehensions** — `list[1..3]`, `[x*x for x in list]`
@@ -50,7 +50,7 @@ make
 - **`std.collections`** — `Stack[T]`, `Queue[T]` (generic)
 
 ### Tooling
-- **Two backends** — LLVM (default native) and C (`--backend c`, fallback for targets without LLVM)
+- **Backends and targets** — LLVM (default native), C (`--backend c` fallback), WASI WebAssembly (`--target wasm32`), and browser WebAssembly (`--target wasm-browser`)
 - **`mix fmt`** — token-based formatter with comment preservation; supports `--check`, `--diff`, `-w`, recursive directory walk
 - **LSP server** (`mix-lsp`) — diagnostics, hover, go-to-definition, find references, document/workspace symbols, rename, inlay hints, code actions, signature help, completion
 - **Error messages** — colored output, line gutters, "did you mean?" suggestions, error limit
@@ -79,12 +79,28 @@ Options:
   --emit-tokens    Print token stream
   --emit-ast       Print AST
   --debug          Enable DWARF debug info
+  -O<level>        Set optimization level (for example -O2, -Os)
   --bind <path>    Generate .mix bindings from C headers
   --lib <name>     Library name for --bind
   -l<lib>          Link library (passed to cc)
   -v               Verbose
   --backend <name> Code backend (llvm [default] or c)
+  --target <arch>  Target architecture: native [default], wasm32, wasm-browser
 ```
+
+### WebAssembly Targets
+
+```bash
+# WASI module; `mix run` executes it with wasmtime
+mix build --target wasm32 examples/hello.mix -o hello.wasm
+mix run --target wasm32 examples/hello.mix
+
+# Browser output; emits HTML/JS/WASM via Emscripten
+mix build --target wasm-browser examples/cube/cube.mix -o cube.html
+mix run --target wasm-browser examples/cube/cube.mix
+```
+
+`--target wasm32` requires a WASI-capable clang (`WASI_CLANG` can override detection). `--target wasm-browser` requires Emscripten (`EMCC` can override detection) and uses a `shell.html` next to the source file when present, otherwise the bundled shell.
 
 ## Build System
 

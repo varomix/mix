@@ -527,6 +527,8 @@ list. List comprehensions let you build new lists with a concise
     nums.<span class="fn">remove!</span>(<span class="num">0</span>)        <span class="cm">// [10, 20, 30, 40, 50]</span>
     nums.<span class="fn">sort!</span>()            <span class="cm">// sorts int, float, and str lists</span>
     nums.<span class="fn">reverse!</span>()         <span class="cm">// reverse in place</span>
+    lo = <span class="fn">min</span>(nums)           <span class="cm">// minimum numeric element</span>
+    hi = <span class="fn">max</span>(nums)           <span class="cm">// maximum numeric element</span>
 
     <span class="cm">// Non-mutating methods</span>
     <span class="fn">print</span>(nums.<span class="fn">contains</span>(<span class="num">30</span>))  <span class="cm">// true</span>
@@ -705,6 +707,9 @@ that takes one parameter (the right-hand operand) and returns the result type.</
 
 <p>This makes mathematical types like vectors, matrices, and complex numbers feel
 natural to use with standard operator syntax.</p>
+<p>Built-in arithmetic operators require operands from the same numeric category.
+Convert explicitly before mixing <code>int</code> and <code>float</code>. String concatenation is
+only <code>str + str</code>; mixed string operators such as <code>str + int</code> are errors.</p>
 
 <pre><code><span class="kw">shape</span> <span class="ty">Vec2</span>
     x, y: <span class="ty">float</span>
@@ -1393,8 +1398,15 @@ mix build
 <span class="cm"># Or compile and run in one step</span>
 mix run
 
+<span class="cm"># Compile to WebAssembly targets</span>
+mix build --target wasm32 src/game.mix -o game.wasm
+mix build --target wasm-browser src/game.mix -o game.html
+
 <span class="cm"># The output binary is placed in the current directory</span>
 ./game</code><span class="label">shell</span></pre>
+
+<p><code>--target wasm32</code> requires a WASI-capable clang. <code>--target wasm-browser</code>
+requires Emscripten and emits browser HTML/JS/WASM output.</p>
 
 <p>Default values for missing fields: string fields default to <code>""</code>, list fields
 default to <code>[]</code>, and <code>debug</code> defaults to <code>false</code>. You only need to specify the

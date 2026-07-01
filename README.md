@@ -2,7 +2,7 @@
 
 # MIX
 
-A compiled, statically typed language that puts clarity and safety first. Compiles to native code via LLVM (with C and WebAssembly backends too).
+Fast to run, fast to write, fast to read. Compiles to native code via LLVM, with C and WebAssembly backends too.
 
 ```bash
 make                     # build the compiler
@@ -13,7 +13,7 @@ make                     # build the compiler
 
 MIX is for writing programs that are easy to read, reason about, and run fast. It combines the ergonomics of a modern language with the performance of native compilation.
 
-```mix
+```rust
 fibonacci(n: int) -> int
     if n <= 1
         done n
@@ -28,7 +28,7 @@ main()
 
 Types are values by default — they copy, pass, and return like structs. When you need aliasing or stable addresses, reach for `ref` or `Box` explicitly.
 
-```mix
+```rust
 shape Vec2
     x, y: float
 
@@ -48,7 +48,7 @@ main()
 
 Functions with side effects use `~`. Functions that can fail return results — `else` provides fallbacks, `?` propagates errors up the call chain. The compiler won't let you forget.
 
-```mix
+```rust
 divide(a: float, b: float) -> float ~
     if b == 0.0
         fail "division by zero"
@@ -61,7 +61,7 @@ main()
 
 ### Concurrency without the boilerplate
 
-```mix
+```rust
 main()
     t1 = go double(10)
     t2 = go double(20)

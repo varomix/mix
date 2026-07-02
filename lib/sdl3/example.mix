@@ -2,51 +2,37 @@ use sdl3
 
 main()
     ok = SDL_Init(SDL_INIT_VIDEO)
-    if ok
-        SDL_Log("SDL3 initialized")
-    else
-        SDL_Log("SDL_Init failed")
+    if not ok
         done 1
 
-    win = SDL_CreateWindow("MIX + SDL3", 800, 600, SDL_WINDOW_RESIZABLE)
-    if win
-        SDL_Log("window created")
-    else
-        SDL_Log("SDL_CreateWindow failed")
+    win = SDL_CreateWindow("MIX + SDL3", 800, 600, 0)
+    if win == 0
         SDL_Quit()
         done 1
 
     rnd = SDL_CreateRenderer(win, 0)
-    if rnd
-        SDL_Log("renderer created")
-    else
-        SDL_Log("SDL_CreateRenderer failed")
+    if rnd == 0
         SDL_DestroyWindow(win)
         SDL_Quit()
         done 1
 
-    SDL_SetRenderDrawColor(rnd, 30, 30, 40, 255)
-    SDL_RenderClear(rnd)
+    buf = bytes(256)
+    alive! = true
 
-    SDL_SetRenderDrawColor(rnd, 100, 200, 100, 255)
-    SDL_RenderFillRect(rnd, SDL_FRect(x: 250, y: 150, w: 300, h: 300))
-    SDL_RenderPresent(rnd)
+    while alive
+        while SDL_PollEvent(buf) != 0
+            evtype = peek_u32(buf, 0)
+            if evtype == SDL_EVENT_QUIT
+                alive! = false
 
-    SDL_Log("window open for 4s...")
-    running! = true
-    frames! = 0
-    while running
-        ev = SDL_Event()
-        while SDL_PollEvent(ev) != 0
-            if ev.type_ == SDL_EVENT_QUIT
-                running! = false
+        SDL_SetRenderDrawColor(rnd, 64, 128, 255, 255)
+        SDL_RenderClear(rnd)
+        SDL_SetRenderDrawColor(rnd, 255, 255, 255, 255)
+        SDL_RenderFillRect(rnd, SDL_FRect(x: 200, y: 150, w: 400, h: 300))
+        SDL_RenderPresent(rnd)
         SDL_Delay(16)
-        frames! = frames + 1
-        if frames > 250
-            running! = false
 
     SDL_DestroyRenderer(rnd)
     SDL_DestroyWindow(win)
     SDL_Quit()
-    SDL_Log("done")
     done 0

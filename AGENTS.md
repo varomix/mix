@@ -50,6 +50,7 @@ lib/runtime.c   — runtime support (linked into every binary)
 - Vendor libraries under `lib/vendor/<name>/lib/` get `-L` flags auto-added.
 - Vendor headers under `lib/vendor/<name>/include/` get `-I` flags auto-added (for `use c "..."`).
 - `lib/vendor/<name>/include/` paths are searched before CPPFLAGS `-I` directories (project headers take priority).
+- Vendor paths (`lib/vendor/`) are resolved relative to both CWD and `<exe_dir>/../lib/vendor/` so `mix run` works from any subdirectory without brew interference.
 - Extern functions must use `*` pointers for out-parameters or struct-by-reference.
 - Extern functions with no return value use `~` (e.g., `glmc_vec3_add(a: *vec3, b: *vec3, dest: *vec3) ~`).
 

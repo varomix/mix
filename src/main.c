@@ -895,6 +895,22 @@ compiling_module_count--;
                     tok = strtok_r(NULL, ",", &save);
                 }
             }
+
+            // Propagate `ldflags "-lobjc -lpthread"` to the root linker line.
+            const char *ldextra = decl->use_c_decl.ldflags;
+            if (ldextra && link_flags && link_flag_count) {
+                char ld_copy[256];
+                strncpy(ld_copy, ldextra, sizeof(ld_copy) - 1);
+                ld_copy[sizeof(ld_copy) - 1] = '\0';
+                char *save;
+                char *tok = strtok_r(ld_copy, " ", &save);
+                while (tok) {
+                    if (*tok && *link_flag_count < MAX_LINK_FLAGS) {
+                        link_flags[(*link_flag_count)++] = arena_strdup(arena, tok);
+                    }
+                    tok = strtok_r(NULL, " ", &save);
+                }
+            }
         } else if (decl->kind == NODE_EXTERN_BLOCK) {
             const char *lib = decl->extern_block.lib_name;
             if (lib && strcmp(lib, "C") != 0 && link_flags && link_flag_count
@@ -1583,6 +1599,22 @@ int main(int argc, char **argv) {
                         link_flags[link_flag_count++] = arena_strdup(&arena, tok);
                     }
                     tok = strtok_r(NULL, ",", &save);
+                }
+            }
+
+            // Collect `ldflags "-lobjc -lpthread"` and emit each token directly.
+            const char *ldextra = decl->use_c_decl.ldflags;
+            if (ldextra && link_flag_count < MAX_LINK_FLAGS) {
+                char ld_copy[256];
+                strncpy(ld_copy, ldextra, sizeof(ld_copy) - 1);
+                ld_copy[sizeof(ld_copy) - 1] = '\0';
+                char *save;
+                char *tok = strtok_r(ld_copy, " ", &save);
+                while (tok) {
+                    if (*tok && link_flag_count < MAX_LINK_FLAGS) {
+                        link_flags[link_flag_count++] = arena_strdup(&arena, tok);
+                    }
+                    tok = strtok_r(NULL, " ", &save);
                 }
             }
 

@@ -1,0 +1,12 @@
+use sdl3
+
+main()
+    ok = SDL_Init(SDL_INIT_VIDEO)
+    if ok
+        SDL_Log("SDL3 3.4.10 initialized successfully (vendored)")
+    else
+        SDL_Log("SDL_Init failed")
+        done 1
+
+    SDL_Quit()
+    done 0

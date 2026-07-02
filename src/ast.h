@@ -243,12 +243,13 @@ struct AstNode {
             int import_count;
         } use_decl;
 
-        // NODE_USE_C_DECL — use c "header.h" link "lib" source "file.c" frameworks "fw1,fw2"
+        // NODE_USE_C_DECL — use c "header.h" link "lib" source "file.c" frameworks "fw1,fw2" ldflags "-lfoo -lbar"
         struct {
             char *header_path;   // "SDL3/SDL.h"
             char *lib_name;      // "SDL3" (NULL if no link clause)
             char *source_path;   // "glad/glad.c" (NULL if no source clause)
             char *frameworks;    // "Cocoa,IOKit,OpenGL" (NULL if no frameworks clause)
+            char *ldflags;       // "-lobjc -lpthread" (NULL if no ldflags clause)
         } use_c_decl;
 
         // NODE_INT_LIT

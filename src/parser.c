@@ -1614,6 +1614,7 @@ static AstNode *parse_top_level(Parser *p) {
             node->use_c_decl.header_path = arena_strndup(p->arena, header_tok->start, header_tok->length);
             node->use_c_decl.lib_name = NULL;
             node->use_c_decl.source_path = NULL;
+            node->use_c_decl.ldflags = NULL;
             // Optional: link "libname"
             if (check(p, TOK_IDENT) && current(p)->length == 4
                 && strncmp(current(p)->start, "link", 4) == 0) {
@@ -1634,6 +1635,13 @@ static AstNode *parse_top_level(Parser *p) {
                 advance_tok(p); // skip 'frameworks'
                 Token *fw_tok = expect(p, TOK_STRING_LIT);
                 node->use_c_decl.frameworks = arena_strndup(p->arena, fw_tok->start, fw_tok->length);
+            }
+            // Optional: ldflags "-lfoo -lbar"
+            if (check(p, TOK_IDENT) && current(p)->length == 7
+                && strncmp(current(p)->start, "ldflags", 7) == 0) {
+                advance_tok(p); // skip 'ldflags'
+                Token *ld_tok = expect(p, TOK_STRING_LIT);
+                node->use_c_decl.ldflags = arena_strndup(p->arena, ld_tok->start, ld_tok->length);
             }
             return node;
         }

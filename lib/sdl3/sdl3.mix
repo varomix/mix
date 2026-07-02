@@ -1,0 +1,26 @@
+use c "SDL3/SDL.h" link "SDL3" frameworks "CoreMedia,CoreVideo,Cocoa,UniformTypeIdentifiers,IOKit,ForceFeedback,Carbon,CoreAudio,AudioToolbox,AVFoundation,Foundation,GameController,Metal,QuartzCore,CoreHaptics" ldflags "-lobjc -lpthread"
+
+pub @const SDL_INIT_AUDIO = 0x00000010
+pub @const SDL_INIT_VIDEO = 0x00000020
+pub @const SDL_INIT_JOYSTICK = 0x00000200
+pub @const SDL_INIT_HAPTIC = 0x00001000
+pub @const SDL_INIT_GAMEPAD = 0x00002000
+pub @const SDL_INIT_EVENTS = 0x00004000
+pub @const SDL_INIT_SENSOR = 0x00008000
+pub @const SDL_INIT_CAMERA = 0x00010000
+
+pub @const SDL_EVENT_QUIT = 0x100
+pub @const SDL_EVENT_KEY_DOWN = 0x300
+pub @const SDL_EVENT_KEY_UP = 0x301
+pub @const SDL_EVENT_MOUSE_MOTION = 0x400
+pub @const SDL_EVENT_MOUSE_BUTTON_DOWN = 0x401
+pub @const SDL_EVENT_MOUSE_BUTTON_UP = 0x402
+pub @const SDL_EVENT_MOUSE_WHEEL = 0x403
+pub @const SDL_EVENT_WINDOW_RESIZED = 0x200
+pub @const SDL_EVENT_WINDOW_CLOSE_REQUESTED = 0x20F
+
+pub @const SDL_WINDOW_RESIZABLE = 0x00000020
+pub @const SDL_WINDOW_HIDDEN = 0x00000008
+pub @const SDL_WINDOW_OPENGL = 0x00000002
+
+pub @const SDL_PIXELFORMAT_ARGB8888 = 376840196

@@ -47,6 +47,7 @@ lib/runtime.c   — runtime support (linked into every binary)
 - `extern "libname"` auto-generates `-llibname` linker flag (unless libname is `"C"`).
 - `use c "header.h" link "libname"` generates `-llibname` specifically for that C import.
 - `use c "header.h" frameworks "Name1,Name2"` generates `-framework Name1 -framework Name2` (for macOS frameworks).
+- `use c "header.h" ldflags "-lobjc -lpthread"` passes extra linker flags verbatim (for static lib dependencies).
 - Vendor libraries under `lib/vendor/<name>/lib/` get `-L` flags auto-added.
 - Vendor headers under `lib/vendor/<name>/include/` get `-I` flags auto-added (for `use c "..."`).
 - `lib/vendor/<name>/include/` paths are searched before CPPFLAGS `-I` directories (project headers take priority).
@@ -60,6 +61,8 @@ lib/vendor/cglm/include/cglm/      — cglm 0.9.6 headers
 lib/vendor/cglm/lib/libcglm.a      — precompiled static library
 lib/vendor/raylib/include/raylib.h — raylib 6.0 headers
 lib/vendor/raylib/lib/libraylib.a  — precompiled static library
+lib/vendor/sdl3/include/SDL3/     — SDL3 3.4.10 headers (from source)
+lib/vendor/sdl3/lib/libSDL3.a     — built static library (arm64+x86_64)
 ```
 
 ## Test Suite
@@ -80,6 +83,13 @@ lib/vendor/raylib/lib/libraylib.a  — precompiled static library
 - Use `use raylib` in your `.mix` file to import all bindings.
 - On macOS, `frameworks "Cocoa,IOKit,OpenGL"` is required for raylib's GLFW/Cocoa backend.
 - Example: `lib/raylib/example.mix`, `examples/raylib_C_example.mix`.
+
+## SDL3 Wrapper (`lib/sdl3/sdl3.mix`)
+- Links against `libSDL3.a` via `use c "SDL3/SDL.h" link "SDL3" frameworks "...many..." ldflags "-lobjc -lpthread"`.
+- Auto-generates 118 shapes, 1231+ functions from SDL3 headers (including SDL_GPU, SDL_render, etc.).
+- Use `use sdl3` in your `.mix` file to import all bindings plus common constants.
+- On macOS, the frameworks clause lists all required Apple frameworks (Cocoa, Metal, CoreAudio, etc.) and `ldflags "-lobjc -lpthread"` provides the Objective-C runtime and pthreads.
+- Example: `lib/sdl3/example.mix`.
 
 ## LLVM vs C Backend
 - **LLVM** (default): works correctly for all features including shape-returning functions.

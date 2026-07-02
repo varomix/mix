@@ -63,6 +63,7 @@ out/
 
 # lib/*/ — wrapper module example binaries
 /lib/raylib/example
+/lib/sdl3/example
 
 # examples/ — the .mix sources are tracked; their compiled output is not
 examples/arithmetic

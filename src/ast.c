@@ -59,6 +59,8 @@ void ast_print(AstNode *node, int indent) {
                 printf(" link \"%s\"", node->use_c_decl.lib_name);
             if (node->use_c_decl.frameworks)
                 printf(" frameworks \"%s\"", node->use_c_decl.frameworks);
+            if (node->use_c_decl.ldflags)
+                printf(" ldflags \"%s\"", node->use_c_decl.ldflags);
             printf("\n");
             break;
         case NODE_BLOCK:

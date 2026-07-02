@@ -7,6 +7,17 @@
 #include <sys/stat.h>
 #include <dirent.h>
 
+// ---- Global state ----
+
+static char cbind_project_root[1024] = "";
+
+void cbind_set_project_root(const char *root) {
+    if (root) {
+        strncpy(cbind_project_root, root, sizeof(cbind_project_root) - 1);
+        cbind_project_root[sizeof(cbind_project_root) - 1] = '\0';
+    }
+}
+
 // ---- Internal types ----
 
 typedef struct {
@@ -308,7 +319,48 @@ char *resolve_header_path(const char *path, const char *source_dir) {
     // If file exists directly, use it as-is
     if (stat(path, &st) == 0) return strdup(path);
 
-    // Parse -I flags from CPPFLAGS
+    // Search lib/vendor/*/include/<path> relative to CWD first
+    // (project-vendored headers take priority over system / CPPFLAGS)
+    {
+        DIR *vdir = opendir("lib/vendor");
+        if (vdir) {
+            struct dirent *entry;
+            while ((entry = readdir(vdir)) != NULL) {
+                if (entry->d_name[0] == '.') continue;
+                char full[2048];
+                snprintf(full, sizeof(full), "lib/vendor/%s/include/%s",
+                         entry->d_name, path);
+                if (stat(full, &st) == 0) {
+                    closedir(vdir);
+                    return strdup(full);
+                }
+            }
+            closedir(vdir);
+        }
+    }
+
+    // Also search relative to project root (so it works from subdirectories)
+    if (cbind_project_root[0]) {
+        char vendor_path[2048];
+        snprintf(vendor_path, sizeof(vendor_path), "%s/../lib/vendor", cbind_project_root);
+        DIR *vdir = opendir(vendor_path);
+        if (vdir) {
+            struct dirent *entry;
+            while ((entry = readdir(vdir)) != NULL) {
+                if (entry->d_name[0] == '.') continue;
+                char full[2048];
+                snprintf(full, sizeof(full), "%s/%s/include/%s",
+                         vendor_path, entry->d_name, path);
+                if (stat(full, &st) == 0) {
+                    closedir(vdir);
+                    return strdup(full);
+                }
+            }
+            closedir(vdir);
+        }
+    }
+
+    // Fall back to -I directories from CPPFLAGS
     const char *cppflags = getenv("CPPFLAGS");
     if (cppflags && cppflags[0]) {
         char *buf = strdup(cppflags);
@@ -334,42 +386,22 @@ char *resolve_header_path(const char *path, const char *source_dir) {
         free(buf);
     }
 
-    // Search lib/vendor/*/include/<path> relative to CWD
-    {
-        DIR *vdir = opendir("lib/vendor");
-        if (vdir) {
-            struct dirent *entry;
-            while ((entry = readdir(vdir)) != NULL) {
-                if (entry->d_name[0] == '.') continue;
-                char full[2048];
-                snprintf(full, sizeof(full), "lib/vendor/%s/include/%s",
-                         entry->d_name, path);
-                if (stat(full, &st) == 0) {
-                    closedir(vdir);
-                    return strdup(full);
-                }
-            }
-            closedir(vdir);
-        }
-    }
-
     return NULL;
 }
 
 // Build -I flags for all vendor include directories found in lib/vendor/*/include/.
 // Writes into buf (space-separated, e.g. "-Ilib/vendor/glad/include").
-static void build_vendor_iflags(char *buf, size_t buf_size) {
-    buf[0] = '\0';
-    DIR *vdir = opendir("lib/vendor");
+static void scan_vendor_include_dirs(const char *vendor_base, char *buf, size_t buf_size) {
+    DIR *vdir = opendir(vendor_base);
     if (!vdir) return;
     struct dirent *entry;
     while ((entry = readdir(vdir)) != NULL) {
         if (entry->d_name[0] == '.') continue;
-        char inc_dir[512];
-        snprintf(inc_dir, sizeof(inc_dir), "lib/vendor/%s/include", entry->d_name);
+        char inc_dir[1024];
+        snprintf(inc_dir, sizeof(inc_dir), "%s/%s/include", vendor_base, entry->d_name);
         struct stat st;
         if (stat(inc_dir, &st) == 0 && S_ISDIR(st.st_mode)) {
-            char flag[540];
+            char flag[1080];
             snprintf(flag, sizeof(flag), " -I\"%s\"", inc_dir);
             if (strlen(buf) + strlen(flag) < buf_size - 1) {
                 strcat(buf, flag);
@@ -377,6 +409,17 @@ static void build_vendor_iflags(char *buf, size_t buf_size) {
         }
     }
     closedir(vdir);
+}
+
+static void build_vendor_iflags(char *buf, size_t buf_size) {
+    buf[0] = '\0';
+    scan_vendor_include_dirs("lib/vendor", buf, buf_size);
+    // Also scan relative to project root so it works from subdirectories
+    if (cbind_project_root[0]) {
+        char vendor_path[1024];
+        snprintf(vendor_path, sizeof(vendor_path), "%s/../lib/vendor", cbind_project_root);
+        scan_vendor_include_dirs(vendor_path, buf, buf_size);
+    }
 }
 
 static char *filter_user_decls(char *raw);
@@ -410,10 +453,10 @@ static char *preprocess_header(const char *path, bool verbose) {
     // that came from system headers (libc, libc++, SDK).
     if (include_dir[0])
         snprintf(cmd, sizeof(cmd), "cc -E %s%s%s -I\"%s\" -x c \"%s\" 2>/dev/null",
-                 gl_ext, cppflags, vendor_flags, include_dir, path);
+                 gl_ext, vendor_flags, cppflags, include_dir, path);
     else
         snprintf(cmd, sizeof(cmd), "cc -E %s%s%s -x c \"%s\" 2>/dev/null",
-                 gl_ext, cppflags, vendor_flags, path);
+                 gl_ext, vendor_flags, cppflags, path);
     char *raw = run_command(cmd, verbose);
     if (!raw) return NULL;
     return filter_user_decls(raw);

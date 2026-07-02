@@ -1,4 +1,4 @@
-use c "raylib.h" link "raylib"
+use c "raylib.h" link "raylib" frameworks "Cocoa,IOKit,OpenGL"
 
 @const WIN_W = 1280
 @const WIN_H = 800

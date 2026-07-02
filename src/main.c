@@ -874,6 +874,27 @@ compiling_module_count--;
                     link_flags[(*link_flag_count)++] = arena_strdup(arena, dash_l);
                 }
             }
+
+            // Propagate `frameworks "Cocoa,IOKit"` to the root linker line.
+            const char *fw = decl->use_c_decl.frameworks;
+            if (fw && link_flags && link_flag_count) {
+                char fw_copy[256];
+                strncpy(fw_copy, fw, sizeof(fw_copy) - 1);
+                fw_copy[sizeof(fw_copy) - 1] = '\0';
+                char *save;
+                char *tok = strtok_r(fw_copy, ",", &save);
+                while (tok) {
+                    while (*tok == ' ' || *tok == '\t') tok++;
+                    char *end = tok + strlen(tok) - 1;
+                    while (end > tok && (*end == ' ' || *end == '\t')) end--;
+                    *(end + 1) = '\0';
+                    if (*tok && *link_flag_count + 2 < MAX_LINK_FLAGS) {
+                        link_flags[(*link_flag_count)++] = "-framework";
+                        link_flags[(*link_flag_count)++] = arena_strdup(arena, tok);
+                    }
+                    tok = strtok_r(NULL, ",", &save);
+                }
+            }
         } else if (decl->kind == NODE_EXTERN_BLOCK) {
             const char *lib = decl->extern_block.lib_name;
             if (lib && strcmp(lib, "C") != 0 && link_flags && link_flag_count
@@ -1377,8 +1398,20 @@ int main(int argc, char **argv) {
         #endif
     }
 
+    // Let cbind.c resolve vendor paths relative to the project root
+    cbind_set_project_root(exe_dir);
+
     // Collect vendor -I and -L directories (from lib/vendor/*/include/ and lib/vendor/*/lib/)
     {
+        // Scan CWD-relative lib/vendor/
+        struct {
+            const char *base;
+            char idirs[MAX_VENDOR_IDIRS][512];
+            int idir_count;
+            char ldirs[MAX_VENDOR_LDIRS][512];
+            int ldir_count;
+        } v_scan = {0};
+
         DIR *vdir = opendir("lib/vendor");
         if (vdir) {
             struct dirent *ventry;
@@ -1389,26 +1422,72 @@ int main(int argc, char **argv) {
                 struct stat vst;
                 if (stat(inc_dir, &vst) == 0 && S_ISDIR(vst.st_mode)) {
                     bool already = false;
-                    for (int vi = 0; vi < vendor_idir_count; vi++) {
-                        if (strcmp(vendor_idirs[vi], inc_dir) == 0) { already = true; break; }
+                    for (int vi = 0; vi < v_scan.idir_count; vi++) {
+                        if (strcmp(v_scan.idirs[vi], inc_dir) == 0) { already = true; break; }
                     }
-                    if (!already && vendor_idir_count < MAX_VENDOR_IDIRS) {
-                        vendor_idirs[vendor_idir_count++] = arena_strdup(&arena, inc_dir);
+                    if (!already && v_scan.idir_count < MAX_VENDOR_IDIRS) {
+                        snprintf(v_scan.idirs[v_scan.idir_count++], 512, "%s", inc_dir);
                     }
                 }
                 char lib_dir[512];
                 snprintf(lib_dir, sizeof(lib_dir), "lib/vendor/%s/lib", ventry->d_name);
                 if (stat(lib_dir, &vst) == 0 && S_ISDIR(vst.st_mode)) {
                     bool already = false;
-                    for (int li = 0; li < vendor_ldir_count; li++) {
-                        if (strcmp(vendor_ldirs[li], lib_dir) == 0) { already = true; break; }
+                    for (int li = 0; li < v_scan.ldir_count; li++) {
+                        if (strcmp(v_scan.ldirs[li], lib_dir) == 0) { already = true; break; }
                     }
-                    if (!already && vendor_ldir_count < MAX_VENDOR_LDIRS) {
-                        vendor_ldirs[vendor_ldir_count++] = arena_strdup(&arena, lib_dir);
+                    if (!already && v_scan.ldir_count < MAX_VENDOR_LDIRS) {
+                        snprintf(v_scan.ldirs[v_scan.ldir_count++], 512, "%s", lib_dir);
                     }
                 }
             }
             closedir(vdir);
+        }
+
+        // Also scan relative to project root (exe_dir/../lib/vendor/) so it
+        // works when the compiler is run from a subdirectory.
+        if (exe_dir[0]) {
+            char exe_vendor[1024];
+            snprintf(exe_vendor, sizeof(exe_vendor), "%s/../lib/vendor", exe_dir);
+            DIR *edir = opendir(exe_vendor);
+            if (edir) {
+                struct dirent *ventry;
+                while ((ventry = readdir(edir)) != NULL) {
+                    if (ventry->d_name[0] == '.') continue;
+                    char inc_dir[512];
+                    snprintf(inc_dir, sizeof(inc_dir), "%s/%s/include", exe_vendor, ventry->d_name);
+                    struct stat vst;
+                    if (stat(inc_dir, &vst) == 0 && S_ISDIR(vst.st_mode)) {
+                        bool already = false;
+                        for (int vi = 0; vi < v_scan.idir_count; vi++) {
+                            if (strcmp(v_scan.idirs[vi], inc_dir) == 0) { already = true; break; }
+                        }
+                        if (!already && v_scan.idir_count < MAX_VENDOR_IDIRS) {
+                            snprintf(v_scan.idirs[v_scan.idir_count++], 512, "%s", inc_dir);
+                        }
+                    }
+                    char lib_dir[512];
+                    snprintf(lib_dir, sizeof(lib_dir), "%s/%s/lib", exe_vendor, ventry->d_name);
+                    if (stat(lib_dir, &vst) == 0 && S_ISDIR(vst.st_mode)) {
+                        bool already = false;
+                        for (int li = 0; li < v_scan.ldir_count; li++) {
+                            if (strcmp(v_scan.ldirs[li], lib_dir) == 0) { already = true; break; }
+                        }
+                        if (!already && v_scan.ldir_count < MAX_VENDOR_LDIRS) {
+                            snprintf(v_scan.ldirs[v_scan.ldir_count++], 512, "%s", lib_dir);
+                        }
+                    }
+                }
+                closedir(edir);
+            }
+        }
+
+        // Copy collected paths into the arena
+        for (int vi = 0; vi < v_scan.idir_count; vi++) {
+            vendor_idirs[vendor_idir_count++] = arena_strdup(&arena, v_scan.idirs[vi]);
+        }
+        for (int li = 0; li < v_scan.ldir_count; li++) {
+            vendor_ldirs[vendor_ldir_count++] = arena_strdup(&arena, v_scan.ldirs[li]);
         }
     }
 
@@ -1486,6 +1565,27 @@ int main(int argc, char **argv) {
                 if (!already) link_flags[link_flag_count++] = lflag;
             }
 
+            // Collect `frameworks "Cocoa,IOKit"` and emit -framework flags
+            const char *fw = decl->use_c_decl.frameworks;
+            if (fw && link_flag_count < MAX_LINK_FLAGS) {
+                char fw_copy[256];
+                strncpy(fw_copy, fw, sizeof(fw_copy) - 1);
+                fw_copy[sizeof(fw_copy) - 1] = '\0';
+                char *save;
+                char *tok = strtok_r(fw_copy, ",", &save);
+                while (tok) {
+                    while (*tok == ' ' || *tok == '\t') tok++;
+                    char *end = tok + strlen(tok) - 1;
+                    while (end > tok && (*end == ' ' || *end == '\t')) end--;
+                    *(end + 1) = '\0';
+                    if (*tok && link_flag_count + 2 < MAX_LINK_FLAGS) {
+                        link_flags[link_flag_count++] = "-framework";
+                        link_flags[link_flag_count++] = arena_strdup(&arena, tok);
+                    }
+                    tok = strtok_r(NULL, ",", &save);
+                }
+            }
+
             // Collect source file for compilation (e.g. source "glad/glad.c")
             const char *src_path = decl->use_c_decl.source_path;
             if (src_path && source_file_count < MAX_SOURCE_FILES) {
@@ -1498,8 +1598,18 @@ int main(int argc, char **argv) {
                     const char *src_slash = strchr(src_path, '/');
                     const char *src_rest = src_slash ? src_slash + 1 : NULL;
 
-                    DIR *vdir = opendir("lib/vendor");
-                    if (vdir) {
+                    const char *vendor_bases[4];
+                    int vendor_base_count = 0;
+                    vendor_bases[vendor_base_count++] = "lib/vendor";
+                    if (exe_dir[0]) {
+                        char exe_vendor[1024];
+                        snprintf(exe_vendor, sizeof(exe_vendor), "%s/../lib/vendor", exe_dir);
+                        vendor_bases[vendor_base_count++] = arena_strdup(&arena, exe_vendor);
+                    }
+                    for (int vb = 0; vb < vendor_base_count && !found_src; vb++) {
+                        const char *vbase = vendor_bases[vb];
+                        DIR *vdir = opendir(vbase);
+                        if (!vdir) continue;
                         struct dirent *ventry;
                         while ((ventry = readdir(vdir)) != NULL) {
                             if (ventry->d_name[0] == '.') continue;
@@ -1507,18 +1617,18 @@ int main(int argc, char **argv) {
                             int try_count = 0;
                             // Try full path under vendor subdirs
                             snprintf(try_paths[try_count++], 1024,
-                                     "lib/vendor/%s/src/%s", ventry->d_name, src_path);
+                                     "%s/%s/src/%s", vbase, ventry->d_name, src_path);
                             snprintf(try_paths[try_count++], 1024,
-                                     "lib/vendor/%s/%s", ventry->d_name, src_path);
+                                     "%s/%s/%s", vbase, ventry->d_name, src_path);
                             // If first component matches vendor name, try rest only
                             if (src_rest && src_slash > src_path) {
                                 int prefix_len = (int)(src_slash - src_path);
                                 if ((int)strlen(ventry->d_name) == prefix_len &&
                                     strncmp(ventry->d_name, src_path, prefix_len) == 0) {
                                     snprintf(try_paths[try_count++], 1024,
-                                             "lib/vendor/%s/src/%s", ventry->d_name, src_rest);
+                                             "%s/%s/src/%s", vbase, ventry->d_name, src_rest);
                                     snprintf(try_paths[try_count++], 1024,
-                                             "lib/vendor/%s/%s", ventry->d_name, src_rest);
+                                             "%s/%s/%s", vbase, ventry->d_name, src_rest);
                                 }
                             }
                             for (int tp = 0; tp < try_count; tp++) {
@@ -1840,6 +1950,21 @@ int main(int argc, char **argv) {
     link_argv[ai++] = output_file;
     if (!cross_target)
         link_argv[ai++] = "-lm";
+    // Vendor library search paths first (project vendored libs take priority
+    // over system/brew paths like /opt/homebrew/lib).
+    if (!cross_target) {
+        for (int i = 0; i < vendor_ldir_count && ai < MAX_LINK_ARGV - 2; i++) {
+            char *lflag = arena_alloc(&arena, strlen(vendor_ldirs[i]) + 3);
+            sprintf(lflag, "-L%s", vendor_ldirs[i]);
+            link_argv[ai++] = lflag;
+        }
+    }
+    // Force per-directory search so a vendored .a in a vendor -L dir beats a
+    // .dylib for the same lib found in a later system -L dir (macOS linker
+    // defaults to trying -search_dylibs_first first, which would pick up a
+    // brew .dylib before our vendored .a).
+    if (!cross_target)
+        link_argv[ai++] = "-Wl,-search_paths_first";
 #ifdef __APPLE__
     if (!cross_target) {
         char *sdk_libdir = detect_macos_sdk_libdir();
@@ -1860,11 +1985,6 @@ int main(int argc, char **argv) {
             char *iflag = arena_alloc(&arena, strlen(vendor_idirs[i]) + 3);
             sprintf(iflag, "-I%s", vendor_idirs[i]);
             link_argv[ai++] = iflag;
-        }
-        for (int i = 0; i < vendor_ldir_count && ai < MAX_LINK_ARGV - 2; i++) {
-            char *lflag = arena_alloc(&arena, strlen(vendor_ldirs[i]) + 3);
-            sprintf(lflag, "-L%s", vendor_ldirs[i]);
-            link_argv[ai++] = lflag;
         }
     }
 

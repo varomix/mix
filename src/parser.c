@@ -1628,6 +1628,13 @@ static AstNode *parse_top_level(Parser *p) {
                 Token *src_tok = expect(p, TOK_STRING_LIT);
                 node->use_c_decl.source_path = arena_strndup(p->arena, src_tok->start, src_tok->length);
             }
+            // Optional: frameworks "Name1,Name2"
+            if (check(p, TOK_IDENT) && current(p)->length == 10
+                && strncmp(current(p)->start, "frameworks", 10) == 0) {
+                advance_tok(p); // skip 'frameworks'
+                Token *fw_tok = expect(p, TOK_STRING_LIT);
+                node->use_c_decl.frameworks = arena_strndup(p->arena, fw_tok->start, fw_tok->length);
+            }
             return node;
         }
 

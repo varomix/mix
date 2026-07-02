@@ -1,0 +1,12 @@
+// raylib 6.0 wrapper — links against libraylib.a via vendored library
+//
+// Vendor: lib/vendor/raylib/include/raylib.h  (headers)
+//         lib/vendor/raylib/lib/libraylib.a   (precompiled library)
+//
+// Usage: use c "raylib.h" link "raylib" frameworks "Cocoa,IOKit,OpenGL"
+//
+// This module re-exports everything via the `use c` declaration below.
+// The generated shapes (Vector2, Vector3, Color, etc.) and extern
+// functions (InitWindow, DrawText, etc.) are all made available.
+
+use c "raylib.h" link "raylib" frameworks "Cocoa,IOKit,OpenGL"

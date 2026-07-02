@@ -1,0 +1,23 @@
+use raylib
+
+main()
+    WinW = 1280
+    WinH = 800
+
+    InitWindow(WinW, WinH, "raylib 6.0 [MIX]")
+
+    SetTargetFPS(60)
+
+    while not WindowShouldClose()
+        BeginDrawing()
+        ClearBackground(Color(r: 20, g: 20, b: 20, a: 255))
+
+        DrawText("Hello from MIX + raylib 6.0!", 20, 20, 24, RAYWHITE)
+        DrawRectangle(10, 100, 300, 300, GREEN)
+        DrawRectangleV(Vector2(x: 300, y: 30), Vector2(x: 200, y: 100), BLUE)
+        DrawCircleV(Vector2(x: 300, y: 300), 100, RED)
+        DrawFPS(10, 10)
+
+        EndDrawing()
+
+    CloseWindow()

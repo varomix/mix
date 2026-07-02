@@ -24,4 +24,8 @@ char *cbind_generate_string(const char *header_path, const char *lib_name,
 // Returns a malloc'd absolute path string, or NULL if not found.
 char *resolve_header_path(const char *path, const char *source_dir);
 
+// Set the project root directory (exe_dir/..) so vendor paths resolve correctly
+// even when the compiler is run from a subdirectory.
+void cbind_set_project_root(const char *root);
+
 #endif // CBIND_H

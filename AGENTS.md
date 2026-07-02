@@ -46,15 +46,19 @@ lib/runtime.c   — runtime support (linked into every binary)
 ## Extern / Linking
 - `extern "libname"` auto-generates `-llibname` linker flag (unless libname is `"C"`).
 - `use c "header.h" link "libname"` generates `-llibname` specifically for that C import.
+- `use c "header.h" frameworks "Name1,Name2"` generates `-framework Name1 -framework Name2` (for macOS frameworks).
 - Vendor libraries under `lib/vendor/<name>/lib/` get `-L` flags auto-added.
 - Vendor headers under `lib/vendor/<name>/include/` get `-I` flags auto-added (for `use c "..."`).
+- `lib/vendor/<name>/include/` paths are searched before CPPFLAGS `-I` directories (project headers take priority).
 - Extern functions must use `*` pointers for out-parameters or struct-by-reference.
 - Extern functions with no return value use `~` (e.g., `glmc_vec3_add(a: *vec3, b: *vec3, dest: *vec3) ~`).
 
 ## Vendored Dependencies
 ```
-lib/vendor/cglm/include/cglm/   — cglm 0.9.6 headers
-lib/vendor/cglm/lib/libcglm.a   — precompiled static library
+lib/vendor/cglm/include/cglm/      — cglm 0.9.6 headers
+lib/vendor/cglm/lib/libcglm.a      — precompiled static library
+lib/vendor/raylib/include/raylib.h — raylib 6.0 headers
+lib/vendor/raylib/lib/libraylib.a  — precompiled static library
 ```
 
 ## Test Suite
@@ -68,6 +72,13 @@ lib/vendor/cglm/lib/libcglm.a   — precompiled static library
 - Shapes `vec3` and `mat4` use `float32` fields to match C layout.
 - Methods: `+`, `-`, `*` (scalar), `dot`, `cross`, `length`, `length2`, `normalize`.
 - Free functions: `mat4_identity`, `perspective`, `lookat`, `ortho`, `rad`.
+
+## Raylib Wrapper (`lib/raylib/raylib.mix`)
+- Links against `libraylib.a` via `use c "raylib.h" link "raylib" frameworks "Cocoa,IOKit,OpenGL"`.
+- Auto-generates 34 shapes (Vector2, Vector3, Color, Rectangle, Camera3D, etc.) and 600+ functions from the C header.
+- Use `use raylib` in your `.mix` file to import all bindings.
+- On macOS, `frameworks "Cocoa,IOKit,OpenGL"` is required for raylib's GLFW/Cocoa backend.
+- Example: `lib/raylib/example.mix`, `examples/raylib_C_example.mix`.
 
 ## LLVM vs C Backend
 - **LLVM** (default): works correctly for all features including shape-returning functions.

@@ -1,32 +1,10 @@
-// cglm demo: textured cube with camera orbit
-// Build: mix build lib/cglm/example.mix -l cglm
-
 use cglm
 
 main()
-    // Camera setup
-    eye = vec3(x: 3.0, y: 2.0, z: 5.0)
-    target = vec3(x: 0.0, y: 0.0, z: 0.0)
-    up = vec3(x: 0.0, y: 1.0, z: 0.0)
+    v = vec3(x: 1.0, y: 2.0, z: 3.0)
+    u = vec3(x: 4.0, y: 5.0, z: 6.0)
+    w = v + u
+    print("{w.x}, {w.y}, {w.z}")
 
-    proj = mat4_perspective(rad(60.0), 16.0 / 9.0, 0.1, 100.0)
-    view = mat4_lookat(eye, target, up)
-
-    // Model transform: scale + rotate
-    model = mat4_identity()
-    model = model * mat4_rotate_y(rad(45.0))
-    model = model * mat4_rotate_x(rad(30.0))
-
-    mvp = proj * view * model
-
-    // Lighting
-    light_dir = vec3(x: 1.0, y: -1.0, z: 1.0).normalize()
-    normal = vec3(x: 0.0, y: 1.0, z: 0.0)
-    diffuse = max(0.0, normal.dot(light_dir))
-    print("Diffuse: {diffuse}")
-
-    // Animation values
-    speed = 1.0
-    angle = speed * 90.0
-    rot = mat4_rotate_y(rad(angle))
-    animated_mvp = proj * view * model * rot
+    m = mat4_identity()
+    print("{m._00}, {m._11}")

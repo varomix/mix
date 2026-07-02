@@ -709,6 +709,24 @@ static char *resolve_module_path(Arena *arena, const char *base_dir,
     }
     path[off] = '\0';
     strncat(path, ".mix", sizeof(path) - strlen(path) - 1);
+
+    // If the resolved path does not exist, try <base_dir>/lib/<module_path>/<module_path>.mix
+    // then <exe_dir>/../lib/<module_path>/<module_path>.mix
+    FILE *f = fopen(path, "r");
+    if (f) { fclose(f); return arena_strdup(arena, path); }
+
+    char lib_path[512];
+    snprintf(lib_path, sizeof(lib_path), "%s/lib/%s/%s.mix", base_dir, module_path, module_path);
+    f = fopen(lib_path, "r");
+    if (f) { fclose(f); return arena_strdup(arena, lib_path); }
+
+    if (exe_dir && exe_dir[0]) {
+        snprintf(lib_path, sizeof(lib_path), "%s/../lib/%s/%s.mix", exe_dir, module_path, module_path);
+        f = fopen(lib_path, "r");
+        if (f) { fclose(f); return arena_strdup(arena, lib_path); }
+    }
+
+    // Return the original path anyway — let the caller report the error
     return arena_strdup(arena, path);
 }
 
@@ -853,6 +871,23 @@ compiling_module_count--;
                     }
                 }
                 if (!already && *link_flag_count < MAX_LINK_FLAGS) {
+                    link_flags[(*link_flag_count)++] = arena_strdup(arena, dash_l);
+                }
+            }
+        } else if (decl->kind == NODE_EXTERN_BLOCK) {
+            const char *lib = decl->extern_block.lib_name;
+            if (lib && strcmp(lib, "C") != 0 && link_flags && link_flag_count
+                && *link_flag_count < MAX_LINK_FLAGS) {
+                char dash_l[256];
+                snprintf(dash_l, sizeof(dash_l), "-l%s", lib);
+                bool already = false;
+                for (int li = 0; li < *link_flag_count; li++) {
+                    if (strcmp(link_flags[li], dash_l) == 0) {
+                        already = true;
+                        break;
+                    }
+                }
+                if (!already) {
                     link_flags[(*link_flag_count)++] = arena_strdup(arena, dash_l);
                 }
             }
@@ -1310,6 +1345,11 @@ int main(int argc, char **argv) {
     const char *vendor_idirs[MAX_VENDOR_IDIRS];
     int vendor_idir_count = 0;
 
+    // Vendor lib directories (from lib/vendor/*/lib/)
+    #define MAX_VENDOR_LDIRS 16
+    const char *vendor_ldirs[MAX_VENDOR_LDIRS];
+    int vendor_ldir_count = 0;
+
     Sema sema = sema_create(&arena);
     sema.debug_mode = debug_mode;
 
@@ -1335,6 +1375,41 @@ int main(int argc, char **argv) {
             strncpy(exe_dir, d, sizeof(exe_dir) - 1);
         }
         #endif
+    }
+
+    // Collect vendor -I and -L directories (from lib/vendor/*/include/ and lib/vendor/*/lib/)
+    {
+        DIR *vdir = opendir("lib/vendor");
+        if (vdir) {
+            struct dirent *ventry;
+            while ((ventry = readdir(vdir)) != NULL) {
+                if (ventry->d_name[0] == '.') continue;
+                char inc_dir[512];
+                snprintf(inc_dir, sizeof(inc_dir), "lib/vendor/%s/include", ventry->d_name);
+                struct stat vst;
+                if (stat(inc_dir, &vst) == 0 && S_ISDIR(vst.st_mode)) {
+                    bool already = false;
+                    for (int vi = 0; vi < vendor_idir_count; vi++) {
+                        if (strcmp(vendor_idirs[vi], inc_dir) == 0) { already = true; break; }
+                    }
+                    if (!already && vendor_idir_count < MAX_VENDOR_IDIRS) {
+                        vendor_idirs[vendor_idir_count++] = arena_strdup(&arena, inc_dir);
+                    }
+                }
+                char lib_dir[512];
+                snprintf(lib_dir, sizeof(lib_dir), "lib/vendor/%s/lib", ventry->d_name);
+                if (stat(lib_dir, &vst) == 0 && S_ISDIR(vst.st_mode)) {
+                    bool already = false;
+                    for (int li = 0; li < vendor_ldir_count; li++) {
+                        if (strcmp(vendor_ldirs[li], lib_dir) == 0) { already = true; break; }
+                    }
+                    if (!already && vendor_ldir_count < MAX_VENDOR_LDIRS) {
+                        vendor_ldirs[vendor_ldir_count++] = arena_strdup(&arena, lib_dir);
+                    }
+                }
+            }
+            closedir(vdir);
+        }
     }
 
     // Process use declarations — compile each module
@@ -1465,29 +1540,17 @@ int main(int argc, char **argv) {
                 }
             }
 
-            // Collect vendor -I directories for the linker/compile step
-            {
-                DIR *vdir = opendir("lib/vendor");
-                if (vdir) {
-                    struct dirent *ventry;
-                    while ((ventry = readdir(vdir)) != NULL) {
-                        if (ventry->d_name[0] == '.') continue;
-                        char inc_dir[512];
-                        snprintf(inc_dir, sizeof(inc_dir), "lib/vendor/%s/include", ventry->d_name);
-                        struct stat vst;
-                        if (stat(inc_dir, &vst) == 0 && S_ISDIR(vst.st_mode)) {
-                            // Check if already in list
-                            bool already = false;
-                            for (int vi = 0; vi < vendor_idir_count; vi++) {
-                                if (strcmp(vendor_idirs[vi], inc_dir) == 0) { already = true; break; }
-                            }
-                            if (!already && vendor_idir_count < MAX_VENDOR_IDIRS) {
-                                vendor_idirs[vendor_idir_count++] = arena_strdup(&arena, inc_dir);
-                            }
-                        }
-                    }
-                    closedir(vdir);
+            // (vendor dirs collected before the loop)
+        } else if (decl->kind == NODE_EXTERN_BLOCK) {
+            const char *lib = decl->extern_block.lib_name;
+            if (lib && strcmp(lib, "C") != 0 && link_flag_count < MAX_LINK_FLAGS) {
+                char *lflag = arena_alloc(&arena, strlen(lib) + 3);
+                sprintf(lflag, "-l%s", lib);
+                bool already = false;
+                for (int li = 0; li < link_flag_count; li++) {
+                    if (strcmp(link_flags[li], lflag) == 0) { already = true; break; }
                 }
+                if (!already) link_flags[link_flag_count++] = lflag;
             }
         } else if (decl->kind == NODE_USE_DECL) {
             char *mod_path = resolve_module_path(&arena, base_dir,
@@ -1797,6 +1860,11 @@ int main(int argc, char **argv) {
             char *iflag = arena_alloc(&arena, strlen(vendor_idirs[i]) + 3);
             sprintf(iflag, "-I%s", vendor_idirs[i]);
             link_argv[ai++] = iflag;
+        }
+        for (int i = 0; i < vendor_ldir_count && ai < MAX_LINK_ARGV - 2; i++) {
+            char *lflag = arena_alloc(&arena, strlen(vendor_ldirs[i]) + 3);
+            sprintf(lflag, "-L%s", vendor_ldirs[i]);
+            link_argv[ai++] = lflag;
         }
     }
 

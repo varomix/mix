@@ -1,0 +1,332 @@
+// cglm wrapper — MIX-native vector/matrix math backed by cglm SIMD.
+//
+// Usage:
+//   use cglm
+//
+//   main()
+//       cam = mat4_perspective(rad(60.0), 800.0 / 600.0, 0.1, 100.0)
+//       view = mat4_lookat(vec3(0, 2, 5), vec3(0), vec3(0, 1, 0))
+//       model = mat4_identity()
+//       model = model * mat4_rotate_x(rad(deg))
+//       mvp = cam * view * model
+//
+//       light_dir = vec3(1, -1, 1).normalize()
+//       diffuse = max(0.0, normal.dot(light_dir))
+//
+// Build:
+//   mix build my_app.mix -l cglm
+
+// ---------------------------------------------------------------------------
+// Raw C bindings (just the subset we need — cglm has ~300 functions)
+// ---------------------------------------------------------------------------
+
+use c "cglm/cglm.h" link "cglm"
+
+// ---- vec3 ----
+extern "cglm"
+    glm_vec3_copy(a: *float, dest: *float) ~
+    glm_vec3_add(a: *float, b: *float, dest: *float) ~
+    glm_vec3_sub(a: *float, b: *float, dest: *float) ~
+    glm_vec3_scale(a: *float, s: float, dest: *float) ~
+    glm_vec3_scale_as(a: *float, s: float, dest: *float) ~
+    glm_vec3_negate(a: *float, dest: *float) ~
+    glm_vec3_dot(a: *float, b: *float) -> float ~
+    glm_vec3_cross(a: *float, b: *float, dest: *float) ~
+    glm_vec3_norm(a: *float) -> float ~
+    glm_vec3_norm2(a: *float) -> float ~
+    glm_vec3_normalize(a: *float, dest: *float) ~
+    glm_vec3_lerp(from: *float, to: *float, t: float, dest: *float) ~
+    glm_vec3_distance(a: *float, b: *float) -> float ~
+    glm_vec3_angle(a: *float, b: *float) -> float ~
+
+// ---- vec4 ----
+extern "cglm"
+    glm_vec4_copy(a: *float, dest: *float) ~
+    glm_vec4_add(a: *float, b: *float, dest: *float) ~
+    glm_vec4_sub(a: *float, b: *float, dest: *float) ~
+    glm_vec4_scale(a: *float, s: float, dest: *float) ~
+    glm_vec4_dot(a: *float, b: *float) -> float ~
+    glm_vec4_norm(a: *float) -> float ~
+    glm_vec4_normalize(a: *float, dest: *float) ~
+
+// ---- mat4 ----
+extern "cglm"
+    glm_mat4_copy(mat: *float, dest: *float) ~
+    glm_mat4_identity(mat: *float) ~
+    glm_mat4_pick3(target: *float, dest: *float) ~
+    glm_mat4_ins3(mat: *float, dest: *float) ~
+    glm_mat4_mul(a: *float, b: *float, dest: *float) ~
+    glm_mat4_transpose(mat: *float, dest: *float) ~
+    glm_mat4_scale(mat: *float, s: float, dest: *float) ~
+    glm_mat4_scale_uni(mat: *float, s: float, dest: *float) ~
+    glm_mat4_det(mat: *float) -> float ~
+    glm_mat4_inv(mat: *float, dest: *float) -> bool ~
+    glm_mat4_inv_fast(mat: *float, dest: *float) -> bool ~
+    glm_mat4_trace(mat: *float) -> float ~
+    glm_mat4_lerp(from: *float, to: *float, t: float, dest: *float) ~
+    glm_mat4_mulv(mat: *float, v: *float, dest: *float) ~
+    glm_mat4_translate(mat: *float, v: *float, dest: *float) ~
+    glm_mat4_translate_to(mat: *float, v: *float, dest: *float) ~
+    glm_mat4_rotate(mat: *float, angle: float, axis: *float, dest: *float) ~
+    glm_mat4_rotate_x(mat: *float, angle: float, dest: *float) ~
+    glm_mat4_rotate_y(mat: *float, angle: float, dest: *float) ~
+    glm_mat4_rotate_z(mat: *float, angle: float, dest: *float) ~
+
+// ---- perspective / look-at ----
+extern "cglm"
+    glm_perspective(fovy: float, aspect: float, near: float, far: float, dest: *float) ~
+    glm_perspective_default(aspect: float, dest: *float) ~
+    glm_lookat(eye: *float, center: *float, up: *float, dest: *float) ~
+    glm_ortho(left: float, right: float, bottom: float, top: float, near: float, far: float, dest: *float) ~
+    glm_look_anyup(eye: *float, center: *float, dest: *float) ~
+
+// ---- euler / angle helpers ----
+extern "cglm"
+    glm_euler_angles(mat: *float, dest: *float) ~
+    glm_euler(mat: *float, angles: *float, dest: *float) ~
+    glm_quat_mat4(q: *float, dest: *float) ~
+    glm_mat4_quat(mat: *float, dest: *float) ~
+
+// ---- float[] helpers ----
+extern "cglm"
+    glm_vec3_fill(v: *float, val: float) ~
+    glm_vec4_fill(v: *float, val: float) ~
+    glm_mat4_zero(mat: *float) ~
+
+// ---------------------------------------------------------------------------
+// Vec3
+// ---------------------------------------------------------------------------
+
+shape vec3
+    x, y, z: float
+
+    // raw pointer for C interop (pass to cglm functions)
+    ptr(self) -> *float
+        done &self.x
+
+    op_add(self, other: vec3) -> vec3
+        result: vec3
+        glm_vec3_add(self.ptr(), other.ptr(), result.ptr())
+        done result
+
+    op_sub(self, other: vec3) -> vec3
+        result: vec3
+        glm_vec3_sub(self.ptr(), other.ptr(), result.ptr())
+        done result
+
+    op_mul(self, s: float) -> vec3
+        result: vec3
+        glm_vec3_scale(self.ptr(), s, result.ptr())
+        done result
+
+    op_neg(self) -> vec3
+        result: vec3
+        glm_vec3_negate(self.ptr(), result.ptr())
+        done result
+
+    dot(self, other: vec3) -> float
+        done glm_vec3_dot(self.ptr(), other.ptr())
+
+    cross(self, other: vec3) -> vec3
+        result: vec3
+        glm_vec3_cross(self.ptr(), other.ptr(), result.ptr())
+        done result
+
+    length(self) -> float
+        done glm_vec3_norm(self.ptr())
+
+    length2(self) -> float
+        done glm_vec3_norm2(self.ptr())
+
+    normalize(self) -> vec3
+        result: vec3
+        glm_vec3_normalize(self.ptr(), result.ptr())
+        done result
+
+    distance(self, other: vec3) -> float
+        done glm_vec3_distance(self.ptr(), other.ptr())
+
+    angle(self, other: vec3) -> float
+        done glm_vec3_angle(self.ptr(), other.ptr())
+
+    lerp(self, to: vec3, t: float) -> vec3
+        result: vec3
+        glm_vec3_lerp(self.ptr(), to.ptr(), t, result.ptr())
+        done result
+
+// ---------------------------------------------------------------------------
+// Vec4
+// ---------------------------------------------------------------------------
+
+shape vec4
+    x, y, z, w: float
+
+    ptr(self) -> *float
+        done &self.x
+
+    op_add(self, other: vec4) -> vec4
+        result: vec4
+        glm_vec4_add(self.ptr(), other.ptr(), result.ptr())
+        done result
+
+    op_sub(self, other: vec4) -> vec4
+        result: vec4
+        glm_vec4_sub(self.ptr(), other.ptr(), result.ptr())
+        done result
+
+    op_mul(self, s: float) -> vec4
+        result: vec4
+        glm_vec4_scale(self.ptr(), s, result.ptr())
+        done result
+
+    dot(self, other: vec4) -> float
+        done glm_vec4_dot(self.ptr(), other.ptr())
+
+    length(self) -> float
+        done glm_vec4_norm(self.ptr())
+
+    normalize(self) -> vec4
+        result: vec4
+        glm_vec4_normalize(self.ptr(), result.ptr())
+        done result
+
+// ---------------------------------------------------------------------------
+// Mat4
+//   Stored column-major as float[16] — same layout as cglm/OpenGL.
+//   Access with .data[i] or use .ptr() for C interop.
+// ---------------------------------------------------------------------------
+
+shape mat4
+    data: [16]float          // column-major: data[col*4 + row]
+
+    ptr(self) -> *float
+        done &self.data[0]
+
+    // Identity constructor
+    static identity() -> mat4
+        m: mat4
+        glm_mat4_identity(m.ptr())
+        done m
+
+    // Matrix-matrix multiply
+    op_mul(self, other: mat4) -> mat4
+        result: mat4
+        glm_mat4_mul(self.ptr(), other.ptr(), result.ptr())
+        done result
+
+    // Matrix-vector multiply (vec4)
+    op_mul_vec(self, v: vec4) -> vec4
+        result: vec4
+        glm_mat4_mulv(self.ptr(), v.ptr(), result.ptr())
+        done result
+
+    // Matrix-vector multiply (vec3, w=1)
+    transform(self, v: vec3) -> vec3
+        result: vec3
+        glm_mat4_mulv3(self.ptr(), v.ptr(), 1.0, result.ptr())
+        done result
+
+    // Matrix-vector multiply (vec3 direction, w=0)
+    rotate_dir(self, v: vec3) -> vec3
+        result: vec3
+        glm_mat4_mulv3(self.ptr(), v.ptr(), 0.0, result.ptr())
+        done result
+
+    transpose(self) -> mat4
+        result: mat4
+        glm_mat4_transpose(self.ptr(), result.ptr())
+        done result
+
+    inverse(self) -> mat4
+        result: mat4
+        glm_mat4_inv(self.ptr(), result.ptr())
+        done result
+
+    inverse_fast(self) -> mat4
+        result: mat4
+        glm_mat4_inv_fast(self.ptr(), result.ptr())
+        done result
+
+    determinant(self) -> float
+        done glm_mat4_det(self.ptr())
+
+    trace(self) -> float
+        done glm_mat4_trace(self.ptr())
+
+    scale(self, s: float) -> mat4
+        result: mat4
+        glm_mat4_scale_uni(self.ptr(), s, result.ptr())
+        done result
+
+    // Translate by vector (right-multiply)
+    translate(self, v: vec3) -> mat4
+        result: mat4
+        glm_mat4_translate(self.ptr(), v.ptr(), result.ptr())
+        done result
+
+    // Rotate by angle (radians) around axis
+    rotate(self, angle: float, axis: vec3) -> mat4
+        result: mat4
+        glm_mat4_rotate(self.ptr(), angle, axis.ptr(), result.ptr())
+        done result
+
+    rotate_x(self, angle: float) -> mat4
+        result: mat4
+        glm_mat4_rotate_x(self.ptr(), angle, result.ptr())
+        done result
+
+    rotate_y(self, angle: float) -> mat4
+        result: mat4
+        glm_mat4_rotate_y(self.ptr(), angle, result.ptr())
+        done result
+
+    rotate_z(self, angle: float) -> mat4
+        result: mat4
+        glm_mat4_rotate_z(self.ptr(), angle, result.ptr())
+        done result
+
+    // Extract euler angles (radians) as vec3(x=pitch, y=yaw, z=roll)
+    euler_angles(self) -> vec3
+        result: vec3
+        glm_euler_angles(self.ptr(), result.ptr())
+        done result
+
+// ---------------------------------------------------------------------------
+// Free functions
+// ---------------------------------------------------------------------------
+
+mat4_perspective(fov_y: float, aspect: float, near: float, far: float) -> mat4
+    m: mat4
+    glm_perspective(fov_y, aspect, near, far, m.ptr())
+    done m
+
+mat4_lookat(eye: vec3, center: vec3, up: vec3) -> mat4
+    m: mat4
+    glm_lookat(eye.ptr(), center.ptr(), up.ptr(), m.ptr())
+    done m
+
+mat4_ortho(left: float, right: float, bottom: float, top: float, near: float, far: float) -> mat4
+    m: mat4
+    glm_ortho(left, right, bottom, top, near, far, m.ptr())
+    done m
+
+mat4_rotate_x(angle: float) -> mat4
+    done mat4_identity().rotate_x(angle)
+
+mat4_rotate_y(angle: float) -> mat4
+    done mat4_identity().rotate_y(angle)
+
+mat4_rotate_z(angle: float) -> mat4
+    done mat4_identity().rotate_z(angle)
+
+mat4_translate(v: vec3) -> mat4
+    done mat4_identity().translate(v)
+
+mat4_scale(s: float) -> mat4
+    done mat4_identity().scale(s)
+
+rad(degrees: float) -> float
+    done degrees * 3.14159265358979323846 / 180.0
+
+deg(radians: float) -> float
+    done radians * 180.0 / 3.14159265358979323846

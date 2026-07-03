@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v0.1.0"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark this release as a prerelease"
+        required: false
+        default: false
+        type: boolean
+      release_notes:
+        description: "Optional Markdown release notes"
+        required: false
+        default: ""
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macos-arm64
+          - os: macos-13
+            name: macos-x64
+          - os: ubuntu-22.04
+            name: linux-x64
+
+    env:
+      RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build native binaries
+        run: make native-release
+
+      - name: Smoke test
+        run: ./build/mix --version
+
+      - name: Package
+        run: make release-package VERSION="$RELEASE_VERSION" HOST_NAME="${{ matrix.name }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mix-${{ env.RELEASE_VERSION }}-${{ matrix.name }}
+          path: dist/mix-${{ env.RELEASE_VERSION }}-${{ matrix.name }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-22.04
+    env:
+      RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+      IS_PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write release notes
+        env:
+          RELEASE_NOTES: ${{ github.event_name == 'workflow_dispatch' && inputs.release_notes || '' }}
+        run: |
+          {
+            if [ -n "$RELEASE_NOTES" ]; then
+              printf '%s\n\n' "$RELEASE_NOTES"
+            fi
+
+            printf '## Binary archives\n\n'
+            printf 'This release includes native MIX compiler archives for:\n\n'
+            printf -- '- macOS Apple Silicon: `mix-%s-macos-arm64.tar.gz`\n' "$RELEASE_VERSION"
+            printf -- '- macOS Intel: `mix-%s-macos-x64.tar.gz`\n' "$RELEASE_VERSION"
+            printf -- '- Linux x64: `mix-%s-linux-x64.tar.gz`\n\n' "$RELEASE_VERSION"
+
+            printf 'Each archive includes `bin/mix`, `bin/mix-lsp`, the runtime, standard library, wrapper modules, and vendored headers/libraries.\n\n'
+            printf '## Install\n\n'
+            printf '```sh\n'
+            printf 'tar -xzf mix-%s-<platform>.tar.gz\n' "$RELEASE_VERSION"
+            printf 'export PATH="$PWD/mix-%s-<platform>/bin:$PATH"\n' "$RELEASE_VERSION"
+            printf 'mix --version\n'
+            printf '```\n'
+          } > RELEASE_NOTES.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: MIX ${{ env.RELEASE_VERSION }}
+          prerelease: ${{ env.IS_PRERELEASE }}
+          body_path: RELEASE_NOTES.md
+          files: dist/*.tar.gz

@@ -94,6 +94,24 @@ test-fmt: $(BIN)
 
 test-all: test test-errors test-error-messages test-fmt
 
+native-release: CFLAGS = -Wall -Wextra -std=c11 -O2
+native-release: $(BIN) $(LSP_BIN) $(RUNTIME_O)
+
+VERSION ?= dev
+HOST_NAME ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')-$(shell uname -m)
+DIST_DIR ?= dist
+PACKAGE_NAME ?= mix-$(VERSION)-$(HOST_NAME)
+PACKAGE_DIR = $(DIST_DIR)/$(PACKAGE_NAME)
+
+release-package: native-release
+	rm -rf $(PACKAGE_DIR) $(DIST_DIR)/$(PACKAGE_NAME).tar.gz
+	mkdir -p $(PACKAGE_DIR)/bin $(PACKAGE_DIR)/lib
+	cp $(BIN) $(LSP_BIN) $(PACKAGE_DIR)/bin/
+	cp -R lib/. $(PACKAGE_DIR)/lib/
+	cp $(RUNTIME_O) $(PACKAGE_DIR)/lib/runtime.o
+	cp README.md LICENSE $(PACKAGE_DIR)/
+	tar -czf $(DIST_DIR)/$(PACKAGE_NAME).tar.gz -C $(DIST_DIR) $(PACKAGE_NAME)
+
 PREFIX ?= /usr/local
 install: $(BIN) $(LSP_BIN) $(RUNTIME_O) $(RUNTIME_WASI_O) $(RUNTIME_EMSC_O)
 	mkdir -p $(PREFIX)/bin
@@ -108,4 +126,4 @@ install: $(BIN) $(LSP_BIN) $(RUNTIME_O) $(RUNTIME_WASI_O) $(RUNTIME_EMSC_O)
 		cp lib/std/*.mix $(PREFIX)/lib/mix/std/; \
 	fi
 
-.PHONY: all clean run test test-errors test-error-messages test-fmt test-all install
+.PHONY: all clean run test test-errors test-error-messages test-fmt test-all native-release release-package install

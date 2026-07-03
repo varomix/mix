@@ -10,8 +10,9 @@
 #include <stdio.h>
 #include <sys/stat.h>
 
-void lsp_server_init(LspServer *server) {
+void lsp_server_init(LspServer *server, const char *exe_dir) {
     memset(server, 0, sizeof(LspServer));
+    if (exe_dir) snprintf(server->exe_dir, sizeof(server->exe_dir), "%s", exe_dir);
     server->documents = docstore_create();
     workspace_init(&server->workspace);
 }
@@ -123,7 +124,8 @@ static void handle_did_open(LspServer *server, JsonValue *params) {
     int version = (int)json_get_int(td, "version");
 
     if (uri && text) {
-        docstore_open(&server->documents, uri, text, version);
+        LspDocument *doc = docstore_open(&server->documents, uri, text, version);
+        if (doc) snprintf(doc->exe_dir, sizeof(doc->exe_dir), "%s", server->exe_dir);
     }
 }
 
@@ -173,6 +175,8 @@ static void handle_did_save(LspServer *server, JsonValue *params) {
 
     LspDocument *doc = docstore_find(&server->documents, uri);
     if (doc) {
+        if (!doc->exe_dir[0] && server->exe_dir[0])
+            snprintf(doc->exe_dir, sizeof(doc->exe_dir), "%s", server->exe_dir);
         document_analyze(doc);
     }
 }

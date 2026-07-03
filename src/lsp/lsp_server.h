@@ -12,9 +12,10 @@ typedef struct {
     bool shutdown_requested;
     char *root_uri;
     char *root_path;
+    char exe_dir[1024];
 } LspServer;
 
-void lsp_server_init(LspServer *server);
+void lsp_server_init(LspServer *server, const char *exe_dir);
 void lsp_server_destroy(LspServer *server);
 void lsp_server_dispatch(LspServer *server, JsonValue *msg, Arena *scratch);
 

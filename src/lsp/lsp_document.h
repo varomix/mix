@@ -13,6 +13,7 @@ typedef struct LspDocument {
     char *filepath;
     char *source;
     int version;
+    char exe_dir[1024];
 
     // Analysis results
     Arena doc_arena;

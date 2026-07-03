@@ -846,7 +846,10 @@ static const char *build_module_path(char *out_buf, size_t out_size,
 // Resolve a `use a.b.c` to an absolute filesystem path. Tries:
 //   1. Relative to the file's own directory.
 //   2. For `std.*`: walk parent directories looking for `lib/std/<rest>.mix`.
-char *lsp_resolve_use_path(const char *main_filepath, const char *module_path) {
+//   3. <file_dir>/lib/<module>/<module>.mix
+//   4. <exe_dir>/../lib/<module>/<module>.mix
+char *lsp_resolve_use_path(const char *main_filepath, const char *module_path,
+                           const char *exe_dir) {
     char *dir_copy = strdup(main_filepath);
     char *dir = dirname(dir_copy);
 
@@ -888,12 +891,30 @@ char *lsp_resolve_use_path(const char *main_filepath, const char *module_path) {
         }
     }
 
+    // (3) <file_dir>/lib/<module>/<module>.mix
+    char lib_path[1024];
+    snprintf(lib_path, sizeof(lib_path), "%s/lib/%s/%s.mix", dir, module_path, module_path);
+    if (stat(lib_path, &st) == 0) {
+        free(dir_copy);
+        return strdup(lib_path);
+    }
+
+    // (4) <exe_dir>/../lib/<module>/<module>.mix
+    if (exe_dir && exe_dir[0]) {
+        snprintf(lib_path, sizeof(lib_path), "%s/../lib/%s/%s.mix", exe_dir, module_path, module_path);
+        if (stat(lib_path, &st) == 0) {
+            free(dir_copy);
+            return strdup(lib_path);
+        }
+    }
+
     free(dir_copy);
     return NULL;
 }
 
 void symbol_index_build_with_imports(SymbolIndex *idx, AstNode *program,
-                                      const char *filepath) {
+                                      const char *filepath,
+                                      const char *exe_dir) {
     // Build the main file's symbols
     symbol_index_build(idx, program);
 
@@ -903,7 +924,7 @@ void symbol_index_build_with_imports(SymbolIndex *idx, AstNode *program,
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
         if (decl->kind == NODE_USE_DECL) {
-            char *mod_path = lsp_resolve_use_path(filepath, decl->use_decl.module_path);
+            char *mod_path = lsp_resolve_use_path(filepath, decl->use_decl.module_path, exe_dir);
             if (mod_path) {
                 index_module_file(idx, mod_path);
                 free(mod_path);

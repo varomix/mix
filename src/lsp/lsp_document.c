@@ -144,7 +144,8 @@ static char *read_file_contents(const char *path) {
 // Recursion depth is shallow in practice (modules importing modules is
 // uncommon for MIX); we cap at 16 to avoid runaway includes.
 static void load_module_imports(AstNode *program, const char *filepath,
-                                Sema *sema, Arena *arena) {
+                                Sema *sema, Arena *arena,
+                                const char *exe_dir) {
     static int depth = 0;
     if (depth >= 16) return;
     if (!program || program->kind != NODE_PROGRAM) return;
@@ -188,7 +189,7 @@ static void load_module_imports(AstNode *program, const char *filepath,
 
         if (decl->kind != NODE_USE_DECL) continue;
 
-        char *mod_path = lsp_resolve_use_path(filepath, decl->use_decl.module_path);
+        char *mod_path = lsp_resolve_use_path(filepath, decl->use_decl.module_path, exe_dir);
         if (!mod_path) continue;
 
         char *src = read_file_contents(mod_path);
@@ -204,7 +205,7 @@ static void load_module_imports(AstNode *program, const char *filepath,
             // Recurse first so transitive pub symbols populate the symtab
             // before this module's own sema runs.
             depth++;
-            load_module_imports(mod_prog, mod_path, sema, arena);
+            load_module_imports(mod_prog, mod_path, sema, arena, exe_dir);
             depth--;
             errors_set_source(src, mod_path);
             sema_analyze(sema, mod_prog);
@@ -263,7 +264,7 @@ void document_analyze(LspDocument *doc) {
     if (doc->ast && doc->ast->kind == NODE_PROGRAM) {
         Sema sema = sema_create(&doc->doc_arena);
 
-        load_module_imports(doc->ast, doc->filepath, &sema, &doc->doc_arena);
+        load_module_imports(doc->ast, doc->filepath, &sema, &doc->doc_arena, doc->exe_dir);
 
         // Restore the publishing callback for the main file's analysis and
         // re-set the source so error gutters point to the right buffer.
@@ -272,7 +273,7 @@ void document_analyze(LspDocument *doc) {
         sema_analyze(&sema, doc->ast);
 
         // Build symbol index from analyzed AST (includes imported modules)
-        symbol_index_build_with_imports(&doc->symbols, doc->ast, doc->filepath);
+        symbol_index_build_with_imports(&doc->symbols, doc->ast, doc->filepath, doc->exe_dir);
     }
 
     // Restore default error behavior

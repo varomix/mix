@@ -4,6 +4,7 @@
 #include "../cbind.h"
 #include <libgen.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #define SYM_BUCKETS 128
 #define MODULE_CACHE_MAX 32

@@ -4,6 +4,7 @@
 #include "../arena.h"
 #include "lsp_symbols.h"
 #include <sys/stat.h>
+#include <time.h>
 
 // One file in the workspace cache. Holds its own arena because the AST
 // references arena memory for identifier strings. The SymbolIndex is built

@@ -3,6 +3,7 @@
 #include "../errors.h"
 #include <libgen.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #define DOC_BUCKETS 64
 #define ARENA_DEFAULT_CAP (1024 * 1024)

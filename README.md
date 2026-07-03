@@ -114,6 +114,10 @@ make           # builds mix + mix-lsp
 make test-all  # runtime + error test suites
 ```
 
+## Platform support
+
+Release binaries are currently built for macOS (Apple Silicon and Intel) and Linux x64. Windows binaries are not shipped yet; Windows support is planned, likely starting with an MSYS2/MinGW build before a native Windows port.
+
 ## License
 
 MIX is licensed under the [zlib License](LICENSE).

@@ -724,9 +724,7 @@ static LirOpnd stringify_field(LowerCtx *ctx, SrcLoc loc, LirOpnd base_ptr,
 
 static LirOpnd lower_shape_to_string(LowerCtx *ctx, SrcLoc loc, LirOpnd ptr, MixType *shape_t) {
     LirOpnd acc = lir_opnd_none();
-    char name_buf[256];
-    snprintf(name_buf, sizeof(name_buf), "%s(", shape_t->shape.name);
-    int nid = lir_intern_string(ctx->mod, name_buf, (int)strlen(name_buf));
+    int nid = lir_intern_string(ctx->mod, "[", 1);
     LirOpnd name_str = lir_opnd_string(nid);
     acc = name_str;
 
@@ -748,7 +746,7 @@ static LirOpnd lower_shape_to_string(LowerCtx *ctx, SrcLoc loc, LirOpnd ptr, Mix
                                shape_t->shape.fields[i].offset, acc);
     }
 
-    int close_id = lir_intern_string(ctx->mod, ")", 1);
+    int close_id = lir_intern_string(ctx->mod, "]", 1);
     LirOpnd close_str = lir_opnd_string(close_id);
     if (acc.type == LIR_TY_PTR) {
         register_str_concat(ctx, loc);
@@ -763,14 +761,9 @@ static LirOpnd lower_shape_to_string(LowerCtx *ctx, SrcLoc loc, LirOpnd ptr, Mix
 
 static void lower_print_shape_struct(LowerCtx *ctx, SrcLoc loc, LirOpnd ptr, MixType *shape_t) {
     register_print_str(ctx->mod, loc);
-    int name_id = lir_intern_string(ctx->mod, shape_t->shape.name,
-                                     (int)strlen(shape_t->shape.name));
-    LirOpnd n_args[] = { lir_opnd_string(name_id) };
-    lir_emit_call(ctx->fn, loc, "mix_print_str", LIR_TY_VOID, n_args, 1);
-
-    int paren_id = lir_intern_string(ctx->mod, "(", 1);
+    int brack_id = lir_intern_string(ctx->mod, "[", 1);
     lir_emit_call(ctx->fn, loc, "mix_print_str", LIR_TY_VOID,
-                  (LirOpnd[]){ lir_opnd_string(paren_id) }, 1);
+                  (LirOpnd[]){ lir_opnd_string(brack_id) }, 1);
 
     int fc = shape_t->shape.field_count;
     for (int i = 0; i < fc; i++) {
@@ -778,7 +771,7 @@ static void lower_print_shape_struct(LowerCtx *ctx, SrcLoc loc, LirOpnd ptr, Mix
                          shape_t->shape.fields[i].offset, i > 0);
     }
 
-    int close_id = lir_intern_string(ctx->mod, ")", 1);
+    int close_id = lir_intern_string(ctx->mod, "]", 1);
     lir_emit_call(ctx->fn, loc, "mix_print_str", LIR_TY_VOID,
                   (LirOpnd[]){ lir_opnd_string(close_id) }, 1);
 }

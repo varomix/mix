@@ -49,7 +49,8 @@ void symbol_index_build(SymbolIndex *idx, AstNode *program);
 // Build index with imported module symbols
 void symbol_index_build_with_imports(SymbolIndex *idx, AstNode *program,
                                       const char *filepath,
-                                      const char *exe_dir);
+                                      const char *exe_dir,
+                                      const char *root_path);
 
 // Look up a symbol by name (returns first match)
 SymbolEntry *symbol_index_lookup(SymbolIndex *idx, const char *name);
@@ -58,6 +59,6 @@ SymbolEntry *symbol_index_lookup(SymbolIndex *idx, const char *name);
 // strdup'd path on hit, NULL if no .mix file exists at the resolved location.
 // Caller frees. exe_dir is the directory containing the mix-lsp binary.
 char *lsp_resolve_use_path(const char *main_filepath, const char *module_path,
-                           const char *exe_dir);
+                           const char *exe_dir, const char *root_path);
 
 #endif // LSP_SYMBOLS_H

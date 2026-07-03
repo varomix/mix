@@ -14,6 +14,7 @@ typedef struct LspDocument {
     char *source;
     int version;
     char exe_dir[1024];
+    char *root_path;
 
     // Analysis results
     Arena doc_arena;
@@ -41,7 +42,9 @@ DocumentStore docstore_create(void);
 void docstore_destroy(DocumentStore *store);
 
 LspDocument *docstore_open(DocumentStore *store, const char *uri,
-                           const char *text, int version);
+                           const char *text, int version,
+                           const char *exe_dir,
+                           const char *root_path);
 void docstore_update(DocumentStore *store, const char *uri,
                      const char *text, int version);
 void docstore_close(DocumentStore *store, const char *uri);

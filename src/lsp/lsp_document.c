@@ -43,6 +43,7 @@ void docstore_destroy(DocumentStore *store) {
             free(doc->uri);
             free(doc->filepath);
             free(doc->source);
+            free(doc->root_path);
             arena_destroy(&doc->doc_arena);
             diag_list_destroy(&doc->diagnostics);
             symbol_index_destroy(&doc->symbols);
@@ -64,12 +65,16 @@ LspDocument *docstore_find(DocumentStore *store, const char *uri) {
 }
 
 LspDocument *docstore_open(DocumentStore *store, const char *uri,
-                           const char *text, int version) {
+                           const char *text, int version,
+                           const char *exe_dir,
+                           const char *root_path) {
     LspDocument *doc = calloc(1, sizeof(LspDocument));
     doc->uri = strdup(uri);
     doc->filepath = lsp_uri_to_path(uri);
     doc->source = strdup(text);
     doc->version = version;
+    if (exe_dir) snprintf(doc->exe_dir, sizeof(doc->exe_dir), "%s", exe_dir);
+    doc->root_path = root_path ? strdup(root_path) : NULL;
     doc->doc_arena = arena_create(ARENA_DEFAULT_CAP);
     diag_list_init(&doc->diagnostics);
     symbol_index_init(&doc->symbols);
@@ -105,6 +110,7 @@ void docstore_close(DocumentStore *store, const char *uri) {
             free(doc->uri);
             free(doc->filepath);
             free(doc->source);
+            free(doc->root_path);
             arena_destroy(&doc->doc_arena);
             diag_list_destroy(&doc->diagnostics);
             symbol_index_destroy(&doc->symbols);
@@ -145,7 +151,8 @@ static char *read_file_contents(const char *path) {
 // uncommon for MIX); we cap at 16 to avoid runaway includes.
 static void load_module_imports(AstNode *program, const char *filepath,
                                 Sema *sema, Arena *arena,
-                                const char *exe_dir) {
+                                const char *exe_dir,
+                                const char *root_path) {
     static int depth = 0;
     if (depth >= 16) return;
     if (!program || program->kind != NODE_PROGRAM) return;
@@ -189,7 +196,8 @@ static void load_module_imports(AstNode *program, const char *filepath,
 
         if (decl->kind != NODE_USE_DECL) continue;
 
-        char *mod_path = lsp_resolve_use_path(filepath, decl->use_decl.module_path, exe_dir);
+        char *mod_path = lsp_resolve_use_path(filepath, decl->use_decl.module_path,
+                                              exe_dir, root_path);
         if (!mod_path) continue;
 
         char *src = read_file_contents(mod_path);
@@ -205,7 +213,7 @@ static void load_module_imports(AstNode *program, const char *filepath,
             // Recurse first so transitive pub symbols populate the symtab
             // before this module's own sema runs.
             depth++;
-            load_module_imports(mod_prog, mod_path, sema, arena, exe_dir);
+            load_module_imports(mod_prog, mod_path, sema, arena, exe_dir, root_path);
             depth--;
             errors_set_source(src, mod_path);
             sema_analyze(sema, mod_prog);
@@ -264,7 +272,8 @@ void document_analyze(LspDocument *doc) {
     if (doc->ast && doc->ast->kind == NODE_PROGRAM) {
         Sema sema = sema_create(&doc->doc_arena);
 
-        load_module_imports(doc->ast, doc->filepath, &sema, &doc->doc_arena, doc->exe_dir);
+        load_module_imports(doc->ast, doc->filepath, &sema, &doc->doc_arena,
+                            doc->exe_dir, doc->root_path);
 
         // Restore the publishing callback for the main file's analysis and
         // re-set the source so error gutters point to the right buffer.
@@ -273,7 +282,8 @@ void document_analyze(LspDocument *doc) {
         sema_analyze(&sema, doc->ast);
 
         // Build symbol index from analyzed AST (includes imported modules)
-        symbol_index_build_with_imports(&doc->symbols, doc->ast, doc->filepath, doc->exe_dir);
+        symbol_index_build_with_imports(&doc->symbols, doc->ast, doc->filepath,
+                                        doc->exe_dir, doc->root_path);
     }
 
     // Restore default error behavior

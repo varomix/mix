@@ -843,41 +843,78 @@ static const char *build_module_path(char *out_buf, size_t out_size,
     return out_buf;
 }
 
+static bool path_exists(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
+static bool build_std_path(char *out_buf, size_t out_size,
+                           const char *base, const char *rest) {
+    int off = snprintf(out_buf, out_size, "%s/lib/std/", base);
+    for (const char *p = rest; *p && off + 5 < (int)out_size; p++) {
+        out_buf[off++] = (*p == '.') ? '/' : *p;
+    }
+    out_buf[off] = '\0';
+    strncat(out_buf, ".mix", out_size - strlen(out_buf) - 1);
+    return path_exists(out_buf);
+}
+
 // Resolve a `use a.b.c` to an absolute filesystem path. Tries:
 //   1. Relative to the file's own directory.
-//   2. For `std.*`: walk parent directories looking for `lib/std/<rest>.mix`.
-//   3. <file_dir>/lib/<module>/<module>.mix
-//   4. <exe_dir>/../lib/<module>/<module>.mix
+//   2. For `std.*`: exe/install, workspace, then parent `lib/std` layouts.
+//   3. <workspace_root>/lib/<module>/<module>.mix
+//   4. <file_dir>/lib/<module>/<module>.mix
+//   5. <exe_dir>/../lib/<module>/<module>.mix
 char *lsp_resolve_use_path(const char *main_filepath, const char *module_path,
-                           const char *exe_dir) {
+                           const char *exe_dir, const char *root_path) {
     char *dir_copy = strdup(main_filepath);
     char *dir = dirname(dir_copy);
 
     char path[1024];
-    struct stat st;
 
     // (1) Relative to the file's directory
-    build_module_path(path, sizeof(path), dir, module_path);
-    if (stat(path, &st) == 0) {
+    if (strchr(module_path, '/')) {
+        snprintf(path, sizeof(path), "%s/%s.mix", dir, module_path);
+    } else {
+        build_module_path(path, sizeof(path), dir, module_path);
+    }
+    if (path_exists(path)) {
         free(dir_copy);
         return strdup(path);
     }
 
-    // (2) Stdlib: walk up parent dirs looking for lib/std/<rest>.mix
+    // (2) Stdlib: installed/dev layouts first, then workspace and parents.
     if (strncmp(module_path, "std.", 4) == 0) {
         const char *rest = module_path + 4;
+        char rel[512];
+        int ri = 0;
+        for (const char *p = rest; *p && ri < (int)sizeof(rel) - 1; p++)
+            rel[ri++] = (*p == '.') ? '/' : *p;
+        rel[ri] = '\0';
+
+        if (exe_dir && exe_dir[0]) {
+            snprintf(path, sizeof(path), "%s/../lib/mix/std/%s.mix", exe_dir, rel);
+            if (path_exists(path)) {
+                free(dir_copy);
+                return strdup(path);
+            }
+            snprintf(path, sizeof(path), "%s/../lib/std/%s.mix", exe_dir, rel);
+            if (path_exists(path)) {
+                free(dir_copy);
+                return strdup(path);
+            }
+        }
+
+        if (root_path && root_path[0] && build_std_path(path, sizeof(path), root_path, rest)) {
+            free(dir_copy);
+            return strdup(path);
+        }
+
         char ascend[1024];
         snprintf(ascend, sizeof(ascend), "%s", dir);
         // Walk up until we hit "/" or run out of components.
         for (int i = 0; i < 32; i++) {
-            snprintf(path, sizeof(path), "%s/lib/std/", ascend);
-            int off = (int)strlen(path);
-            for (const char *p = rest; *p && off + 5 < (int)sizeof(path); p++) {
-                path[off++] = (*p == '.') ? '/' : *p;
-            }
-            path[off] = '\0';
-            strncat(path, ".mix", sizeof(path) - strlen(path) - 1);
-            if (stat(path, &st) == 0) {
+            if (build_std_path(path, sizeof(path), ascend, rest)) {
                 free(dir_copy);
                 return strdup(path);
             }
@@ -891,18 +928,29 @@ char *lsp_resolve_use_path(const char *main_filepath, const char *module_path,
         }
     }
 
-    // (3) <file_dir>/lib/<module>/<module>.mix
     char lib_path[1024];
+
+    // (3) <workspace_root>/lib/<module>/<module>.mix
+    if (root_path && root_path[0]) {
+        snprintf(lib_path, sizeof(lib_path), "%s/lib/%s/%s.mix",
+                 root_path, module_path, module_path);
+        if (path_exists(lib_path)) {
+            free(dir_copy);
+            return strdup(lib_path);
+        }
+    }
+
+    // (4) <file_dir>/lib/<module>/<module>.mix
     snprintf(lib_path, sizeof(lib_path), "%s/lib/%s/%s.mix", dir, module_path, module_path);
-    if (stat(lib_path, &st) == 0) {
+    if (path_exists(lib_path)) {
         free(dir_copy);
         return strdup(lib_path);
     }
 
-    // (4) <exe_dir>/../lib/<module>/<module>.mix
+    // (5) <exe_dir>/../lib/<module>/<module>.mix
     if (exe_dir && exe_dir[0]) {
         snprintf(lib_path, sizeof(lib_path), "%s/../lib/%s/%s.mix", exe_dir, module_path, module_path);
-        if (stat(lib_path, &st) == 0) {
+        if (path_exists(lib_path)) {
             free(dir_copy);
             return strdup(lib_path);
         }
@@ -914,7 +962,8 @@ char *lsp_resolve_use_path(const char *main_filepath, const char *module_path,
 
 void symbol_index_build_with_imports(SymbolIndex *idx, AstNode *program,
                                       const char *filepath,
-                                      const char *exe_dir) {
+                                      const char *exe_dir,
+                                      const char *root_path) {
     // Build the main file's symbols
     symbol_index_build(idx, program);
 
@@ -924,7 +973,8 @@ void symbol_index_build_with_imports(SymbolIndex *idx, AstNode *program,
     for (int i = 0; i < program->program.decl_count; i++) {
         AstNode *decl = program->program.decls[i];
         if (decl->kind == NODE_USE_DECL) {
-            char *mod_path = lsp_resolve_use_path(filepath, decl->use_decl.module_path, exe_dir);
+            char *mod_path = lsp_resolve_use_path(filepath, decl->use_decl.module_path,
+                                                  exe_dir, root_path);
             if (mod_path) {
                 index_module_file(idx, mod_path);
                 free(mod_path);

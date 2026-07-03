@@ -124,8 +124,8 @@ static void handle_did_open(LspServer *server, JsonValue *params) {
     int version = (int)json_get_int(td, "version");
 
     if (uri && text) {
-        LspDocument *doc = docstore_open(&server->documents, uri, text, version);
-        if (doc) snprintf(doc->exe_dir, sizeof(doc->exe_dir), "%s", server->exe_dir);
+        docstore_open(&server->documents, uri, text, version,
+                      server->exe_dir, server->root_path);
     }
 }
 

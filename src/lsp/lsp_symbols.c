@@ -28,6 +28,7 @@ void symbol_index_clear(SymbolIndex *idx) {
         while (e) {
             SymbolEntry *next = e->next;
             free(e->name);
+            free((char *)e->def_loc.filename);
             free(e->container);
             if (e->param_names) {
                 for (int j = 0; j < e->param_name_count; j++) free(e->param_names[j]);
@@ -78,6 +79,7 @@ static void sym_add(SymbolIndex *idx, const char *name, SrcLoc loc,
     SymbolEntry *e = calloc(1, sizeof(SymbolEntry));
     e->name = strdup(name);
     e->def_loc = loc;
+    e->def_loc.filename = loc.filename ? strdup(loc.filename) : NULL;
     e->type = type;
     e->decl_kind = kind;
     e->container = container ? strdup(container) : NULL;
@@ -491,6 +493,7 @@ typedef struct {
         char *name;
         SrcLoc loc;
         NodeKind kind;
+        char *filename;
         int param_count;
         char **param_names;
         char **param_type_strs;
@@ -507,6 +510,7 @@ static void module_cache_free_entry(ModuleCache *mc) {
     free(mc->path);
     for (int i = 0; i < mc->entry_count; i++) {
         free(mc->entries[i].name);
+        free(mc->entries[i].filename);
         for (int j = 0; j < mc->entries[i].param_count; j++) {
             free(mc->entries[i].param_names[j]);
             free(mc->entries[i].param_type_strs[j]);
@@ -527,10 +531,19 @@ static ModuleCache *module_cache_find(const char *path) {
     return NULL;
 }
 
+void lsp_symbol_cache_clear(void) {
+    for (int i = 0; i < module_cache_count; i++) {
+        module_cache_free_entry(&module_cache[i]);
+    }
+    module_cache_count = 0;
+}
+
 // Replay cached symbols into the index
 static void module_cache_replay(ModuleCache *mc, SymbolIndex *idx) {
     for (int i = 0; i < mc->entry_count; i++) {
-        sym_add(idx, mc->entries[i].name, mc->entries[i].loc, NULL, mc->entries[i].kind, NULL);
+        SrcLoc loc = mc->entries[i].loc;
+        loc.filename = mc->entries[i].filename;
+        sym_add(idx, mc->entries[i].name, loc, NULL, mc->entries[i].kind, NULL);
         if (mc->entries[i].param_count > 0) {
             SymbolEntry *fe = symbol_index_lookup(idx, mc->entries[i].name);
             if (fe) {
@@ -598,6 +611,7 @@ static void index_module_file(SymbolIndex *idx, const char *module_path) {
         // Clear old cached entries
         for (int i = 0; i < cached->entry_count; i++) {
             free(cached->entries[i].name);
+            free(cached->entries[i].filename);
             for (int j = 0; j < cached->entries[i].param_count; j++) {
                 free(cached->entries[i].param_names[j]);
                 free(cached->entries[i].param_type_strs[j]);
@@ -628,6 +642,7 @@ static void index_module_file(SymbolIndex *idx, const char *module_path) {
                 cached->entries[ci].name = strdup(d->fn_decl.name);
                 cached->entries[ci].loc = d->loc;
                 cached->entries[ci].kind = NODE_FN_DECL;
+                cached->entries[ci].filename = d->loc.filename ? strdup(d->loc.filename) : NULL;
                 SymbolEntry *fe = symbol_index_lookup(idx, d->fn_decl.name);
                 if (fe && fe->param_name_count > 0) {
                     cached->entries[ci].param_count = fe->param_name_count;
@@ -655,6 +670,7 @@ static void index_module_file(SymbolIndex *idx, const char *module_path) {
                 cached->entries[ci].name = strdup(d->shape_decl.name);
                 cached->entries[ci].loc = d->loc;
                 cached->entries[ci].kind = NODE_SHAPE_DECL;
+                cached->entries[ci].filename = d->loc.filename ? strdup(d->loc.filename) : NULL;
                 cached->entries[ci].param_count = 0;
                 cached->entries[ci].param_names = NULL;
                 cached->entries[ci].param_type_strs = NULL;
@@ -678,6 +694,7 @@ static void index_module_file(SymbolIndex *idx, const char *module_path) {
                         cached->entries[ci].name = strdup(ef->extern_fn_decl.name);
                         cached->entries[ci].loc = ef->loc;
                         cached->entries[ci].kind = NODE_FN_DECL;
+                        cached->entries[ci].filename = ef->loc.filename ? strdup(ef->loc.filename) : NULL;
                         SymbolEntry *fe = symbol_index_lookup(idx, ef->extern_fn_decl.name);
                         if (fe && fe->param_name_count > 0) {
                             cached->entries[ci].param_count = fe->param_name_count;
@@ -770,6 +787,7 @@ static void index_c_header(SymbolIndex *idx, const char *header_path,
                         cached->entries[ci].name = strdup(ef->extern_fn_decl.name);
                         cached->entries[ci].loc = ef->loc;
                         cached->entries[ci].kind = NODE_FN_DECL;
+                        cached->entries[ci].filename = ef->loc.filename ? strdup(ef->loc.filename) : NULL;
                         SymbolEntry *fe = symbol_index_lookup(idx, ef->extern_fn_decl.name);
                         if (fe && fe->param_name_count > 0) {
                             cached->entries[ci].param_count = fe->param_name_count;
@@ -800,6 +818,7 @@ static void index_c_header(SymbolIndex *idx, const char *header_path,
                 cached->entries[ci].name = strdup(d->const_decl.name);
                 cached->entries[ci].loc = d->loc;
                 cached->entries[ci].kind = NODE_CONST_DECL;
+                cached->entries[ci].filename = d->loc.filename ? strdup(d->loc.filename) : NULL;
                 cached->entries[ci].param_count = 0;
                 cached->entries[ci].param_names = NULL;
                 cached->entries[ci].param_type_strs = NULL;
@@ -816,6 +835,7 @@ static void index_c_header(SymbolIndex *idx, const char *header_path,
                 cached->entries[ci].name = strdup(d->shape_decl.name);
                 cached->entries[ci].loc = d->loc;
                 cached->entries[ci].kind = NODE_SHAPE_DECL;
+                cached->entries[ci].filename = d->loc.filename ? strdup(d->loc.filename) : NULL;
                 cached->entries[ci].param_count = 0;
                 cached->entries[ci].param_names = NULL;
                 cached->entries[ci].param_type_strs = NULL;
@@ -827,8 +847,7 @@ static void index_c_header(SymbolIndex *idx, const char *header_path,
 
     arena_destroy(&arena);
     free(bind_src);
-    // resolved intentionally not freed — it lives in SymbolEntry.def_loc
-    // and cache entry loc pointers.
+    free(resolved);
 }
 
 // Build "<dir>/<module-with-slashes>.mix" into out_buf. Returns out_buf.

@@ -20,6 +20,7 @@ void lsp_server_init(LspServer *server, const char *exe_dir) {
 void lsp_server_destroy(LspServer *server) {
     docstore_destroy(&server->documents);
     workspace_destroy(&server->workspace);
+    lsp_symbol_cache_clear();
     free(server->root_uri);
     free(server->root_path);
 }

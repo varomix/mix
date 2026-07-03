@@ -55,6 +55,9 @@ void symbol_index_build_with_imports(SymbolIndex *idx, AstNode *program,
 // Look up a symbol by name (returns first match)
 SymbolEntry *symbol_index_lookup(SymbolIndex *idx, const char *name);
 
+// Clear process-wide imported module/header symbol caches.
+void lsp_symbol_cache_clear(void);
+
 // Resolve a `use a.b.c` declaration to an absolute filesystem path. Returns
 // strdup'd path on hit, NULL if no .mix file exists at the resolved location.
 // Caller frees. exe_dir is the directory containing the mix-lsp binary.

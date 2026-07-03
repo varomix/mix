@@ -103,9 +103,9 @@ Options: -o <file>, --emit-ir, --debug, -O<level>,
 
 See the `examples/` directory for programs covering shapes, tagged unions, concurrency, operator overloading, SDL3, raylib, and WebGPU graphics.
 
-Full language reference: [`docs/DOCS.md`](docs/DOCS.md)
-Language specification: [`docs/MIX-spec_v01.md`](docs/MIX-spec_v01.md)
-Memory model design: [`docs/ZONES_VALUE_FIRST_DESIGN_SKETCH.md`](docs/ZONES_VALUE_FIRST_DESIGN_SKETCH.md)
+Full language reference: [`docs/overview.html`](docs/overview.html)
+Language specification: [`docs/overview.html`](docs/overview.html)
+Memory model design: [`docs/overview.html#memory`](docs/overview.html#memory)
 
 ## Build from source
 

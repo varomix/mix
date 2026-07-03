@@ -2,9 +2,21 @@
 #include "../cbind.h"
 #include "../errors.h"
 #include <libgen.h>
+#include <sys/stat.h>
 
 #define DOC_BUCKETS 64
 #define ARENA_DEFAULT_CAP (1024 * 1024)
+#define CBIND_SRC_CACHE_MAX 8
+
+typedef struct {
+    char *key;
+    char *filename;
+    char *source;
+    time_t mtime;
+} CbindSourceCacheEntry;
+
+static CbindSourceCacheEntry cbind_src_cache[CBIND_SRC_CACHE_MAX];
+static int cbind_src_cache_count = 0;
 
 static unsigned int hash_string(const char *s) {
     unsigned int h = 5381;
@@ -143,6 +155,77 @@ static char *read_file_contents(const char *path) {
     return buf;
 }
 
+static void cbind_src_cache_free_entry(CbindSourceCacheEntry *entry) {
+    free(entry->key);
+    free(entry->filename);
+    free(entry->source);
+    memset(entry, 0, sizeof(*entry));
+}
+
+void lsp_document_cbind_cache_clear(void) {
+    for (int i = 0; i < cbind_src_cache_count; i++) {
+        cbind_src_cache_free_entry(&cbind_src_cache[i]);
+    }
+    cbind_src_cache_count = 0;
+}
+
+static CbindSourceCacheEntry *cbind_src_cache_find(const char *key) {
+    for (int i = 0; i < cbind_src_cache_count; i++) {
+        if (cbind_src_cache[i].key && strcmp(cbind_src_cache[i].key, key) == 0) {
+            return &cbind_src_cache[i];
+        }
+    }
+    return NULL;
+}
+
+static CbindSourceCacheEntry *cbind_src_cache_slot(void) {
+    if (cbind_src_cache_count < CBIND_SRC_CACHE_MAX) {
+        return &cbind_src_cache[cbind_src_cache_count++];
+    }
+
+    cbind_src_cache_free_entry(&cbind_src_cache[0]);
+    memmove(&cbind_src_cache[0], &cbind_src_cache[1],
+            sizeof(CbindSourceCacheEntry) * (CBIND_SRC_CACHE_MAX - 1));
+    memset(&cbind_src_cache[CBIND_SRC_CACHE_MAX - 1], 0, sizeof(CbindSourceCacheEntry));
+    return &cbind_src_cache[CBIND_SRC_CACHE_MAX - 1];
+}
+
+static const char *cached_cbind_source(const char *header_path, const char *lib_name,
+                                       const char *source_dir,
+                                       const char **out_filename) {
+    char *resolved = resolve_header_path(header_path, source_dir);
+    const char *filename = resolved ? resolved : header_path;
+
+    struct stat st;
+    time_t mtime = (stat(filename, &st) == 0) ? st.st_mtime : 1;
+
+    char key[3072];
+    snprintf(key, sizeof(key), "%s|%s", filename, lib_name ? lib_name : "");
+
+    CbindSourceCacheEntry *cached = cbind_src_cache_find(key);
+    if (cached && cached->mtime == mtime) {
+        *out_filename = cached->filename;
+        free(resolved);
+        return cached->source;
+    }
+
+    char *source = cbind_generate_string(header_path, lib_name, false, source_dir);
+    if (!source) {
+        free(resolved);
+        return NULL;
+    }
+
+    cached = cbind_src_cache_slot();
+    cached->key = strdup(key);
+    cached->filename = strdup(filename);
+    cached->source = source;
+    cached->mtime = mtime;
+
+    *out_filename = cached->filename;
+    free(resolved);
+    return cached->source;
+}
+
 // Walk the main file's AST for NODE_USE_DECLs. For each, lex+parse+sema the
 // module file into the SHARED sema so its pub symbols become visible. Module
 // diagnostics are silently discarded.
@@ -169,16 +252,11 @@ static void load_module_imports(AstNode *program, const char *filepath,
             char *doc_dir = strdup(filepath);
             char *source_dir = dirname(doc_dir);
 
-            char *bind_src = cbind_generate_string(decl->use_c_decl.header_path,
-                                                    decl->use_c_decl.lib_name,
-                                                    false, source_dir);
+            const char *bind_filename = NULL;
+            const char *bind_src = cached_cbind_source(decl->use_c_decl.header_path,
+                                                       decl->use_c_decl.lib_name,
+                                                       source_dir, &bind_filename);
             if (!bind_src) { free(doc_dir); continue; }
-
-            // Resolve header path so def_loc.filename is an absolute path
-            // usable in Go to Definition responses.
-            char *resolved = resolve_header_path(decl->use_c_decl.header_path,
-                                                  source_dir);
-            const char *bind_filename = resolved ? resolved : decl->use_c_decl.header_path;
 
             errors_set_source(bind_src, bind_filename);
             Lexer bl = lexer_create(bind_src, bind_filename, arena);
@@ -188,8 +266,6 @@ static void load_module_imports(AstNode *program, const char *filepath,
             if (bprog && bprog->kind == NODE_PROGRAM) {
                 sema_analyze(sema, bprog);
             }
-            free(bind_src);
-            free(resolved);
             free(doc_dir);
             continue;
         }
@@ -259,7 +335,19 @@ void document_analyze(LspDocument *doc) {
                                    &doc->doc_arena, doc->filepath);
     doc->ast = parser_parse(&parser);
 
-    // Sema — try even with parse errors for best-effort type info.
+    // If the current buffer has syntax errors, stop here. Continuing into
+    // module imports and C binding generation while the user is mid-edit can
+    // repeatedly expand large vendored headers and stream noisy derived
+    // diagnostics into the editor.
+    if (mix_error_count() > 0) {
+        errors_set_callback(NULL, NULL);
+        doc->analysis_valid = true;
+        lsp_publish_diagnostics(doc->uri, &doc->diagnostics);
+        return;
+    }
+
+    // Sema — only after a clean parse. Broken buffers should stay cheap while
+    // the user is typing.
     //
     // We let sema diagnostics through to the editor so quick fixes like
     // "did you mean" can offer code actions. Before analyzing the main

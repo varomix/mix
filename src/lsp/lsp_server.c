@@ -20,6 +20,7 @@ void lsp_server_init(LspServer *server, const char *exe_dir) {
 void lsp_server_destroy(LspServer *server) {
     docstore_destroy(&server->documents);
     workspace_destroy(&server->workspace);
+    lsp_document_cbind_cache_clear();
     lsp_symbol_cache_clear();
     free(server->root_uri);
     free(server->root_path);
@@ -456,6 +457,11 @@ static void emit_completion(JsonWriter *w, const char *label, int kind,
     jw_object_end(w);
 }
 
+static bool symbol_is_from_document(LspDocument *doc, SymbolEntry *entry) {
+    if (!doc || !entry || !entry->def_loc.filename || !doc->filepath) return true;
+    return strcmp(entry->def_loc.filename, doc->filepath) == 0;
+}
+
 static void add_builtin_methods(JsonWriter *w, MixType *type) {
     if (!type) return;
     while (type && (type->kind == TYPE_REF || type->kind == TYPE_BOX)) {
@@ -781,6 +787,7 @@ static void handle_completion_request(LspServer *server, int64_t id, JsonValue *
         // Bare ident inside interpolation: "text {fr|}"
         for (int i = 0; i < doc->symbols.all_count; i++) {
             SymbolEntry *se = doc->symbols.all[i];
+            if (!symbol_is_from_document(doc, se)) continue;
             int kind = (se->decl_kind == NODE_FN_DECL) ? 3 : 6;
             char detail[256] = "";
             if (se->type) mix_type_to_string(se->type, detail, sizeof(detail));
@@ -830,6 +837,7 @@ static void handle_completion_request(LspServer *server, int64_t id, JsonValue *
         // General completion: symbols + keywords
         for (int i = 0; i < doc->symbols.all_count; i++) {
             SymbolEntry *se = doc->symbols.all[i];
+            if (!symbol_is_from_document(doc, se)) continue;
             int kind;
             switch (se->decl_kind) {
                 case NODE_FN_DECL:    kind = 3; break;
@@ -1011,6 +1019,7 @@ static void handle_document_symbol(LspServer *server, int64_t id, JsonValue *par
     // declarations, and including every loop var would just be noise.
     for (int i = 0; i < doc->symbols.all_count; i++) {
         SymbolEntry *e = doc->symbols.all[i];
+        if (!symbol_is_from_document(doc, e)) continue;
         if (e->container) continue;            // method — handled below
         if (e->decl_kind == NODE_VAR_DECL) continue;
 
@@ -1045,6 +1054,7 @@ static void handle_document_symbol(LspServer *server, int64_t id, JsonValue *par
             // Methods: any symbol whose container matches this shape
             for (int j = 0; j < doc->symbols.all_count; j++) {
                 SymbolEntry *m = doc->symbols.all[j];
+                if (!symbol_is_from_document(doc, m)) continue;
                 if (!m->container) continue;
                 if (strcmp(m->container, e->name) != 0) continue;
                 char mdetail[256] = "";

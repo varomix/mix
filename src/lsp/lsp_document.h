@@ -53,6 +53,9 @@ LspDocument *docstore_find(DocumentStore *store, const char *uri);
 // Run full analysis pipeline on a document
 void document_analyze(LspDocument *doc);
 
+// Clear process-wide generated C binding source caches.
+void lsp_document_cbind_cache_clear(void);
+
 // Ensure document is analyzed (lazy analysis — only runs if dirty)
 static inline void document_ensure_analyzed(LspDocument *doc) {
     if (doc && !doc->analysis_valid) document_analyze(doc);

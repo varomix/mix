@@ -2,7 +2,7 @@
 name = "tree-sitter-mix"
 description = "Mix grammar for tree-sitter"
 version = "0.0.1"
-license = "MIT"
+license = "Zlib"
 readme = "README.md"
 keywords = ["incremental", "parsing", "tree-sitter", "mix"]
 categories = ["parsing", "text-editors"]

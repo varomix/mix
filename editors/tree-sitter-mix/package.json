@@ -10,7 +10,7 @@
   },
   "keywords": ["parser", "tree-sitter", "mix"],
   "author": "varomix",
-  "license": "MIT",
+  "license": "Zlib",
   "dependencies": {
     "node-addon-api": "^7.1.0",
     "node-gyp-build": "^4.8.0"

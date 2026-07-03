@@ -10,7 +10,7 @@
   }],
   "metadata": {
     "version": "0.2.0",
-    "license": "MIT",
+    "license": "Zlib",
     "description": "MIX programming language grammar",
     "authors": [{"name": "mix-lang"}],
     "links": {

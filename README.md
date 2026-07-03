@@ -113,3 +113,7 @@ Memory model design: [`docs/overview.html#memory`](docs/overview.html#memory)
 make           # builds mix + mix-lsp
 make test-all  # runtime + error test suites
 ```
+
+## License
+
+MIX is licensed under the [zlib License](LICENSE).

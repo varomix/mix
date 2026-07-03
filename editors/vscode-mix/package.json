@@ -4,6 +4,7 @@
   "description": "MIX language support: syntax highlighting, diagnostics, hover",
   "version": "0.3.0",
   "publisher": "varomix",
+  "license": "Zlib",
   "engines": {
     "vscode": "^1.85.0"
   },

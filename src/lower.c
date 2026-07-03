@@ -607,6 +607,182 @@ static bool lower_collection_field(LowerCtx *ctx, AstNode *fe, LirOpnd *out) {
 
 // ---- print ----------------------------------------------------------------
 
+// Forward declarations for shape print/stringify helpers
+static void lower_print_shape_struct(LowerCtx *ctx, SrcLoc loc, LirOpnd ptr, MixType *shape_t);
+static LirOpnd lower_shape_to_string(LowerCtx *ctx, SrcLoc loc, LirOpnd ptr, MixType *shape_t);
+
+static void emit_print_field(LowerCtx *ctx, SrcLoc loc, LirOpnd base_ptr,
+                              MixType *ftype, int offset, bool comma) {
+    if (comma) {
+        register_print_str(ctx->mod, loc);
+        int comma_id = lir_intern_string(ctx->mod, ", ", 2);
+        LirOpnd c_args[] = { lir_opnd_string(comma_id) };
+        lir_emit_call(ctx->fn, loc, "mix_print_str", LIR_TY_VOID, c_args, 1);
+    }
+    int faddr = lir_emit_ptr_offset(ctx->fn, loc, base_ptr, offset);
+    LirOpnd fptr = lir_opnd_value(faddr, LIR_TY_PTR);
+    if (ftype->kind == TYPE_SHAPE) {
+        lower_print_shape_struct(ctx, loc, fptr, ftype);
+    } else if (ftype->kind == TYPE_FLOAT32) {
+        int loaded = lir_emit_load(ctx->fn, loc, LIR_TY_F32, fptr);
+        LirOpnd v = lir_opnd_value(loaded, LIR_TY_F32);
+        v = float_cast(ctx, loc, v, LIR_TY_F64);
+        register_print_float(ctx->mod, loc);
+        LirOpnd p_args[] = { v };
+        lir_emit_call(ctx->fn, loc, "mix_print_float", LIR_TY_VOID, p_args, 1);
+    } else if (ftype->kind == TYPE_FLOAT || ftype->kind == TYPE_FLOAT64) {
+        int loaded = lir_emit_load(ctx->fn, loc, LIR_TY_F64, fptr);
+        LirOpnd v = lir_opnd_value(loaded, LIR_TY_F64);
+        register_print_float(ctx->mod, loc);
+        LirOpnd p_args[] = { v };
+        lir_emit_call(ctx->fn, loc, "mix_print_float", LIR_TY_VOID, p_args, 1);
+    } else if (ftype->kind == TYPE_BOOL) {
+        int loaded = lir_emit_load(ctx->fn, loc, LIR_TY_I32, fptr);
+        LirOpnd v = lir_opnd_value(loaded, LIR_TY_I32);
+        register_print_bool(ctx->mod, loc);
+        LirOpnd p_args[] = { v };
+        lir_emit_call(ctx->fn, loc, "mix_print_bool", LIR_TY_VOID, p_args, 1);
+    } else if (ftype->kind == TYPE_STR) {
+        int loaded = lir_emit_load(ctx->fn, loc, LIR_TY_PTR, fptr);
+        LirOpnd v = lir_opnd_value(loaded, LIR_TY_PTR);
+        register_print_str(ctx->mod, loc);
+        LirOpnd p_args[] = { v };
+        lir_emit_call(ctx->fn, loc, "mix_print_str", LIR_TY_VOID, p_args, 1);
+    } else if (type_is_integer(ftype)) {
+        LirType lt = mix_to_lir(ftype);
+        int loaded = lir_emit_load(ctx->fn, loc, lt, fptr);
+        LirOpnd v = lir_opnd_value(loaded, lt);
+        register_print_int(ctx->mod, loc);
+        LirOpnd p_args[] = { widen_to_i64(ctx, loc, v, ftype) };
+        lir_emit_call(ctx->fn, loc, "mix_print_int", LIR_TY_VOID, p_args, 1);
+    }
+}
+
+// Forward decl of mix_str_concat registration helper
+static void register_str_concat(LowerCtx *ctx, SrcLoc loc) {
+    LirType cat_p[] = { LIR_TY_PTR, LIR_TY_PTR };
+    lir_register_callee(ctx->mod, loc, "mix_str_concat", LIR_TY_PTR, cat_p, 2);
+}
+
+static LirOpnd stringify_field(LowerCtx *ctx, SrcLoc loc, LirOpnd base_ptr,
+                                MixType *ftype, int offset, LirOpnd acc) {
+    int faddr = lir_emit_ptr_offset(ctx->fn, loc, base_ptr, offset);
+    LirOpnd fptr = lir_opnd_value(faddr, LIR_TY_PTR);
+    LirOpnd as_str;
+    if (ftype->kind == TYPE_SHAPE) {
+        as_str = lower_shape_to_string(ctx, loc, fptr, ftype);
+    } else if (ftype->kind == TYPE_FLOAT32) {
+        int loaded = lir_emit_load(ctx->fn, loc, LIR_TY_F32, fptr);
+        LirOpnd v = lir_opnd_value(loaded, LIR_TY_F32);
+        v = float_cast(ctx, loc, v, LIR_TY_F64);
+        LirType f2s_p[] = { LIR_TY_F64 };
+        lir_register_callee(ctx->mod, loc, "mix_to_string_float", LIR_TY_PTR, f2s_p, 1);
+        LirOpnd s_args[] = { v };
+        int r = lir_emit_call(ctx->fn, loc, "mix_to_string_float", LIR_TY_PTR, s_args, 1);
+        as_str = lir_opnd_value(r, LIR_TY_PTR);
+    } else if (ftype->kind == TYPE_FLOAT || ftype->kind == TYPE_FLOAT64) {
+        int loaded = lir_emit_load(ctx->fn, loc, LIR_TY_F64, fptr);
+        LirOpnd v = lir_opnd_value(loaded, LIR_TY_F64);
+        LirType f2s_p[] = { LIR_TY_F64 };
+        lir_register_callee(ctx->mod, loc, "mix_to_string_float", LIR_TY_PTR, f2s_p, 1);
+        LirOpnd s_args[] = { v };
+        int r = lir_emit_call(ctx->fn, loc, "mix_to_string_float", LIR_TY_PTR, s_args, 1);
+        as_str = lir_opnd_value(r, LIR_TY_PTR);
+    } else if (ftype->kind == TYPE_BOOL) {
+        int loaded = lir_emit_load(ctx->fn, loc, LIR_TY_I32, fptr);
+        LirOpnd v = lir_opnd_value(loaded, LIR_TY_I32);
+        LirType b2s_p[] = { LIR_TY_I32 };
+        lir_register_callee(ctx->mod, loc, "mix_to_string_bool", LIR_TY_PTR, b2s_p, 1);
+        LirOpnd s_args[] = { v };
+        int r = lir_emit_call(ctx->fn, loc, "mix_to_string_bool", LIR_TY_PTR, s_args, 1);
+        as_str = lir_opnd_value(r, LIR_TY_PTR);
+    } else if (type_is_integer(ftype)) {
+        LirType lt = mix_to_lir(ftype);
+        int loaded = lir_emit_load(ctx->fn, loc, lt, fptr);
+        LirOpnd v = lir_opnd_value(loaded, lt);
+        v = widen_to_i64(ctx, loc, v, ftype);
+        LirType i2s_p[] = { LIR_TY_I64 };
+        lir_register_callee(ctx->mod, loc, "mix_to_string_int", LIR_TY_PTR, i2s_p, 1);
+        LirOpnd s_args[] = { v };
+        int r = lir_emit_call(ctx->fn, loc, "mix_to_string_int", LIR_TY_PTR, s_args, 1);
+        as_str = lir_opnd_value(r, LIR_TY_PTR);
+    } else {
+        as_str = lir_opnd_none();
+    }
+    if (as_str.type == LIR_TY_PTR) {
+        if (acc.type == LIR_TY_PTR) {
+            register_str_concat(ctx, loc);
+            LirOpnd ca[] = { acc, as_str };
+            int r = lir_emit_call(ctx->fn, loc, "mix_str_concat", LIR_TY_PTR, ca, 2);
+            acc = lir_opnd_value(r, LIR_TY_PTR);
+        } else {
+            acc = as_str;
+        }
+    }
+    return acc;
+}
+
+static LirOpnd lower_shape_to_string(LowerCtx *ctx, SrcLoc loc, LirOpnd ptr, MixType *shape_t) {
+    LirOpnd acc = lir_opnd_none();
+    char name_buf[256];
+    snprintf(name_buf, sizeof(name_buf), "%s(", shape_t->shape.name);
+    int nid = lir_intern_string(ctx->mod, name_buf, (int)strlen(name_buf));
+    LirOpnd name_str = lir_opnd_string(nid);
+    acc = name_str;
+
+    int fc = shape_t->shape.field_count;
+    for (int i = 0; i < fc; i++) {
+        if (i > 0) {
+            int sep_id = lir_intern_string(ctx->mod, ", ", 2);
+            LirOpnd sep_str = lir_opnd_string(sep_id);
+            if (acc.type == LIR_TY_PTR) {
+                register_str_concat(ctx, loc);
+                LirOpnd ca[] = { acc, sep_str };
+                int r = lir_emit_call(ctx->fn, loc, "mix_str_concat", LIR_TY_PTR, ca, 2);
+                acc = lir_opnd_value(r, LIR_TY_PTR);
+            } else {
+                acc = sep_str;
+            }
+        }
+        acc = stringify_field(ctx, loc, ptr, shape_t->shape.fields[i].type,
+                               shape_t->shape.fields[i].offset, acc);
+    }
+
+    int close_id = lir_intern_string(ctx->mod, ")", 1);
+    LirOpnd close_str = lir_opnd_string(close_id);
+    if (acc.type == LIR_TY_PTR) {
+        register_str_concat(ctx, loc);
+        LirOpnd ca[] = { acc, close_str };
+        int r = lir_emit_call(ctx->fn, loc, "mix_str_concat", LIR_TY_PTR, ca, 2);
+        acc = lir_opnd_value(r, LIR_TY_PTR);
+    } else {
+        acc = close_str;
+    }
+    return acc;
+}
+
+static void lower_print_shape_struct(LowerCtx *ctx, SrcLoc loc, LirOpnd ptr, MixType *shape_t) {
+    register_print_str(ctx->mod, loc);
+    int name_id = lir_intern_string(ctx->mod, shape_t->shape.name,
+                                     (int)strlen(shape_t->shape.name));
+    LirOpnd n_args[] = { lir_opnd_string(name_id) };
+    lir_emit_call(ctx->fn, loc, "mix_print_str", LIR_TY_VOID, n_args, 1);
+
+    int paren_id = lir_intern_string(ctx->mod, "(", 1);
+    lir_emit_call(ctx->fn, loc, "mix_print_str", LIR_TY_VOID,
+                  (LirOpnd[]){ lir_opnd_string(paren_id) }, 1);
+
+    int fc = shape_t->shape.field_count;
+    for (int i = 0; i < fc; i++) {
+        emit_print_field(ctx, loc, ptr, shape_t->shape.fields[i].type,
+                         shape_t->shape.fields[i].offset, i > 0);
+    }
+
+    int close_id = lir_intern_string(ctx->mod, ")", 1);
+    lir_emit_call(ctx->fn, loc, "mix_print_str", LIR_TY_VOID,
+                  (LirOpnd[]){ lir_opnd_string(close_id) }, 1);
+}
+
 static void lower_print(LowerCtx *ctx, AstNode *call) {
     if (call->call.arg_count != 1) {
         unsupported(call, "print() with arity != 1");
@@ -678,6 +854,8 @@ static void lower_print(LowerCtx *ctx, AstNode *call) {
             register_runtime(ctx->mod, call->loc, fn_name, LIR_TY_VOID, ps, 1);
             LirOpnd args[] = { val };
             lir_emit_call(ctx->fn, call->loc, fn_name, LIR_TY_VOID, args, 1);
+        } else if (at && at->kind == TYPE_SHAPE) {
+            lower_print_shape_struct(ctx, call->loc, val, at);
         } else {
             register_print_str(ctx->mod, call->loc);
             LirOpnd args[] = { val };
@@ -3211,6 +3389,9 @@ case NODE_SLICE_EXPR: {
                     int r = lir_emit_call(ctx->fn, iexpr->loc, helper,
                                             LIR_TY_PTR, args, 1);
                     as_str = lir_opnd_value(r, LIR_TY_PTR);
+                } else if (v.type == LIR_TY_PTR &&
+                           etype && etype->kind == TYPE_SHAPE) {
+                    as_str = lower_shape_to_string(ctx, iexpr->loc, v, etype);
                 } else if (v.type == LIR_TY_PTR) {
                     as_str = v;
                 } else if (v.type == LIR_TY_F64) {

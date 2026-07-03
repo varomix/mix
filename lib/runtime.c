@@ -18,8 +18,18 @@ void mix_print_int(int64_t val) {
     printf("%" PRId64 "\n", val);
 }
 
+static void print_float_val(double val) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%g", val);
+    if (!strchr(buf, '.') && !strchr(buf, 'e') && !strchr(buf, 'E')) {
+        strcat(buf, ".0");
+    }
+    printf("%s", buf);
+}
+
 void mix_print_float(double val) {
-    printf("%g\n", val);
+    print_float_val(val);
+    printf("\n");
 }
 
 void mix_print_str(const char *val) {
@@ -36,7 +46,7 @@ void mix_write_int(int64_t val) {
 }
 
 void mix_write_float(double val) {
-    printf("%g", val);
+    print_float_val(val);
 }
 
 void mix_write_str(const char *val) {
@@ -1218,6 +1228,9 @@ char *mix_to_string_int(int64_t val) {
 char *mix_to_string_float(double val) {
     char buf[64];
     snprintf(buf, sizeof(buf), "%g", val);
+    if (!strchr(buf, '.') && !strchr(buf, 'e') && !strchr(buf, 'E')) {
+        strcat(buf, ".0");
+    }
     return mix_strdup_current(buf);
 }
 

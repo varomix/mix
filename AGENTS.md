@@ -103,3 +103,4 @@ lib/vendor/sdl3/lib/libSDL3.a     — built static library (arm64+x86_64)
 - `done` returns a value from a function.
 - No `return` statement — use `done` in expression position.
 - String interpolation uses `"hello {name}"`.
+- `print(shape_val)` and `"{shape_val}"` format shapes as `TypeName(field1, field2, ...)`. Field types supported: float32, float64, int, bool, str, nested shapes.

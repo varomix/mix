@@ -14,6 +14,7 @@ editors/zed-mix/grammars/mix/tree-sitter-mix.wasm
 *.zip
 *.spv
 .DS_Store
+AGENTS.md
 node_modules/
 out/
 

@@ -3507,17 +3507,17 @@ static void lower_var_decl(LowerCtx *ctx, AstNode *vd) {
     if (mix_is_shape(t)) {
         // Allocate the slot directly; lower the initializer into it.
         int slot = lir_emit_alloca_bytes(ctx->fn, vd->loc,
-                                           t->shape.total_size,
-                                           t->shape.alignment);
+                                            t->shape.total_size,
+                                            t->shape.alignment);
         lir_func_add_dbg_local(ctx->fn, slot, vd->var_decl.name, vd->loc,
                                 LIR_TY_VOID, t->shape.total_size, false);
-        Local *l = scope_add(ctx, vd->var_decl.name);
-        l->value_id = slot;
-        l->shape_type = t;
         if (vd->var_decl.init_expr) {
             lower_init_into(ctx, lir_opnd_value(slot, LIR_TY_PTR), t,
                               vd->var_decl.init_expr);
         }
+        Local *l = scope_add(ctx, vd->var_decl.name);
+        l->value_id = slot;
+        l->shape_type = t;
         return;
     }
 
@@ -3532,11 +3532,11 @@ static void lower_var_decl(LowerCtx *ctx, AstNode *vd) {
     int slot = lir_emit_alloca(ctx->fn, vd->loc, lt);
     lir_func_add_dbg_local(ctx->fn, slot, vd->var_decl.name, vd->loc,
                             lt, 0, false);
-    Local *l = scope_add(ctx, vd->var_decl.name);
-    l->value_id = slot;
-    l->scalar_type = lt;
 
     if (vd->var_decl.init_expr) {
+        // Evaluate the initializer BEFORE adding to scope so that a
+        // self-referencing shadow (`x = x * x`) reads the old binding,
+        // not the new uninitialised slot.
         LirOpnd val = lower_expr(ctx, vd->var_decl.init_expr);
         // Best-effort coercion to slot type when sema's type and the
         // emitted value disagree.
@@ -3570,8 +3570,15 @@ static void lower_var_decl(LowerCtx *ctx, AstNode *vd) {
                 val = float_cast(ctx, vd->loc, val, lt);
             }
         }
+        Local *l = scope_add(ctx, vd->var_decl.name);
+        l->value_id = slot;
+        l->scalar_type = lt;
         lir_emit_store(ctx->fn, vd->loc, lt, val,
                         lir_opnd_value(slot, LIR_TY_PTR));
+    } else {
+        Local *l = scope_add(ctx, vd->var_decl.name);
+        l->value_id = slot;
+        l->scalar_type = lt;
     }
 }
 

@@ -1,0 +1,4 @@
+use diamond.common
+
+pub right_value() -> int
+    common_value() + 2

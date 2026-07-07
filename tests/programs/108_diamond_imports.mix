@@ -1,0 +1,6 @@
+use diamond.left
+use diamond.right
+
+main() ~
+    print(left_value())
+    print(right_value())

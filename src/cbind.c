@@ -129,7 +129,7 @@ static bool is_reserved_word(const char *name) {
         "if", "else", "while", "for", "in", "match", "break", "continue",
         "done", "shape", "union", "extern", "use", "pub", "type", "zone", "defer",
         "unsafe", "and", "or", "not", "go", "run", "wait", "stream",
-        "yield", "shared", "repeat", "as", "then", "set", "true", "false",
+        "yield", "shared", "ref", "repeat", "as", "then", "set", "true", "false",
         "none", "int", "float", "bool", "byte", "str",
         "int8", "int16", "int32", "int64",
         "uint8", "uint16", "uint32", "uint64",

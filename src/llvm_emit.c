@@ -304,10 +304,23 @@ static void emit_call(FILE *out, const LirInstr *ins) {
         render_operand(out, ins->indirect_callee);
         fputc('(', out);
     } else if (ins->result >= 0) {
-        fprintf(out, "%%t%d = call %s @%s(",
-                ins->result, llvm_type(ins->result_type), ins->callee);
+        if (ins->call_through_global_ptr) {
+            fprintf(out, "%%t%d = load ptr, ptr @%s\n  %%t%d = call %s %%t%d(",
+                    ins->global_ptr_load_result, ins->callee,
+                    ins->result, llvm_type(ins->result_type),
+                    ins->global_ptr_load_result);
+        } else {
+            fprintf(out, "%%t%d = call %s @%s(",
+                    ins->result, llvm_type(ins->result_type), ins->callee);
+        }
     } else {
-        fprintf(out, "call void @%s(", ins->callee);
+        if (ins->call_through_global_ptr) {
+            fprintf(out, "%%t%d = load ptr, ptr @%s\n  call void %%t%d(",
+                    ins->global_ptr_load_result, ins->callee,
+                    ins->global_ptr_load_result);
+        } else {
+            fprintf(out, "call void @%s(", ins->callee);
+        }
     }
     for (int i = 0; i < ins->arg_count; i++) {
         if (i > 0) fputs(", ", out);
@@ -693,6 +706,10 @@ static void emit_function(FILE *out, LlvmEmitter *emit, const LirFunc *fn) {
 // ---- Module emission ------------------------------------------------------
 
 static void emit_callee_decl(FILE *out, const LirCalleeDecl *c) {
+    if (c->is_fn_ptr_global) {
+        fprintf(out, "@%s = external global ptr\n", c->name);
+        return;
+    }
     fprintf(out, "declare %s @%s(", llvm_type(c->return_type), c->name);
     for (int i = 0; i < c->param_count; i++) {
         if (i > 0) fputs(", ", out);

@@ -735,14 +735,57 @@ static char *resolve_module_path(Arena *arena, const char *base_dir,
 // so only modules on the current call-chain are tracked.
 #define MAX_COMPILING_MODULES 128
 #define MAX_LINK_FLAGS 64
+#define MAX_SOURCE_FILES 16
+#define MAX_COMPILED_MODULES 256
 static const char *compiling_modules[MAX_COMPILING_MODULES];
 static int compiling_module_count = 0;
+static struct {
+    const char *source_path;
+    char *output_path;
+} compiled_modules[MAX_COMPILED_MODULES];
+static int compiled_module_count = 0;
 
 static bool is_module_compiling(const char *path) {
     for (int i = 0; i < compiling_module_count; i++) {
         if (strcmp(compiling_modules[i], path) == 0) return true;
     }
     return false;
+}
+
+static char *find_compiled_module(const char *path) {
+    for (int i = 0; i < compiled_module_count; i++) {
+        if (strcmp(compiled_modules[i].source_path, path) == 0) {
+            return compiled_modules[i].output_path;
+        }
+    }
+    return NULL;
+}
+
+static bool remember_compiled_module(Arena *arena, const char *source_path,
+                                     char *output_path) {
+    if (compiled_module_count >= MAX_COMPILED_MODULES) {
+        cli_error("too many compiled modules (max %d)", MAX_COMPILED_MODULES);
+        cli_help("reduce the import graph or raise MAX_COMPILED_MODULES in the compiler");
+        return false;
+    }
+    compiled_modules[compiled_module_count].source_path = arena_strdup(arena, source_path);
+    compiled_modules[compiled_module_count].output_path = output_path;
+    compiled_module_count++;
+    return true;
+}
+
+static bool add_module_link_input(char **module_files, int *module_count,
+                                  int max_modules, char *module_file) {
+    for (int i = 0; i < *module_count; i++) {
+        if (strcmp(module_files[i], module_file) == 0) return true;
+    }
+    if (*module_count >= max_modules) {
+        cli_error("too many modules (max %d)", max_modules);
+        cli_help("reduce the import graph or raise the module limit in the compiler");
+        return false;
+    }
+    module_files[(*module_count)++] = module_file;
+    return true;
 }
 
 // Walk the symbol list from head down to (but not including) snapshot, and
@@ -779,6 +822,97 @@ static void filter_imported_symbols(SymTab *symtab, Symbol *snapshot,
     }
 }
 
+static bool add_c_source_file(const char *src_path, Arena *arena, const char *base_dir,
+                              const char *exe_dir,
+                              const char **source_files, int *source_file_count,
+                              int max_source_files) {
+    if (!src_path || !source_files || !source_file_count) return true;
+    if (*source_file_count >= max_source_files) {
+        cli_error("too many C source files (max %d)", max_source_files);
+        cli_help("reduce `use c ... source` declarations or raise MAX_SOURCE_FILES in the compiler");
+        return false;
+    }
+
+    struct stat src_st;
+    const char *found = NULL;
+    char found_buf[1024];
+
+    if (stat(src_path, &src_st) == 0) {
+        found = src_path;
+    } else {
+        if (base_dir && base_dir[0] && src_path[0] != '/') {
+            snprintf(found_buf, sizeof(found_buf), "%s/%s", base_dir, src_path);
+            if (stat(found_buf, &src_st) == 0) {
+                found = found_buf;
+            }
+        }
+    }
+
+    if (!found) {
+        bool found_src = false;
+        const char *src_slash = strchr(src_path, '/');
+        const char *src_rest = src_slash ? src_slash + 1 : NULL;
+
+        const char *vendor_bases[4];
+        int vendor_base_count = 0;
+        vendor_bases[vendor_base_count++] = "lib/vendor";
+        if (exe_dir && exe_dir[0]) {
+            char exe_vendor[1024];
+            snprintf(exe_vendor, sizeof(exe_vendor), "%s/../lib/vendor", exe_dir);
+            vendor_bases[vendor_base_count++] = arena_strdup(arena, exe_vendor);
+        }
+
+        for (int vb = 0; vb < vendor_base_count && !found_src; vb++) {
+            const char *vbase = vendor_bases[vb];
+            DIR *vdir = opendir(vbase);
+            if (!vdir) continue;
+            struct dirent *ventry;
+            while ((ventry = readdir(vdir)) != NULL) {
+                if (ventry->d_name[0] == '.') continue;
+                char try_paths[5][1024];
+                int try_count = 0;
+                snprintf(try_paths[try_count++], 1024,
+                         "%s/%s/src/%s", vbase, ventry->d_name, src_path);
+                snprintf(try_paths[try_count++], 1024,
+                         "%s/%s/%s", vbase, ventry->d_name, src_path);
+                if (src_rest && src_slash > src_path) {
+                    int prefix_len = (int)(src_slash - src_path);
+                    if ((int)strlen(ventry->d_name) == prefix_len &&
+                        strncmp(ventry->d_name, src_path, prefix_len) == 0) {
+                        snprintf(try_paths[try_count++], 1024,
+                                 "%s/%s/src/%s", vbase, ventry->d_name, src_rest);
+                        snprintf(try_paths[try_count++], 1024,
+                                 "%s/%s/%s", vbase, ventry->d_name, src_rest);
+                    }
+                }
+                for (int tp = 0; tp < try_count; tp++) {
+                    if (stat(try_paths[tp], &src_st) == 0) {
+                        strncpy(found_buf, try_paths[tp], sizeof(found_buf) - 1);
+                        found_buf[sizeof(found_buf) - 1] = '\0';
+                        found = found_buf;
+                        found_src = true;
+                        break;
+                    }
+                }
+                if (found_src) break;
+            }
+            closedir(vdir);
+        }
+    }
+
+    if (!found) {
+        cli_error("source file '%s' not found", src_path);
+        cli_help("check the `source` path in the `use c` declaration, relative to the .mix file, or place it under lib/vendor/<name>/src");
+        return false;
+    }
+
+    for (int i = 0; i < *source_file_count; i++) {
+        if (strcmp(source_files[i], found) == 0) return true;
+    }
+    source_files[(*source_file_count)++] = arena_strdup(arena, found);
+    return true;
+}
+
 // Compile a single module, return its output file path (or NULL on failure).
 // Recursively compiles any modules this module imports via 'use'.
 // For C backend:    returns .c file path
@@ -790,7 +924,12 @@ static char *compile_module(const char *source_path, Arena *arena, Sema *sema,
                             char **module_asm_files, int *module_count,
                             int max_modules,
                             char **link_flags, int *link_flag_count,
+                            const char **source_files, int *source_file_count,
+                            int max_source_files,
                             bool is_wasm_browser) {
+    char *cached_output = find_compiled_module(source_path);
+    if (cached_output) return cached_output;
+
     // Circular import check
     if (is_module_compiling(source_path)) {
         cli_error("circular import detected: '%s'", source_path);
@@ -860,7 +999,7 @@ compiling_module_count--;
             // file doesn't have to re-declare it. Dedupe — multiple modules
             // pulling in the same lib should still produce a single -l flag.
             const char *lib = decl->use_c_decl.lib_name;
-            if (lib && link_flags && link_flag_count) {
+            if (lib && strcmp(lib, "C") != 0 && link_flags && link_flag_count) {
                 char dash_l[256];
                 snprintf(dash_l, sizeof(dash_l), "-l%s", lib);
                 bool already = false;
@@ -911,6 +1050,14 @@ compiling_module_count--;
                     tok = strtok_r(NULL, " ", &save);
                 }
             }
+
+            if (decl->use_c_decl.source_path &&
+                !add_c_source_file(decl->use_c_decl.source_path, arena, base_dir, exe_dir,
+                                   source_files, source_file_count, max_source_files)) {
+                free(source);
+                compiling_module_count--;
+                return NULL;
+            }
         } else if (decl->kind == NODE_EXTERN_BLOCK) {
             const char *lib = decl->extern_block.lib_name;
             if (lib && strcmp(lib, "C") != 0 && link_flags && link_flag_count
@@ -942,6 +1089,8 @@ compiling_module_count--;
                                            exe_dir, module_asm_files,
                                            module_count, max_modules,
                                            link_flags, link_flag_count,
+                                           source_files, source_file_count,
+                                           max_source_files,
                                            is_wasm_browser);
             if (!sub_asm) {
                 cli_error("failed to compile module '%s'",
@@ -959,14 +1108,12 @@ compiling_module_count--;
             // Restore error source to this module after sub-module compilation
             errors_set_source(source, source_path);
 
-            if (*module_count >= max_modules) {
-                cli_error("too many modules (max %d)", max_modules);
-                cli_help("reduce the import graph or raise the module limit in the compiler");
-                free(source); 
-compiling_module_count--;
+            if (!add_module_link_input(module_asm_files, module_count,
+                                       max_modules, sub_asm)) {
+                free(source);
+                compiling_module_count--;
                 return NULL;
             }
-            module_asm_files[(*module_count)++] = sub_asm;
         }
     }
 
@@ -998,7 +1145,9 @@ compiling_module_count--;
         free(source);
         
         compiling_module_count--;
-        return arena_strdup(arena, c_path);
+        char *out_path = arena_strdup(arena, c_path);
+        if (!remember_compiled_module(arena, source_path, out_path)) return NULL;
+        return out_path;
     } else if (use_llvm_backend) {
         // LLVM backend (Phase 2): AST → lower → LIR → llvm_emit → .ll,
         // then clang -c → .o. Modules are not yet exercised at this phase
@@ -1068,7 +1217,9 @@ compiling_module_count--;
         free(source);
         
         compiling_module_count--;
-        return arena_strdup(arena, obj_path);
+        char *out_path = arena_strdup(arena, obj_path);
+        if (!remember_compiled_module(arena, source_path, out_path)) return NULL;
+        return out_path;
     } else {
         // No remaining backend (QBE retired in Phase 9). Sema/lower
         // route through the C and LLVM branches above.
@@ -1373,7 +1524,6 @@ int main(int argc, char **argv) {
     int module_count = 0;
 
     // Source files to compile and link (from use c ... source "file.c")
-    #define MAX_SOURCE_FILES 16
     const char *source_files[MAX_SOURCE_FILES];
     int source_file_count = 0;
 
@@ -1568,7 +1718,7 @@ int main(int argc, char **argv) {
 
             // Collect -l flag for linker (dedupe so the same lib pulled in
             // from multiple `use c` declarations only appears once).
-            if (lib && link_flag_count < MAX_LINK_FLAGS) {
+            if (lib && strcmp(lib, "C") != 0 && link_flag_count < MAX_LINK_FLAGS) {
                 char *lflag = arena_alloc(&arena, strlen(lib) + 3);
                 sprintf(lflag, "-l%s", lib);
                 bool already = false;
@@ -1618,68 +1768,10 @@ int main(int argc, char **argv) {
                 }
             }
 
-            // Collect source file for compilation (e.g. source "glad/glad.c")
-            const char *src_path = decl->use_c_decl.source_path;
-            if (src_path && source_file_count < MAX_SOURCE_FILES) {
-                struct stat src_st;
-                if (stat(src_path, &src_st) == 0) {
-                    source_files[source_file_count++] = arena_strdup(&arena, src_path);
-                } else {
-                    bool found_src = false;
-                    // Extract first component and rest: "glad/glad.c" -> "glad" + "glad.c"
-                    const char *src_slash = strchr(src_path, '/');
-                    const char *src_rest = src_slash ? src_slash + 1 : NULL;
-
-                    const char *vendor_bases[4];
-                    int vendor_base_count = 0;
-                    vendor_bases[vendor_base_count++] = "lib/vendor";
-                    if (exe_dir[0]) {
-                        char exe_vendor[1024];
-                        snprintf(exe_vendor, sizeof(exe_vendor), "%s/../lib/vendor", exe_dir);
-                        vendor_bases[vendor_base_count++] = arena_strdup(&arena, exe_vendor);
-                    }
-                    for (int vb = 0; vb < vendor_base_count && !found_src; vb++) {
-                        const char *vbase = vendor_bases[vb];
-                        DIR *vdir = opendir(vbase);
-                        if (!vdir) continue;
-                        struct dirent *ventry;
-                        while ((ventry = readdir(vdir)) != NULL) {
-                            if (ventry->d_name[0] == '.') continue;
-                            char try_paths[5][1024];
-                            int try_count = 0;
-                            // Try full path under vendor subdirs
-                            snprintf(try_paths[try_count++], 1024,
-                                     "%s/%s/src/%s", vbase, ventry->d_name, src_path);
-                            snprintf(try_paths[try_count++], 1024,
-                                     "%s/%s/%s", vbase, ventry->d_name, src_path);
-                            // If first component matches vendor name, try rest only
-                            if (src_rest && src_slash > src_path) {
-                                int prefix_len = (int)(src_slash - src_path);
-                                if ((int)strlen(ventry->d_name) == prefix_len &&
-                                    strncmp(ventry->d_name, src_path, prefix_len) == 0) {
-                                    snprintf(try_paths[try_count++], 1024,
-                                             "%s/%s/src/%s", vbase, ventry->d_name, src_rest);
-                                    snprintf(try_paths[try_count++], 1024,
-                                             "%s/%s/%s", vbase, ventry->d_name, src_rest);
-                                }
-                            }
-                            for (int tp = 0; tp < try_count; tp++) {
-                                if (stat(try_paths[tp], &src_st) == 0) {
-                                    source_files[source_file_count++] = arena_strdup(&arena, try_paths[tp]);
-                                    found_src = true;
-                                    break;
-                                }
-                            }
-                            if (found_src) break;
-                        }
-                        closedir(vdir);
-                    }
-                    if (!found_src) {
-                        cli_error("source file '%s' not found", src_path);
-                        cli_help("check the `source` path in the `use c` declaration or place the file under lib/vendor/<name>/src");
-                        return 1;
-                    }
-                }
+            if (decl->use_c_decl.source_path &&
+                !add_c_source_file(decl->use_c_decl.source_path, &arena, base_dir, exe_dir,
+                                   source_files, &source_file_count, MAX_SOURCE_FILES)) {
+                return 1;
             }
 
             // (vendor dirs collected before the loop)
@@ -1708,6 +1800,8 @@ int main(int argc, char **argv) {
                                             exe_dir, module_asm_files,
                                             &module_count, MAX_MODULES,
                                             link_flags, &link_flag_count,
+                                            source_files, &source_file_count,
+                                            MAX_SOURCE_FILES,
                                             is_wasm_browser);
             if (!asm_file) {
                 cli_error("failed to compile module '%s'", decl->use_decl.module_path);
@@ -1721,12 +1815,10 @@ int main(int argc, char **argv) {
 
             // Restore error source to main file after module compilation
             errors_set_source(source, input_file);
-            if (module_count >= MAX_MODULES) {
-                cli_error("too many modules (max %d)", MAX_MODULES);
-                cli_help("reduce the import graph or raise MAX_MODULES in the compiler");
+            if (!add_module_link_input(module_asm_files, &module_count,
+                                       MAX_MODULES, asm_file)) {
                 return 1;
             }
-            module_asm_files[module_count++] = asm_file;
         }
     }
 

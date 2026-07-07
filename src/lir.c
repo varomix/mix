@@ -88,6 +88,7 @@ void lir_register_callee(LirModule *mod, SrcLoc loc, const char *name,
     c->return_type = return_type;
     c->param_count = param_count;
     c->is_variadic = false;
+    c->is_fn_ptr_global = false;
     if (param_count > 0) {
         c->param_types = arena_alloc(mod->arena, param_count * sizeof(LirType));
         memcpy(c->param_types, param_types, param_count * sizeof(LirType));
@@ -191,6 +192,7 @@ int lir_emit_call(LirFunc *fn, SrcLoc loc, const char *callee,
     ins->callee = arena_strdup(arena, callee);
     ins->result_type = result_type;
     ins->result = (result_type == LIR_TY_VOID) ? -1 : lir_func_new_value(fn);
+    ins->global_ptr_load_result = -1;
     ins->arg_count = arg_count;
     if (arg_count > 0) {
         ins->args = arena_alloc(arena, arg_count * sizeof(LirOpnd));

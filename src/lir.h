@@ -130,6 +130,8 @@ typedef struct {
     LirOpnd     indirect_callee;
     LirType    *indirect_param_types;
     int         indirect_param_count;
+    bool        call_through_global_ptr;
+    int         global_ptr_load_result;
 
     // -- RET --
     bool        has_ret_value;
@@ -239,6 +241,7 @@ typedef struct {
     LirType    *param_types;
     int         param_count;
     bool        is_variadic;     // not used yet; reserved
+    bool        is_fn_ptr_global; // e.g. GLAD: global stores the callable ptr
 } LirCalleeDecl;
 
 // Module-level global. Lowered for `pub x! = ...` and friends.

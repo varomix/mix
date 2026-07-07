@@ -312,6 +312,16 @@ static void register_print_float(LirModule *m, SrcLoc loc) { LirType p[]={LIR_TY
 static void register_print_bool (LirModule *m, SrcLoc loc) { LirType p[]={LIR_TY_I32}; lir_register_callee(m,loc,"mix_print_bool", LIR_TY_VOID,p,1); }
 static void register_set_args   (LirModule *m)             { LirType p[]={LIR_TY_I32,LIR_TY_PTR}; lir_register_callee(m,(SrcLoc){0},"mix_set_args",LIR_TY_VOID,p,2); }
 
+static void mark_callee_fn_ptr_global(LirModule *mod, const char *name) {
+    if (!mod || !name) return;
+    for (int i = 0; i < mod->callee_count; i++) {
+        if (strcmp(mod->callees[i].name, name) == 0) {
+            mod->callees[i].is_fn_ptr_global = true;
+            return;
+        }
+    }
+}
+
 // ---- Coercions -------------------------------------------------------------
 
 static LirOpnd to_i32(LowerCtx *ctx, SrcLoc loc, LirOpnd v) {
@@ -1174,13 +1184,19 @@ static LirOpnd lower_user_call_into(LowerCtx *ctx, LirOpnd dst,
     }
     if (mix_error_count() > 0) return lir_opnd_none();
 
+    const char *call_symbol = call->call.name;
+    Symbol *call_sym = ctx->symtab ? symtab_lookup(ctx->symtab, call->call.name) : NULL;
+    if (call_sym && call_sym->is_extern && call_sym->c_name) {
+        call_symbol = call_sym->c_name;
+    }
+
     // Resolve return type and coerce args. Prefer existing callee
     // registration (e.g., extern decls processed earlier).
     LirType ret_type = LIR_TY_VOID;
     bool found = false;
     LirCalleeDecl *existing = NULL;
     for (int i = 0; i < ctx->mod->callee_count; i++) {
-        if (strcmp(ctx->mod->callees[i].name, call->call.name) == 0) {
+        if (strcmp(ctx->mod->callees[i].name, call_symbol) == 0) {
             existing = &ctx->mod->callees[i];
             ret_type = existing->return_type;
             found = true;
@@ -1196,7 +1212,7 @@ static LirOpnd lower_user_call_into(LowerCtx *ctx, LirOpnd dst,
     // f64 in d0). Gated on sym->is_extern so MIX functions defined in
     // sub-modules — also TYPE_FUNC in the symtab — keep MIX ABI.
     if (!found && ctx->symtab) {
-        Symbol *sym = symtab_lookup(ctx->symtab, call->call.name);
+        Symbol *sym = call_sym ? call_sym : symtab_lookup(ctx->symtab, call->call.name);
         if (sym && sym->is_extern && sym->type && sym->type->kind == TYPE_FUNC
             && sym->type->func.param_count + extra == total_args) {
             MixType *ft = sym->type;
@@ -1214,10 +1230,13 @@ static LirOpnd lower_user_call_into(LowerCtx *ctx, LirOpnd dst,
             MixType *rt_sym = ft->func.return_type;
             bool sym_returns_shape = rt_sym && rt_sym->kind == TYPE_SHAPE;
             LirType rt_lir = sym_returns_shape ? LIR_TY_VOID : mix_to_lir(rt_sym);
-            lir_register_callee(ctx->mod, call->loc, call->call.name,
+            lir_register_callee(ctx->mod, call->loc, call_symbol,
                                  rt_lir, psig, total_args);
+            if (sym->c_name && strncmp(sym->c_name, "glad_gl", 7) == 0) {
+                mark_callee_fn_ptr_global(ctx->mod, call_symbol);
+            }
             for (int i = 0; i < ctx->mod->callee_count; i++) {
-                if (strcmp(ctx->mod->callees[i].name, call->call.name) == 0) {
+                if (strcmp(ctx->mod->callees[i].name, call_symbol) == 0) {
                     existing = &ctx->mod->callees[i];
                     ret_type = existing->return_type;
                     found = true;
@@ -1309,12 +1328,20 @@ static LirOpnd lower_user_call_into(LowerCtx *ctx, LirOpnd dst,
     }
     if (!found) {
         ret_type = shape_ret ? LIR_TY_VOID : mix_to_lir(call->resolved_type);
-        lir_register_callee(ctx->mod, call->loc, call->call.name,
+        lir_register_callee(ctx->mod, call->loc, call_symbol,
                              ret_type, param_types, total_args);
     }
 
-    int rid = lir_emit_call(ctx->fn, call->loc, call->call.name,
+    bool call_through_global_ptr = call_sym && call_sym->c_name &&
+        strncmp(call_sym->c_name, "glad_gl", 7) == 0;
+    int rid = lir_emit_call(ctx->fn, call->loc, call_symbol,
                               ret_type, lir_args, total_args);
+    if (call_through_global_ptr && ctx->fn->instr_count > 0) {
+        LirInstr *call_ins = &ctx->fn->instrs[ctx->fn->instr_count - 1];
+        call_ins->call_through_global_ptr = true;
+        call_ins->global_ptr_load_result = lir_func_new_value(ctx->fn);
+        mark_callee_fn_ptr_global(ctx->mod, call_symbol);
+    }
     if (rid < 0) return lir_opnd_none();
     return lir_opnd_value(rid, ret_type);
 }
@@ -1446,7 +1473,7 @@ static bool lower_builtin(LowerCtx *ctx, AstNode *call, LirOpnd *out) {
     if (strcmp(name, "peek_ptr") == 0 && n == 2)      { args[1] = to_i64(ctx,loc,args[1]); BUILTIN("mix_peek_ptr", LIR_TY_I64, LIR_TY_PTR, LIR_TY_I64); return true; }
     if (strcmp(name, "peek_f32") == 0 && n == 2)      { args[1] = to_i64(ctx,loc,args[1]); BUILTIN("mix_peek_f32", LIR_TY_F64, LIR_TY_PTR, LIR_TY_I64); return true; }
     if (strcmp(name, "poke_u32") == 0 && n == 3)      { args[1] = to_i64(ctx,loc,args[1]); args[2] = to_i64(ctx,loc,args[2]); BUILTIN("mix_poke_u32", LIR_TY_VOID, LIR_TY_PTR, LIR_TY_I64, LIR_TY_I64); return true; }
-    if (strcmp(name, "poke_ptr") == 0 && n == 3)      { args[1] = to_i64(ctx,loc,args[1]); args[2] = to_i64(ctx,loc,args[2]); BUILTIN("mix_poke_ptr", LIR_TY_VOID, LIR_TY_PTR, LIR_TY_I64, LIR_TY_I64); return true; }
+    if (strcmp(name, "poke_ptr") == 0 && n == 3)      { args[1] = to_i64(ctx,loc,args[1]); BUILTIN("mix_poke_ptr", LIR_TY_VOID, LIR_TY_PTR, LIR_TY_I64, LIR_TY_PTR); return true; }
     if (strcmp(name, "poke_f32") == 0 && n == 3) {
         args[1] = to_i64(ctx,loc,args[1]);
         // Widen int→f64 if needed.
@@ -5018,6 +5045,10 @@ LirModule *lower_program(AstNode *program, Arena *arena, SymTab *symtab) {
                         ? e->extern_fn_decl.c_name
                         : e->extern_fn_decl.name;
                     lir_register_callee(mod, e->loc, symbol, ret, params, n);
+                    if (e->extern_fn_decl.c_name &&
+                        strncmp(e->extern_fn_decl.c_name, "glad_gl", 7) == 0) {
+                        mark_callee_fn_ptr_global(mod, symbol);
+                    }
                 }
                 break;
             }

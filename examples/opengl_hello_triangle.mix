@@ -1,0 +1,98 @@
+use opengl
+use c "GLFW/glfw3.h" link "glfw3" frameworks "Cocoa,IOKit,CoreFoundation"
+
+compile_shader(kind: uint32, source: str) -> uint32
+    shader = gl_CreateShader(kind)
+    gl_shader_source(shader, source)
+    gl_CompileShader(shader)
+    done shader
+
+example_path(name: str) -> str
+    if file_exists(name)
+        done name
+    done "examples/" + name
+
+make_program() -> uint32
+    vs_src = file_read_all(example_path("opengl_hello.vert"))
+    fs_src = file_read_all(example_path("opengl_hello.frag"))
+    vs = compile_shader(GL_VERTEX_SHADER, vs_src)
+    fs = compile_shader(GL_FRAGMENT_SHADER, fs_src)
+
+    prog = gl_CreateProgram()
+    gl_AttachShader(prog, vs)
+    gl_AttachShader(prog, fs)
+    gl_LinkProgram(prog)
+    gl_DeleteShader(vs)
+    gl_DeleteShader(fs)
+    done prog
+
+main()
+    if glfwInit() == 0
+        print("failed to initialize GLFW")
+        done 1
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4)
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1)
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE)
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE)
+    glfwWindowHint(GLFW_DOUBLEBUFFER, GLFW_TRUE)
+
+    win = glfwCreateWindow(900, 600, "MIX OpenGL 4.1 Hello Triangle", 0, 0)
+    if win == 0
+        print("failed to open OpenGL 4.1 window")
+        glfwTerminate()
+        done 1
+
+    glfwMakeContextCurrent(win)
+    glfwSwapInterval(1)
+
+    if gl_load() == 0
+        print("failed to load OpenGL")
+        glfwDestroyWindow(win)
+        glfwTerminate()
+        done 1
+
+    prog = make_program()
+
+    vertices = [
+        0.0,  0.62, 0.0,  1.0, 0.18, 0.28,
+       -0.62, -0.52, 0.0,  0.12, 0.82, 1.0,
+        0.62, -0.52, 0.0,  1.0, 0.82, 0.18
+    ]
+    verts = list_to_f32(vertices)
+
+    vao! = 0
+    vbo! = 0
+    gl_GenVertexArrays(1, &vao)
+    gl_GenBuffers(1, &vbo)
+
+    gl_BindVertexArray(vao)
+    gl_BindBuffer(GL_ARRAY_BUFFER, vbo)
+    gl_BufferData(GL_ARRAY_BUFFER, 72, verts, GL_STATIC_DRAW)
+
+    gl_VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 24, 0)
+    gl_EnableVertexAttribArray(0)
+    gl_VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 24, 12)
+    gl_EnableVertexAttribArray(1)
+
+    gl_UseProgram(prog)
+
+    width! = 0
+    height! = 0
+
+    while glfwWindowShouldClose(win) == 0
+        glfwPollEvents()
+        glfwGetFramebufferSize(win, &width, &height)
+        gl_Viewport(0, 0, width, height)
+        gl_ClearColor(float32(0.05), float32(0.07), float32(0.1), float32(1.0))
+        gl_Clear(GL_COLOR_BUFFER_BIT)
+        gl_BindVertexArray(vao)
+        gl_DrawArrays(GL_TRIANGLES, 0, 3)
+        glfwSwapBuffers(win)
+
+    gl_DeleteVertexArrays(1, &vao)
+    gl_DeleteBuffers(1, &vbo)
+    gl_DeleteProgram(prog)
+    free_mem(verts)
+    glfwDestroyWindow(win)
+    glfwTerminate()

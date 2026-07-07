@@ -73,6 +73,8 @@ examples/extern_c
 examples/fibonacci
 examples/hello
 examples/Encode_and_Decode_Strings_v01
+examples/opengl_direct
+examples/opengl_hello_triangle
 examples/opengl_triangle
 examples/raylib_C_example
 examples/raylib_example

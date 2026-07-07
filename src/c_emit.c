@@ -385,7 +385,7 @@ static void emit_runtime_decls(CEmitter *emit) {
         "extern void mix_memcpy(void *, const void *, int64_t);\n"
         "extern void mix_poke_f32(void *, int64_t, double);\n"
         "extern void mix_poke_u32(void *, int64_t, int64_t);\n"
-        "extern void mix_poke_ptr(void *, int64_t, int64_t);\n"
+        "extern void mix_poke_ptr(void *, int64_t, void *);\n"
         "extern int64_t mix_peek_ptr(const void *, int64_t);\n"
         "extern void *mix_pack2(void *, void *, int64_t);\n"
         "extern void *mix_pack3(void *, void *, void *, int64_t);\n"
@@ -1725,7 +1725,7 @@ static int emit_expr(CEmitter *emit, AstNode *expr) {
                 return t;
             }
             if (strcmp(expr->call.name, "poke_ptr") == 0 && expr->call.arg_count == 3) {
-                ind(emit); fprintf(emit->out, "mix_poke_ptr(t%d, (int64_t)t%d, (int64_t)t%d);\n",
+                ind(emit); fprintf(emit->out, "mix_poke_ptr(t%d, (int64_t)t%d, t%d);\n",
                         arg_temps[0], arg_temps[1], arg_temps[2]);
                 ind(emit); fprintf(emit->out, "int64_t t%d = 0;\n", t);
                 return t;

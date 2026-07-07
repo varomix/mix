@@ -156,9 +156,9 @@ void mix_poke_u32(void *ptr, int64_t offset, int64_t val) {
     *(uint32_t *)((char *)ptr + offset) = (uint32_t)val;
 }
 
-// Write a pointer/uint64 to a pointer at byte offset (for C struct pointer/size fields)
-void mix_poke_ptr(void *ptr, int64_t offset, int64_t val) {
-    *(int64_t *)((char *)ptr + offset) = val;
+// Write a pointer to a pointer at byte offset (for C struct pointer fields)
+void mix_poke_ptr(void *ptr, int64_t offset, void *val) {
+    *(void **)((char *)ptr + offset) = val;
 }
 
 // Read a pointer from a pointer at byte offset

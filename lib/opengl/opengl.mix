@@ -1,0 +1,29 @@
+// OpenGL loader/bindings backed by vendored GLAD.
+//
+// Usage:
+//   use opengl
+//   // create and make current an OpenGL context with Cocoa, GLFW, SDL, etc.
+//   if gl_load() == 0
+//       print("failed to load OpenGL")
+//
+// GLAD-generated functions are imported as gl_<Name>, for example:
+//   gl_ClearColor(...)
+//   gl_Clear(GL_COLOR_BUFFER_BIT)
+//   gl_CreateShader(GL_VERTEX_SHADER)
+//
+// This module links only the system OpenGL framework on macOS. It does not
+// create a window or require SDL.
+
+use c "glad/glad.h" link "C" source "glad.c" frameworks "OpenGL"
+
+pub gl_load() -> int
+    done gladLoadGL()
+
+extern "C"
+    gl_ShaderSourceRaw "glad_glShaderSource"(shader: uint32, count: int32, string: **byte, length: *int32) ~
+
+pub gl_shader_source(shader: uint32, source: str) ~
+    strings = alloc(8)
+    poke_ptr(strings, 0, source)
+    gl_ShaderSourceRaw(shader, 1, strings, 0)
+    free_mem(strings)

@@ -76,9 +76,9 @@ main()
 
     // Upload vertex data: pos(xyz) + color(rgba) = 84 bytes
     verts = list_to_f32([
-        0.0,  0.5, 0.0,   1.0, 0.0, 0.0, 1.0,
-       -0.5, -0.5, 0.0,   0.0, 1.0, 0.0, 1.0,
-        0.5, -0.5, 0.0,   0.0, 0.0, 1.0, 1.0
+        0.0, 0.5, 0.0, 1.0, 0.0, 0.0, 1.0,
+       -0.5, -0.5, 0.0, 0.0, 1.0, 0.0, 1.0,
+        0.5, -0.5, 0.0, 0.0, 0.0, 1.0, 1.0
     ])
     buf_info = SDL_GPUBufferCreateInfo(usage: SDL_GPU_BUFFERUSAGE_VERTEX, size: 84)
     vbuf = SDL_CreateGPUBuffer(device, buf_info)

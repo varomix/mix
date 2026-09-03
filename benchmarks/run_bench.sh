@@ -55,8 +55,10 @@ for bench in $BENCHMARKS; do
     mix_bin="$BENCH_DIR/${bench}_mix"
     c_bin="$BENCH_DIR/${bench}_c"
 
-    # Compile MIX version
-    "$MIXC" "$mix_src" -o "$mix_bin" 2>/dev/null
+    # Compile both sides at -O2. Passing no flag to mix leaves it at -O0,
+    # which made every ratio here a measure of the flag mismatch rather
+    # than of the language.
+    "$MIXC" "$mix_src" -O2 -o "$mix_bin" 2>/dev/null
 
     # Compile C version with -O2
     cc -O2 "$c_src" -o "$c_bin"
@@ -105,5 +107,5 @@ echo "]" >> "$JSON_FILE"
 
 echo ""
 echo "Ratio = MIX time / C time (lower is better, 1.0 = same speed)"
-echo "C compiled with -O2"
+echo "Both MIX and C compiled with -O2"
 echo "Results saved to $JSON_FILE"

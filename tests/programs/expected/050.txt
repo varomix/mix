@@ -2,7 +2,7 @@ ints: [1, 2, 3]
 strs: ["a", "b", "c"]
 30
 hi world
-5
-6
+5.0
+6.0
 set{1, 2, 3}
 set{"x", "y"}

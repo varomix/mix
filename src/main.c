@@ -13,8 +13,23 @@
 #include "fmt.h"
 #include <sys/time.h>
 
+// Libraries that every binary already links, so naming one in `extern "..."`
+// is documentation and must not turn into a -l flag. The C runtime covers
+// `C` / `c` / `libc` — `-llibc` does not resolve on macOS, where libc lives
+// in libSystem — and `runtime` is MIX's own runtime, linked in as runtime.o.
+static bool lib_is_implicitly_linked(const char *lib) {
+    return lib && (strcmp(lib, "C") == 0 || strcmp(lib, "c") == 0
+                   || strcmp(lib, "libc") == 0
+                   || strcmp(lib, "runtime") == 0);
+}
+
 // --- Phase timing (only printed when --timings is on) ---
 static bool g_timings = false;
+// Optimisation level from -O<n>. Held file-static so compile_module() can
+// reach it: module objects are compiled by their own clang -c line, and
+// without this they were always built at -O0 no matter what the user asked
+// for, since -O only ever reached the final link.
+static const char *g_opt_level = NULL;
 
 static double now_ms(void) {
     struct timeval tv;
@@ -999,7 +1014,7 @@ compiling_module_count--;
             // file doesn't have to re-declare it. Dedupe — multiple modules
             // pulling in the same lib should still produce a single -l flag.
             const char *lib = decl->use_c_decl.lib_name;
-            if (lib && strcmp(lib, "C") != 0 && link_flags && link_flag_count) {
+            if (lib && !lib_is_implicitly_linked(lib) && link_flags && link_flag_count) {
                 char dash_l[256];
                 snprintf(dash_l, sizeof(dash_l), "-l%s", lib);
                 bool already = false;
@@ -1060,7 +1075,7 @@ compiling_module_count--;
             }
         } else if (decl->kind == NODE_EXTERN_BLOCK) {
             const char *lib = decl->extern_block.lib_name;
-            if (lib && strcmp(lib, "C") != 0 && link_flags && link_flag_count
+            if (lib && !lib_is_implicitly_linked(lib) && link_flags && link_flag_count
                 && *link_flag_count < MAX_LINK_FLAGS) {
                 char dash_l[256];
                 snprintf(dash_l, sizeof(dash_l), "-l%s", lib);
@@ -1177,7 +1192,7 @@ compiling_module_count--;
         llvm_emit_module(&le, lmod);
         fclose(ll_out);
 
-        const char *clang_argv[12];
+        const char *clang_argv[13];
         int cai = 0;
         if (is_wasm_browser) {
             const char *emcc = detect_emcc();
@@ -1190,6 +1205,11 @@ compiling_module_count--;
             clang_argv[cai++] = "-Wno-override-module";
         }
         if (debug) clang_argv[cai++] = "-g";
+        char opt_flag[32];
+        if (g_opt_level) {
+            snprintf(opt_flag, sizeof(opt_flag), "-O%s", g_opt_level);
+            clang_argv[cai++] = opt_flag;
+        }
         clang_argv[cai++] = "-o";
         clang_argv[cai++] = obj_path;
         clang_argv[cai++] = ll_path;
@@ -1296,6 +1316,7 @@ int main(int argc, char **argv) {
             debug_mode = false;
         } else if (strncmp(argv[i], "-O", 2) == 0 && argv[i][2] != '\0') {
             opt_level = argv[i] + 2;
+            g_opt_level = opt_level;
         } else if (strcmp(argv[i], "--version") == 0) {
             printf("mix %s (%s)\n", MIX_VERSION, MIX_VERSION_DATE);
             return 0;
@@ -1718,7 +1739,7 @@ int main(int argc, char **argv) {
 
             // Collect -l flag for linker (dedupe so the same lib pulled in
             // from multiple `use c` declarations only appears once).
-            if (lib && strcmp(lib, "C") != 0 && link_flag_count < MAX_LINK_FLAGS) {
+            if (lib && !lib_is_implicitly_linked(lib) && link_flag_count < MAX_LINK_FLAGS) {
                 char *lflag = arena_alloc(&arena, strlen(lib) + 3);
                 sprintf(lflag, "-l%s", lib);
                 bool already = false;
@@ -1777,7 +1798,7 @@ int main(int argc, char **argv) {
             // (vendor dirs collected before the loop)
         } else if (decl->kind == NODE_EXTERN_BLOCK) {
             const char *lib = decl->extern_block.lib_name;
-            if (lib && strcmp(lib, "C") != 0 && link_flag_count < MAX_LINK_FLAGS) {
+            if (lib && !lib_is_implicitly_linked(lib) && link_flag_count < MAX_LINK_FLAGS) {
                 char *lflag = arena_alloc(&arena, strlen(lib) + 3);
                 sprintf(lflag, "-l%s", lib);
                 bool already = false;
@@ -2046,8 +2067,9 @@ int main(int argc, char **argv) {
     }
     if (debug_mode) link_argv[ai++] = "-g";
     if (opt_level) {
-        char *opt_buf = arena_alloc(&arena, 4);
-        if (opt_buf) { sprintf(opt_buf, "-O%s", opt_level); link_argv[ai++] = opt_buf; }
+        size_t opt_sz = strlen(opt_level) + 3;
+        char *opt_buf = arena_alloc(&arena, opt_sz);
+        if (opt_buf) { snprintf(opt_buf, opt_sz, "-O%s", opt_level); link_argv[ai++] = opt_buf; }
     }
     for (int i = 0; i < module_count && ai < MAX_LINK_ARGV - 8; i++)
         link_argv[ai++] = module_asm_files[i];

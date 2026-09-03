@@ -2080,11 +2080,12 @@ char *cbind_generate_string(const char *header_path, const char *lib_name,
         header_path = resolved;
     }
 
-    // Derive lib name if not provided
-    char derived_lib[256] = "";
+    // `use c "header.h"` with no `link "lib"` clause: emit extern "C" so no
+    // -l flag is synthesised. The symbols normally come from an object file
+    // handed to the linker separately (LDFLAGS, `source "file.c"`), and
+    // guessing -l<header basename> makes the link fail outright.
     if (!lib_name || strlen(lib_name) == 0) {
-        strncpy(derived_lib, basename_no_ext(header_path), sizeof(derived_lib) - 1);
-        lib_name = derived_lib;
+        lib_name = "C";
     }
 
     if (path_is_directory(header_path)) {

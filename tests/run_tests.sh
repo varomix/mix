@@ -6,6 +6,29 @@
 #   MIX_BACKEND=c   ./tests/run_tests.sh    # C fallback
 
 MIXC="./build/mix"
+
+# Portable `timeout`: coreutils on Linux, gtimeout via brew, else a bash fallback.
+if command -v timeout >/dev/null 2>&1; then
+    run_limited() { timeout "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+    run_limited() { gtimeout "$@"; }
+else
+    run_limited() {
+        local secs=$1; shift
+        "$@" &
+        local pid=$!
+        # stdout MUST go to /dev/null: this runs inside a $(...) capture, and
+        # a watcher holding the write end keeps the substitution blocked for
+        # the full timeout even after the test binary has already exited.
+        ( sleep "$secs"; kill -9 $pid 2>/dev/null ) >/dev/null 2>&1 &
+        local watcher=$!
+        wait $pid 2>/dev/null
+        local rc=$?
+        kill $watcher 2>/dev/null
+        wait $watcher 2>/dev/null
+        return $rc
+    }
+fi
 TEST_DIR="tests/programs"
 EXPECTED_DIR="tests/programs/expected"
 BUILD_DIR="build/test_output"
@@ -57,7 +80,7 @@ for src in "$TEST_DIR"/*.mix; do
     fi
 
     # Run
-    actual=$(timeout 5 "$binary" 2>&1)
+    actual=$(run_limited 5 "$binary" 2>&1)
     exit_code=$?
 
     if [ ! -f "$expected" ]; then
